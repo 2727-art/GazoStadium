@@ -911,31 +911,60 @@
     const heroMeter = Array.from({ length: 10 }, (_, index) => {
       const score = index + 1;
       const band = score <= 6 ? "low" : score <= 8 ? "mid" : "high";
-      return `<i class="${score <= 9 ? `is-on is-${band}` : ""}"></i>`;
+      return `<i class="${score <= 9 ? `is-on is-${band}` : ""}" style="--n:${index}"></i>`;
     }).join("");
     const liveCount = (id, value, unit) => `<b id="${id}">${statValue(value)}</b>${unit}`;
+    // 入口の人数は、0人をそのまま出さずにいる方だけを言葉にする（landing-hero.mjs の heroLiveState と同じ判定）。
+    const heroLive = !Number.isInteger(soloStats.waiting) || !Number.isInteger(soloStats.playing) ? "unknown"
+      : soloStats.waiting > 0 && soloStats.playing > 0 ? "both"
+        : soloStats.waiting > 0 ? "waiting" : soloStats.playing > 0 ? "playing" : "empty";
+    // 口調は通常型1on1の6つの口調セットと同じ並び。返事のセリフは landing-hero.mjs が口調セットから読む。
+    const heroPersonas = [["tsuyotsuyo", "つよつよ"], ["yowayowa", "よわよわ"], ["koakuma", "小悪魔"], ["oneesan", "お姉さん"], ["amaenbo", "甘えんぼ"], ["seiso", "清楚"]];
+    const personaMark = (id) => `<span class="chat-persona-mark is-${id}" aria-hidden="true"></span>`;
     return `<section class="screen hero vl-landing">
       <div class="vl-hero">
         <div class="vl-copy">
-          <p class="vl-eyebrow">1on1 画像の貼り合い</p>
+          <p class="vl-eyebrow">#貼り合い ・ 1on1</p>
           <h1 class="vl-title">貼って、刺して、<br />点で返す。</h1>
-          <p class="vl-lead">推しの画像にひとことを添えて送り合い、刺さり具合を点数で返す。</p>
+          <p class="vl-lead">DMじゃ物足りない貼り合いに。<em>女の子になり切れる吹き出し</em>で、刺さり具合を点で返す。</p>
         </div>
-        <div class="vl-hero-thread" role="img" aria-label="やりとりの例。相手が画像に「ねぇ、これ好きでしょ？♡」と添えて貼り、こちらが90点で返す。">
-          <div class="ha-msg is-theirs" aria-hidden="true"><div class="ha-msg-body">
-            <img class="ha-photo" src="assets/landing/hero-example.d9a004076802.png" width="360" height="270" alt="" decoding="async" />
-            <span class="ha-bubble">ねぇ、これ好きでしょ？♡</span>
-          </div></div>
-          <div class="ha-msg is-mine" aria-hidden="true"><div class="ha-msg-body">
-            <span class="ha-bubble ha-score-bubble"><b class="ha-score-number">90<small>点</small></b>っ…90点。ずるい…♡</span>
-            <span class="ha-meter10">${heroMeter}</span>
-          </div></div>
+        <div class="vl-hero-stage" data-landing-hero>
+          <div class="vl-hero-thread" role="img" aria-label="やりとりの例。小悪魔の口調の相手が画像に「ねぇ、これ好きでしょ？♡」と添えて貼り、こちらが90点で返す。相手のひとことには口紅のリアクションが付き、相手が次の返事を入力している。">
+            <div class="vl-dm-head" aria-hidden="true">
+              <span class="vl-dm-avatar">シ<span class="vl-dm-badge">${personaMark("koakuma")}</span></span>
+              <span class="vl-dm-who"><b>シオン</b><small>${personaMark("koakuma")}小悪魔で貼り合い中</small></span>
+              <span class="vl-dm-lock">P2P</span>
+            </div>
+            <div class="ha-msg is-theirs" aria-hidden="true"><div class="ha-msg-body">
+              <img class="ha-photo" src="assets/landing/hero-example.d9a004076802.png" width="360" height="270" alt="" decoding="async" />
+              <span class="ha-bubble vl-persona-bubble chat-persona-koakuma chat-fx-hearts">ねぇ、これ好きでしょ？♡<span class="chat-reaction-sticker is-kiss"></span></span>
+            </div></div>
+            <div class="ha-msg is-mine" aria-hidden="true"><div class="ha-msg-body">
+              <span class="vl-hero-me"><span class="chat-persona-mark is-tsuyotsuyo" data-hero-mark aria-hidden="true"></span><span data-hero-me>あなた（つよつよ）</span></span>
+              <span class="ha-bubble ha-score-bubble vl-persona-bubble chat-persona-tsuyotsuyo" data-hero-reply><span class="vl-crit">CRITICAL</span><b class="ha-score-number">90<small>点</small></b>っ…90点。ずるい…♡</span>
+              <span class="ha-meter10">${heroMeter}</span>
+            </div></div>
+            <p class="vl-hero-typing" aria-hidden="true">${personaMark("koakuma")}シオンが、くすくす笑いながら打っています♡<span class="chat-typing-dots"><i></i><i></i><i></i></span></p>
+          </div>
+          <div class="vl-persona-switch">
+            <p class="vl-persona-label" id="heroPersonaLabel">あなたの口調で返してみる</p>
+            <div class="vl-persona-chips" role="group" aria-labelledby="heroPersonaLabel">${heroPersonas.map(([id, label]) => `<button type="button" class="vl-persona-chip" data-hero-persona="${id}" aria-pressed="${id === "tsuyotsuyo"}">${personaMark(id)}${label}</button>`).join("")}</div>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <button class="vl-main-button" id="onlineButton" type="button"><small>通常型1on1対戦</small><span>いますぐ貼り合う</span><em class="vl-live" data-hero-live="${heroLive}"><i aria-hidden="true"></i><span class="vl-live-on">いま<span class="vl-live-waiting"><b id="heroSoloWaitingCount">${statValue(soloStats.waiting)}</b>人が相手待ち</span><span class="vl-live-sep">・</span><span class="vl-live-playing"><b id="heroSoloPlayingCount">${statValue(soloStats.playing)}</b>人が対戦中</span></span><span class="vl-live-first">一番乗りで待ってみる</span></em></button>
+          <ul class="vl-trust" aria-label="遊ぶ前に">
+            <li><i class="is-lock" aria-hidden="true"></i>画像はサーバーに残らない</li>
+            <li><i class="is-bolt" aria-hidden="true"></i>登録なしですぐ</li>
+            <li><i class="is-spark" aria-hidden="true"></i>なりきり口調6種</li>
+          </ul>
+          <p class="vl-rule">5〜8枚の画像で、HP30を削り合う。最大5ラウンド。</p>
         </div>
       </div>
-      <div class="hero-actions">
-        <button class="vl-main-button" id="onlineButton" type="button"><small>通常型1on1対戦</small><span>いますぐ貼り合う</span><em class="vl-live"><i aria-hidden="true"></i>対戦中 <b id="heroSoloPlayingCount">${statValue(soloStats.playing)}</b>人 · 待機中 <b id="heroSoloWaitingCount">${statValue(soloStats.waiting)}</b>人</em></button>
-        <p class="vl-rule">5〜8枚の画像で、HP30を削り合う。最大5ラウンド。</p>
-      </div>
+      <section class="vl-meibamen" aria-labelledby="meibamenTitle">
+        <div class="vl-meibamen-card" aria-hidden="true"><b>通常型1on1の<br />名場面</b><span class="is-theirs"></span><span class="is-mine"></span><span class="is-masked"></span><em>#貼り合いスタジアム</em></div>
+        <div class="vl-meibamen-copy"><h2 id="meibamenTitle">終わったら「名場面カード」に</h2><p>チャットの吹き出しをそのまま1枚の画像に。相手の名前と発言は、相手が許可した時だけ載ります。</p></div>
+      </section>
       <section class="vl-board" aria-labelledby="landingBoardTitle">
         <div class="vl-board-head"><h2 id="landingBoardTitle">いま入れる卓</h2><span>人数・卓数はページ表示時点の参考値（未取得は --）</span></div>
         <ol class="vl-board-list">

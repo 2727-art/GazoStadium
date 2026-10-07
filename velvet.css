@@ -58,6 +58,8 @@
   --ha-zone-combo: #ff3f86;
   --ha-icon-cards: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'><rect x='3' y='7' width='11' height='14' rx='2'/><path d='M8 3h11a2 2 0 0 1 2 2v13'/></svg>");
   --ha-icon-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'><rect x='3' y='4' width='18' height='16' rx='3'/><circle cx='9' cy='10' r='2'/><path d='M21 16l-5-5-9 9'/></svg>");
+  --ha-icon-lock: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='11' width='14' height='10' rx='2'/><path d='M8 11V7a4 4 0 0 1 8 0v4'/></svg>");
+  --ha-icon-bolt: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'><path d='M13 3 4 14h7l-1 7 9-11h-7z'/></svg>");
   --ha-icon-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12h14M13 6l6 6-6 6'/></svg>");
 
   --vs-font-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
@@ -668,13 +670,16 @@ a:focus-visible,
   margin: 0;
 }
 
+/* スマホは見出し→入口→見本の順。入口のボタンを最初の画面に入れ、見本はスクロールで見せる。 */
 .vl-hero {
   display: grid;
+  grid-template-areas: "copy" "actions" "stage";
   gap: 20px;
   padding: 8px 2px 0;
 }
 
 .vl-copy {
+  grid-area: copy;
   display: grid;
   gap: 14px;
   animation: vs-fade-up 500ms var(--vs-ease-out) both;
@@ -703,30 +708,329 @@ a:focus-visible,
   line-height: 1.75;
 }
 
+.vl-lead em {
+  color: var(--vs-rose-soft);
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* ---------- 見本：なりきりDM（X のDMにない吹き出し・リアクション・入力中を見せる） ---------- */
+
+.vl-hero-stage {
+  position: relative;
+  isolation: isolate;
+  grid-area: stage;
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.vl-hero-stage::before {
+  position: absolute;
+  z-index: -1;
+  inset: -36px -24px;
+  content: "";
+  background: radial-gradient(55% 45% at 72% 28%, rgba(255, 63, 134, 0.16), transparent 70%);
+  pointer-events: none;
+}
+
+/* Xで話題になったピンクの吹き出し枠と同じ系統の縁取り */
 .vl-hero-thread {
   display: grid;
   gap: 12px;
-  padding: 16px 14px;
+  padding: 0 14px 16px;
   border-radius: 22px;
-  background: var(--ha-surface);
-  box-shadow: inset 0 0 0 1px var(--ha-line);
+  background: rgba(20, 13, 24, 0.94);
+  box-shadow: 0 0 0 1.5px rgba(255, 127, 166, 0.55), 0 0 0 5px rgba(255, 127, 166, 0.07), 0 0 32px rgba(255, 63, 134, 0.2);
 }
 
-.vl-hero-thread .ha-msg.is-mine {
-  animation: vs-fade-up 500ms var(--vs-ease-out) 350ms both;
+.vl-dm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 -14px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--ha-line);
+}
+
+.vl-dm-avatar {
+  position: relative;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(135deg, #5c0f4a, #ff4fa0);
+  box-shadow: 0 0 0 2px #ff4fa0, 0 0 14px rgba(255, 79, 160, 0.5);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.vl-dm-badge {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ha-ground);
+}
+
+.vl-dm-badge .chat-persona-mark {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  vertical-align: 0;
+}
+
+.vl-dm-who {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.vl-dm-who b {
+  color: var(--vs-pearl);
+  font-size: 0.9rem;
+}
+
+.vl-dm-who small {
+  color: var(--vs-rose-soft);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.vl-dm-lock {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--vs-dim);
+  font: 600 0.7rem/1 var(--vs-font-number);
+  letter-spacing: 0.08em;
+}
+
+.vl-dm-lock::before {
+  width: 12px;
+  height: 12px;
+  content: "";
+  background: currentColor;
+  -webkit-mask: var(--ha-icon-lock) center / contain no-repeat;
+  mask: var(--ha-icon-lock) center / contain no-repeat;
 }
 
 /* トップ専用の静的な見本画像。元の比率を保ち、狭い画面でも収める。 */
 .vl-hero-thread img.ha-photo {
   display: block;
+  width: min(220px, 72%);
   max-width: 100%;
   height: auto;
   object-fit: contain;
   background: none;
+  box-shadow: 0 0 0 2px #ff4fa0, 0 0 18px rgba(255, 79, 160, 0.35);
+}
+
+/* 口調の吹き出し。色・線・角は chat-persona.css の口調ごとの変数を使う（:where で既定値の強さを0にする）。 */
+:where(.vl-persona-bubble) {
+  --chat-surface: var(--ha-bubble-theirs);
+  --chat-text: var(--vs-pearl);
+  --chat-border: transparent;
+  --chat-border-width: 0px;
+  --chat-border-style: solid;
+  --chat-shadow: none;
+  --chat-radius: 16px;
+}
+
+.vl-hero-thread .ha-msg .ha-bubble.vl-persona-bubble {
+  position: relative;
+  color: var(--chat-text);
+  border: var(--chat-border-width) var(--chat-border-style) var(--chat-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-surface);
+  box-shadow: var(--chat-shadow);
+}
+
+.vl-hero-thread .ha-msg .ha-bubble.vl-persona-bubble::after {
+  position: absolute;
+  z-index: 2;
+  top: -11px;
+  right: -7px;
+  color: var(--chat-charm-color, #fff);
+  font-size: 0.82rem;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+
+.vl-hero-thread .chat-fx-hearts::before {
+  position: absolute;
+  z-index: 3;
+  left: 12px;
+  top: -15px;
+  width: 44px;
+  height: 22px;
+  content: "";
+  background: #ff7aa8;
+  -webkit-mask:
+    var(--cp-icon-heart) 0 4px / 16px 16px no-repeat,
+    var(--cp-icon-heart) 18px 0 / 12px 12px no-repeat,
+    var(--cp-icon-heart) 32px 8px / 10px 10px no-repeat;
+  mask:
+    var(--cp-icon-heart) 0 4px / 16px 16px no-repeat,
+    var(--cp-icon-heart) 18px 0 / 12px 12px no-repeat,
+    var(--cp-icon-heart) 32px 8px / 10px 10px no-repeat;
+  animation: cp-hearts-float 2600ms ease-in-out infinite;
+  pointer-events: none;
+}
+
+.vl-hero-thread .vl-persona-bubble.is-bump {
+  animation: vl-bump 450ms var(--vs-ease-snap) both;
+}
+
+.vl-hero-me {
+  display: inline-flex;
+  align-items: center;
+  color: var(--vs-dim);
+  font-size: 0.7rem;
+}
+
+.vl-crit {
+  position: absolute;
+  z-index: 3;
+  top: -12px;
+  left: -10px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  color: var(--ha-ink);
+  background: var(--vs-gold);
+  font: 600 0.62rem/1 var(--vs-font-number);
+  letter-spacing: 0.1em;
+  transform: rotate(-8deg);
+}
+
+/* 狭い画面では折り返す（末尾の♡と点を切らない） */
+.vl-hero-typing {
+  margin: 0;
+  color: var(--vs-mist);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.vl-hero-typing .chat-typing-dots {
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+/* 口調スイッチ：返事の吹き出しとセリフだけを差し替える（設定は変えない） */
+.vl-persona-switch {
+  display: grid;
+  gap: 8px;
+}
+
+.vl-persona-label {
+  margin: 0;
+  color: var(--vs-mist);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.vl-persona-chips {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.vl-persona-chip {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--vs-mist);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(248, 238, 242, 0.1);
+  font-size: 0.78rem;
+  font-weight: 700;
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.vl-persona-chip[aria-pressed="true"] {
+  color: var(--vs-pearl);
+  background: linear-gradient(135deg, rgba(255, 63, 134, 0.38), rgba(138, 26, 69, 0.6));
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 182, 0.65), 0 0 12px rgba(255, 63, 134, 0.3);
+}
+
+.vl-persona-chip:focus-visible {
+  outline: 2px solid var(--vs-rose-soft);
+  outline-offset: 2px;
+}
+
+/* 見本の演出：見えた時に1回だけ（landing-hero.mjs が is-intro を付ける。動きを減らす設定では付けない）。 */
+.vl-hero-thread.is-intro-ready .ha-photo,
+.vl-hero-thread.is-intro-ready .ha-msg.is-theirs .ha-bubble,
+.vl-hero-thread.is-intro-ready .ha-msg.is-mine,
+.vl-hero-thread.is-intro-ready .vl-crit,
+.vl-hero-thread.is-intro-ready .chat-reaction-sticker,
+.vl-hero-thread.is-intro-ready .vl-hero-typing {
+  opacity: 0;
+}
+
+.vl-hero-thread.is-intro .ha-photo {
+  animation: vs-fade-up 500ms var(--vs-ease-out) both;
+}
+
+.vl-hero-thread.is-intro .ha-msg.is-theirs .ha-bubble {
+  animation: vs-fade-up 500ms var(--vs-ease-out) 350ms both;
+}
+
+.vl-hero-thread.is-intro .ha-msg.is-mine {
+  animation: vs-fade-up 500ms var(--vs-ease-out) 900ms both;
+}
+
+.vl-hero-thread.is-intro .ha-meter10 i.is-on {
+  animation: vl-meter-fill 250ms ease both;
+  animation-delay: calc(950ms + var(--n, 0) * 75ms);
+}
+
+.vl-hero-thread.is-intro .vl-crit {
+  animation: vl-crit-pop 550ms var(--vs-ease-snap) 1700ms both;
+}
+
+.vl-hero-thread.is-intro .chat-reaction-sticker {
+  animation: cp-sticker-pop 620ms var(--vs-ease-snap) 2000ms both;
+}
+
+.vl-hero-thread.is-intro .vl-hero-typing {
+  animation: vs-fade-up 400ms var(--vs-ease-out) 2400ms both;
+}
+
+@keyframes vl-meter-fill {
+  from { background: var(--ha-bubble-theirs); }
+}
+
+@keyframes vl-crit-pop {
+  0% { opacity: 0; transform: scale(0) rotate(-24deg); }
+  70% { opacity: 1; transform: scale(1.2) rotate(-4deg); }
+  100% { opacity: 1; transform: rotate(-8deg); }
+}
+
+@keyframes vl-bump {
+  0% { transform: scale(0.94); }
+  60% { transform: scale(1.04); }
+  100% { transform: none; }
 }
 
 /* 通常型1on1の入口 */
 .vl-landing .hero-actions {
+  grid-area: actions;
   max-width: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -792,14 +1096,39 @@ a:focus-visible,
   align-items: center;
   gap: 7px;
   margin-top: 2px;
-  font: 500 0.8rem/1.2 var(--vs-font-number);
+  font-size: 0.78rem;
   font-style: normal;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
 }
 
 .vl-live b {
+  margin-inline: 1px;
+  font-family: var(--vs-font-number);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* 人数は0人をそのまま出さず、いる方だけを言葉にする。読めない時は出さない。 */
+.vl-live-sep,
+.vl-live-first {
+  display: none;
+}
+
+.vl-live[data-hero-live="unknown"] {
+  display: none;
+}
+
+.vl-live[data-hero-live="empty"] .vl-live-on,
+.vl-live[data-hero-live="waiting"] .vl-live-playing,
+.vl-live[data-hero-live="playing"] .vl-live-waiting {
+  display: none;
+}
+
+.vl-live[data-hero-live="empty"] .vl-live-first,
+.vl-live[data-hero-live="both"] .vl-live-sep {
+  display: inline;
 }
 
 .vl-live i {
@@ -821,6 +1150,125 @@ a:focus-visible,
   color: var(--vs-mist);
   font-size: 0.76rem;
   text-align: center;
+}
+
+/* 遊ぶ前の安心と手軽さ。入口のすぐ下に置く。 */
+.vl-trust {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vl-trust li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: var(--vs-pearl);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(248, 238, 242, 0.12);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.vl-trust i {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  background: var(--vs-rose-soft);
+  -webkit-mask: var(--ha-icon-lock) center / contain no-repeat;
+  mask: var(--ha-icon-lock) center / contain no-repeat;
+}
+
+.vl-trust i.is-bolt {
+  -webkit-mask-image: var(--ha-icon-bolt);
+  mask-image: var(--ha-icon-bolt);
+}
+
+.vl-trust i.is-spark {
+  -webkit-mask-image: var(--vs-icon-spark);
+  mask-image: var(--vs-icon-spark);
+}
+
+/* 名場面カードの予告。Xで見かけたカードと同じ見た目を小さく見せる。 */
+.vl-meibamen {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 0 1px var(--ha-line);
+}
+
+.vl-meibamen-card {
+  position: relative;
+  height: 112px;
+  padding: 9px 8px;
+  border-radius: 10px;
+  background: radial-gradient(90% 50% at 50% 0%, rgba(255, 63, 134, 0.3), transparent 70%), #160b18;
+  box-shadow: 0 0 0 1px rgba(230, 193, 122, 0.35), 0 8px 18px rgba(0, 0, 0, 0.5);
+  transform: rotate(-4deg);
+}
+
+.vl-meibamen-card b {
+  display: block;
+  color: var(--vs-pearl);
+  font: 400 0.55rem/1.25 var(--ha-font-display);
+}
+
+.vl-meibamen-card span {
+  display: block;
+  height: 9px;
+  margin-top: 7px;
+  border-radius: 5px;
+}
+
+.vl-meibamen-card .is-theirs {
+  width: 72%;
+  background: #5c0f4a;
+  box-shadow: 0 0 0 1px #ff4fa0;
+}
+
+.vl-meibamen-card .is-mine {
+  width: 62%;
+  margin-left: auto;
+  background: #6b1235;
+  box-shadow: 0 0 0 1px var(--vs-gold);
+}
+
+.vl-meibamen-card .is-masked {
+  width: 78%;
+  background: rgba(248, 238, 242, 0.22);
+}
+
+.vl-meibamen-card em {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  color: var(--vs-rose-soft);
+  font-size: 0.5rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.vl-meibamen-copy h2 {
+  margin: 0 0 4px;
+  color: var(--vs-pearl);
+  font-size: 0.95rem;
+}
+
+.vl-meibamen-copy p {
+  margin: 0;
+  color: var(--vs-mist);
+  font-size: 0.8rem;
+  line-height: 1.65;
 }
 
 /* いま入れる卓。募集の札をタイムラインのように縦に並べる。 */
@@ -1441,6 +1889,37 @@ a:focus-visible,
 
 }
 
+/* PC：左の列に見出しと入口、右の列に見本と口調スイッチ。入口も最初の画面に入れる。 */
+@media (min-width: 900px) {
+  .hero.vl-landing > .vl-hero {
+    grid-template-areas: "copy stage" "actions stage";
+    row-gap: 24px;
+  }
+
+  .vl-copy {
+    align-self: end;
+  }
+
+  .vl-landing .vl-hero > .hero-actions {
+    align-self: start;
+  }
+
+  .vl-trust {
+    justify-content: flex-start;
+  }
+
+  .vl-landing .vl-hero > .hero-actions .vl-rule {
+    text-align: left;
+  }
+
+  .hero.vl-landing > .vl-meibamen {
+    width: min(880px, 100%);
+    margin: 32px auto 0;
+    grid-template-columns: 104px minmax(0, 1fr);
+    padding: 16px 22px;
+  }
+}
+
 /* 推しカードの見出しは折り返さず、操作ボタンが入らない時は次の行へ送る */
 .vl-landing .community-message-head {
   flex-wrap: wrap;
@@ -1559,6 +2038,9 @@ a:focus-visible,
   .vs-foil-text,
   .vl-copy,
   .vl-hero-thread .ha-msg.is-mine,
+  .vl-hero-thread .chat-fx-hearts::before,
+  .vl-hero-thread .vl-persona-bubble.is-bump,
+  .vl-hero-typing .chat-typing-dots i,
   .vl-live i {
     animation: none;
   }
