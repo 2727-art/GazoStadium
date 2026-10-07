@@ -1,0 +1,245 @@
+{
+  "checkedAt": "2026-10-07T08:02:52.226Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "d24b2ae3840a85542ed4849371a8d7ec40c8b089",
+  "backendSourceCommit": "ae114937feceed220306c79e33ee46a3c5c56e50",
+  "scope": {
+    "functions": [
+      "playerSafetyAction",
+      "cleanupPlayerSafety"
+    ],
+    "databaseRules": true,
+    "hosting": true,
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "otherModesChanged": false
+  },
+  "behavior": {
+    "search": "Strategy 1on1: stop new matching after five continuous minutes hidden. On frozen-tab return, check elapsed wall time before resuming. Visible waiting is unchanged.",
+    "prestart": "Newly accepted matches receive a fixed server-owned five-minute deadline. Connecting, decisions, deck sealing, and both battle-start confirmations are included.",
+    "end": "Without both battleReady flags at deadline, end without wins, losses, rating, or Pay changes. Preserve deck/profile and require manual restart.",
+    "protection": "Exact queue joinedAt, room ID, temporary server reservation, and per-state/P2P callback guards protect concurrent new attempts and already-started battles.",
+    "serverCleanup": "Use the existing every-minute cleanupPlayerSafety scheduler with a private due-only expiry index, capped at 100 entries per pass. No new schedule or all-room scan.",
+    "legacy": "Existing rooms lacking prestartDeadlineAt are not retroactively expired.",
+    "unknownResult": "Remain pending, with bounded retries and no unconditional release or automatic restart."
+  },
+  "verification": {
+    "node": "22.23.2",
+    "fullSuite": {
+      "total": 1784,
+      "passed": 1756,
+      "failed": 0,
+      "skipped": 28,
+      "skipReason": "Opt-in emulator/environment suites"
+    },
+    "frontendRuntime": {
+      "passed": 24
+    },
+    "emulator": {
+      "passed": 43,
+      "failed": 0,
+      "skipped": 0,
+      "project": "demo-strategy-idle-guard",
+      "files": [
+        "strategy-idle-server-emulator.test.js",
+        "strategy-idle-rules-emulator.test.js",
+        "player-safety-strategy-emulator.test.js",
+        "player-safety-emulator.test.js",
+        "strategy-hariai-rules-emulator.test.js",
+        "strategy-matchmaking-recovery-rules-emulator.test.js",
+        "strategy-public-presence-rules-emulator.test.js"
+      ],
+      "lastFrontendOnlyFollowup": "After the emulator pass, a frontend-only server-clock listener registration ordering change and its runtime test were added. Backend and Rules unchanged."
+    },
+    "independentReview": "Clear, including clock correction, cold-cache transaction ownership, TTL crossing, new-tab fences, and authenticated start/expiry races.",
+    "liveRules": {
+      "exactParsedJsonMatch": true,
+      "checkedAt": "2026-10-07T08:00:16.175Z"
+    },
+    "functions": [
+      {
+        "name": "playerSafetyAction",
+        "state": "ACTIVE",
+        "updated": "2026-10-07T08:01:24.293099293Z",
+        "runtime": "nodejs22",
+        "revision": "playersafetyaction-00007-lah",
+        "uri": "https://playersafetyaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "d1a3868e47452f09c7992c2a05eca7b0534977cc"
+      },
+      {
+        "name": "cleanupPlayerSafety",
+        "state": "ACTIVE",
+        "updated": "2026-10-07T08:01:32.723579907Z",
+        "runtime": "nodejs22",
+        "revision": "cleanupplayersafety-00007-pul",
+        "uri": "https://cleanupplayersafety-we5jrxqzcq-uc.a.run.app",
+        "hash": "d1a3868e47452f09c7992c2a05eca7b0534977cc"
+      }
+    ],
+    "unchangedFunctions": 36,
+    "auth": {
+      "function": "playerSafetyAction",
+      "status": 401,
+      "code": "UNAUTHENTICATED",
+      "ok": true
+    },
+    "logs": [
+      {
+        "service": "playersafetyaction",
+        "revision": "playersafetyaction-00007-lah",
+        "startupSucceeded": true,
+        "successfulHttp200": true
+      },
+      {
+        "service": "cleanupplayersafety",
+        "revision": "cleanupplayersafety-00007-pul",
+        "startupSucceeded": true,
+        "successfulHttp200": true
+      }
+    ],
+    "errorCheck": [
+      {
+        "service": "playersafetyaction",
+        "errorCount": 0,
+        "checkedAt": "2026-10-07T08:03:24.517Z"
+      },
+      {
+        "service": "cleanupplayersafety",
+        "errorCount": 0,
+        "checkedAt": "2026-10-07T08:03:24.460Z"
+      }
+    ],
+    "public": {
+      "checkedAt": "2026-10-07T08:02:52.226Z",
+      "readOnly": true,
+      "marker": "strategy-idle-guard-v1",
+      "routes": [
+        {
+          "origin": "https://gazostadium.web.app",
+          "indexOk": true,
+          "assets": [
+            {
+              "file": "strategy.js",
+              "url": "https://gazostadium.web.app/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1",
+              "status": 200,
+              "sha256LF": "22c9c2be983a2defa11db2dec9bb9e5aac3b4ec307b85353f3e37aa9a66c9f0f",
+              "ok": true
+            },
+            {
+              "file": "strategy-idle-guard.mjs",
+              "url": "https://gazostadium.web.app/strategy-idle-guard.mjs?v=strategy-idle-guard-v1",
+              "status": 200,
+              "sha256LF": "d3970222eb7e073bb946709cb1f719df87c0e8c40b6fee1312e53ee765c122bf",
+              "ok": true
+            }
+          ],
+          "excluded": [
+            {
+              "file": "/database.rules.json",
+              "status": 404
+            },
+            {
+              "file": "/functions/index.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/player-safety-strategy.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/test/strategy-idle-rules-emulator.test.js",
+              "status": 404
+            }
+          ],
+          "ok": true
+        },
+        {
+          "origin": "https://gazostadium.firebaseapp.com",
+          "indexOk": true,
+          "assets": [
+            {
+              "file": "strategy.js",
+              "url": "https://gazostadium.firebaseapp.com/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1",
+              "status": 200,
+              "sha256LF": "22c9c2be983a2defa11db2dec9bb9e5aac3b4ec307b85353f3e37aa9a66c9f0f",
+              "ok": true
+            },
+            {
+              "file": "strategy-idle-guard.mjs",
+              "url": "https://gazostadium.firebaseapp.com/strategy-idle-guard.mjs?v=strategy-idle-guard-v1",
+              "status": 200,
+              "sha256LF": "d3970222eb7e073bb946709cb1f719df87c0e8c40b6fee1312e53ee765c122bf",
+              "ok": true
+            }
+          ],
+          "excluded": [
+            {
+              "file": "/database.rules.json",
+              "status": 404
+            },
+            {
+              "file": "/functions/index.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/player-safety-strategy.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/test/strategy-idle-rules-emulator.test.js",
+              "status": 404
+            }
+          ],
+          "ok": true
+        },
+        {
+          "origin": "https://gazostadium.anjugames.workers.dev",
+          "indexOk": true,
+          "assets": [
+            {
+              "file": "strategy.js",
+              "url": "https://gazostadium.anjugames.workers.dev/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1",
+              "status": 200,
+              "sha256LF": "22c9c2be983a2defa11db2dec9bb9e5aac3b4ec307b85353f3e37aa9a66c9f0f",
+              "ok": true
+            },
+            {
+              "file": "strategy-idle-guard.mjs",
+              "url": "https://gazostadium.anjugames.workers.dev/strategy-idle-guard.mjs?v=strategy-idle-guard-v1",
+              "status": 200,
+              "sha256LF": "d3970222eb7e073bb946709cb1f719df87c0e8c40b6fee1312e53ee765c122bf",
+              "ok": true
+            }
+          ],
+          "excluded": [
+            {
+              "file": "/database.rules.json",
+              "status": 404
+            },
+            {
+              "file": "/functions/index.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/player-safety-strategy.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/test/strategy-idle-rules-emulator.test.js",
+              "status": 404
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "ok": true
+    }
+  },
+  "limitations": [
+    "No real-user match or production queue was created for verification.",
+    "Real smartphone background throttling and extended live play have not been manually verified.",
+    "Actual billing reduction requires post-release usage data; no savings amount is claimed.",
+    "Only clients that load the updated Hosting code get the new hidden-search UI guard. Server deadlines apply to newly accepted matches."
+  ]
+}
