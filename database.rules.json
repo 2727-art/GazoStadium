@@ -1948,6 +1948,12 @@
               },
               "chatBackgroundId": {
                 ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/chatBackground').val())"
+              },
+              "voiceSetId": {
+                ".validate": "!newData.exists() || (newData.isString() && newData.val().matches(/^(tsuyotsuyo|yowayowa|koakuma|oneesan|amaenbo|seiso)$/))"
+              },
+              "effect": {
+                ".validate": "!newData.exists() || (newData.isString() && newData.val().matches(/^(whisper|emphasis|tremble|hearts)$/) && !newData.parent().child('stampId').exists())"
               }
             }
           },

@@ -280,7 +280,7 @@ test("chat submission clears only a successfully sent unchanged draft", async ()
 });
 
 test("incoming messages refresh only the list and the release is cache-busted", () => {
-  const refreshSource = sourceBlock("function refreshChat()", "function scrollChat()");
+  const refreshSource = sourceBlock("function refreshChat(", "function scrollChat()");
   assert.match(refreshSource, /querySelector\("#onlineChatMessages"\)/);
   assert.match(refreshSource, /list\.innerHTML = next\.innerHTML/);
   assert.doesNotMatch(refreshSource, /\brender\(|appRoot\.innerHTML|onlineChatInput/);

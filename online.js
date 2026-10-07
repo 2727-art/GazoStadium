@@ -47,6 +47,7 @@ import {
   CHAT_SPECIAL_FRAME_PRODUCTS,
   CHAT_STANDARD_FRAME_PRODUCTS,
   chatCosmeticClassNames,
+  getChatCosmeticProduct,
   getEquippedChatCosmetics,
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
 import {
@@ -72,6 +73,22 @@ import {
   renderStampBubble,
   startStampButtonCooldown,
 } from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
+import {
+  TYPING_SEND_INTERVAL_MS,
+  TYPING_VISIBLE_MS,
+  chatEffectClass,
+  chatPersonaBubbleClass,
+  normalizeChatEffect,
+  normalizeChatPersonaId,
+  normalizeChatReactionId,
+  openShareCardDialog,
+  personaTypingText,
+  renderChatEffectPicker,
+  renderChatEffectText,
+  renderChatPersonaMark,
+  renderChatReactionPicker,
+  renderChatReactionSticker,
+} from "./chat-persona.mjs?v=chat-persona-v1";
 import {
   bindPostMatchTip,
   isPostMatchTipBusy,
@@ -679,6 +696,19 @@ function createOnlineState() {
     chatDraftRevision: 0,
     chatSendInFlight: false,
     seenChatIds: new Set(),
+    chatEffect: "",
+    chatReactions: new Map(),
+    chatFreshReactionIds: new Set(),
+    chatAnimatedIds: new Set(),
+    chatReactionPickerId: "",
+    chatTypingSentAt: 0,
+    remoteTyping: null,
+    remoteTypingTimer: null,
+    shareConsent: "none",
+    shareConsentRequestId: "",
+    incomingShareConsentRequestId: "",
+    shareConsentAnswered: false,
+    shareCardController: null,
     matchingBusy: false,
     matchmakingLaunchBusy: false,
     matchmakingLaunchGeneration: 0,
@@ -1792,11 +1822,6 @@ function attachEquippedChatCosmetics(message, economy = state.economy) {
   return message;
 }
 
-function renderChatCosmeticBubble(text, message = {}) {
-  const classes = chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId);
-  return `<p${classes ? ` class="${classes}"` : ""}>${escapeHtml(text)}</p>`;
-}
-
 function openOnlineScreen(screen) {
   if (useOfflineMarketPreview) {
     if (screen === "shop" || screen === "missions" || screen === "creatorCard") {
@@ -2066,10 +2091,13 @@ async function startBattlePreview() {
     round: 3,
     roleplayVoiceFallbackId: "koakuma",
     chatMessages: [
-      { id: "preview-1", authorUid: "preview-remote", name: "シオン", text: "よろしくお願いします！", round: 1 },
-      { id: "preview-2", authorUid: "preview-local", name: "ルミナ", text: "今夜は本気の5枚で来ました", round: 1 },
-      { id: "preview-3", authorUid: "preview-remote", name: "シオン", text: "その衣装の色づかい、ずるい…", round: 2 },
+      { id: "preview-1", authorUid: "preview-remote", name: "シオン", text: "よろしくお願いします！", round: 1, voiceSetId: "oneesan" },
+      { id: "preview-2", authorUid: "preview-local", name: "ルミナ", text: "今夜は本気の5枚で来ました", round: 1, voiceSetId: "koakuma", effect: "emphasis" },
+      { id: "preview-3", authorUid: "preview-remote", name: "シオン", text: "その衣装の色づかい、ずるい…", round: 2, voiceSetId: "oneesan", effect: "tremble" },
+      { id: "preview-4", authorUid: "preview-local", name: "ルミナ", text: "ふふ、もっと見たい？", round: 2, voiceSetId: "koakuma", effect: "whisper" },
+      { id: "preview-5", authorUid: "preview-remote", name: "シオン", text: "見たいです…次も楽しみにしてます", round: 3, voiceSetId: "oneesan", effect: "hearts" },
     ],
+    chatReactions: new Map([["preview-2", "crown"], ["preview-3", "heart"]]),
   });
   deck[0].caption = "今日の本命、どうぞ♡";
   deck[1].caption = "ねぇ、これ好きでしょ？♡";
@@ -5787,6 +5815,8 @@ function renderCardBack() {
 }
 
 function renderBattleChatPeek() {
+  const typing = activeRemoteTyping();
+  if (typing) return `<b>${escapeHtml(getOpponent()?.name || "相手")}</b>${escapeHtml(personaTypingText(typing.voiceSetId, getOpponent()?.name).replace(/^.+?が、?/, ""))}`;
   const message = state.chatMessages.at(-1);
   if (!message) return '<span class="vb-chat-peek-empty">画像について話してみましょう</span>';
   const body = message.stampId ? "スタンプを送りました" : String(message.text || "");
@@ -6309,9 +6339,9 @@ function renderGameOver() {
     ${state.playerSafetyStopped ? "" : renderEngawaInvitation()}
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>AnjuPay ◆ ${formatAnjuPay(state.economy.points)}</strong></div>
       <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
-    ${state.playerSafetyStopped ? '<p role="status">この相手との交流を終了しました。確定済みの結果は残ります。</p>' : `<div class="result-chat">${renderOnlineChat()}</div>${renderPostMatchTip({ mode: "solo", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}`}
+    ${state.playerSafetyStopped ? '<p role="status">この相手との交流を終了しました。確定済みの結果は残ります。</p>' : `${renderShareConsentAsk()}<div class="result-chat">${renderOnlineChat()}</div>${renderPostMatchTip({ mode: "solo", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}`}
     <div id="onlineFreeTableLampSlot" class="free-table-result-lamp-slot" data-free-table-lamp-refresh>${renderFreeTableResultLampContent({ buttonId: "onlineFreeTableLampButton" })}</div>
-    <div class="gameover-actions">${shareButton}<button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
+    <div class="gameover-actions">${shareButton}${state.playerSafetyStopped ? "" : '<button class="button button-ghost" type="button" id="onlineShareCard">名場面カードを作る</button>'}<button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
       <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
       <button class="button button-ghost" id="onlineGameoverHome">タイトルへ戻る</button></div>
   </div></section>`;
@@ -6526,22 +6556,62 @@ function renderError() {
   });
 }
 
+// なりきり吹き出し：口調の吹き出し（購入した枠・背景が優先）、言い方の演出、相手の吹き出しへのリアクション。
+function renderOnlineChatMessage(message) {
+  const authorIndex = state.players.findIndex((player) => player.uid === message.authorUid);
+  const messageId = String(message.id || "");
+  const cosmetic = chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId);
+  const personaId = normalizeChatPersonaId(message.voiceSetId);
+  const bubbleSkin = cosmetic || chatPersonaBubbleClass(personaId, cosmetic);
+  const effect = message.stampId ? "" : normalizeChatEffect(message.effect);
+  const entering = Boolean(effect && messageId) && !state.chatAnimatedIds.has(messageId);
+  if (messageId) state.chatAnimatedIds.add(messageId);
+  const bubbleClasses = [bubbleSkin, chatEffectClass(effect), entering ? "is-entering" : ""].filter(Boolean).join(" ");
+  const content = message.stampId
+    ? renderStampBubble(message.stampId, bubbleSkin)
+    : `<p${bubbleClasses ? ` class="${bubbleClasses}"` : ""}>${renderChatEffectText(message.text, effect)}</p>`;
+  const reactionId = messageId ? normalizeChatReactionId(state.chatReactions.get(messageId)) : "";
+  const sticker = renderChatReactionSticker(reactionId, { fresh: state.chatFreshReactionIds.delete(messageId) });
+  const canReact = canReactToChatMessage(message);
+  const pickerOpen = canReact && state.chatReactionPickerId === messageId;
+  const toggle = canReact
+    ? `<button type="button" class="chat-react-toggle" data-chat-react-toggle="${escapeHtml(messageId)}" aria-expanded="${pickerOpen}" aria-label="${escapeHtml(message.name)}の吹き出しにリアクション"></button>`
+    : "";
+  return `<div class="chat-message ${authorIndex === 1 ? "player-two" : "player-one"}${reactionId ? " has-reaction" : ""}" data-chat-message-id="${escapeHtml(messageId)}"><small>${renderChatPersonaMark(personaId)}${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small><span class="chat-bubble-row"><span class="chat-bubble-anchor">${content}${sticker}</span>${toggle}</span>${pickerOpen ? renderChatReactionPicker(messageId, reactionId) : ""}</div>`;
+}
+
+function canReactToChatMessage(message) {
+  return Boolean(message?.id)
+    && message.authorUid !== state.uid
+    && state.players.some((player) => player.uid === message.authorUid)
+    && !state.playerSafetyStopped;
+}
+
+function activeRemoteTyping(targetState = state) {
+  const typing = targetState.remoteTyping;
+  return typing && typing.until > Date.now() ? typing : null;
+}
+
+function renderChatTypingContent(typing) {
+  return `${renderChatPersonaMark(typing.voiceSetId)}<span>${escapeHtml(personaTypingText(typing.voiceSetId, getOpponent()?.name))}</span><span class="chat-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
+}
+
 function renderOnlineChat() {
-  const messages = state.chatMessages.length ? state.chatMessages.map((message) => {
-    const authorIndex = state.players.findIndex((player) => player.uid === message.authorUid);
-    const content = message.stampId
-      ? renderStampBubble(message.stampId, chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId))
-      : renderChatCosmeticBubble(message.text, message);
-    return `<div class="chat-message ${authorIndex === 1 ? "player-two" : "player-one"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small>${content}</div>`;
-  }).join("") : `<div class="chat-empty">画像について話してみましょう。<br />チャットはルーム内の2人だけに表示されます。</div>`;
+  const messages = state.chatMessages.length
+    ? state.chatMessages.map(renderOnlineChatMessage).join("")
+    : `<div class="chat-empty">画像について話してみましょう。<br />チャットはルーム内の2人だけに表示されます。</div>`;
   const reactions = [
     ...DEFAULT_REACTIONS,
     ...getEquippedReactionProducts().map((product) => product.reaction),
   ];
+  const typing = activeRemoteTyping();
+  const effect = normalizeChatEffect(state.chatEffect);
   return `<aside class="chat-panel"><div class="chat-head"><strong>ONLINE CHAT</strong><span>ルーム終了後に非表示</span></div>
     <div class="chat-messages" id="onlineChatMessages">${messages}</div>
+    <p class="chat-typing" id="onlineChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderChatTypingContent(typing) : ""}</p>
     ${renderChatTools({ id: "online", textReactions: reactions, stamps: getAvailableStamps(state.economy), textAttribute: "data-online-reaction", stampAttribute: "data-online-stamp" })}
-    <form class="chat-form" id="onlineChatForm"><input class="chat-input" id="onlineChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="ひとこと送る…" autocomplete="off" aria-label="チャットメッセージ" />
+    ${renderChatEffectPicker(effect, { disabled: state.playerSafetyStopped })}
+    <form class="chat-form${effect ? " has-effect" : ""}" id="onlineChatForm"><input class="chat-input" id="onlineChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="ひとこと送る…" autocomplete="off" aria-label="チャットメッセージ" />
       <button class="button button-cyan button-small" type="submit"${state.chatSendInFlight ? " disabled" : ""}>送信</button></form></aside>`;
 }
 
@@ -6616,6 +6686,11 @@ function bindScreenEvents() {
       onBalanceChange: (balance) => { state.economy.points = balance; },
     });
     bindEngawaInvitationEvents(appRoot);
+    document.querySelector("#onlineShareCard")?.addEventListener("click", openOnlineShareCard);
+    document.querySelector(".vb-gameover-card")?.addEventListener("click", (event) => {
+      const answer = event.target.closest("[data-share-consent-answer]");
+      if (answer) answerShareConsent(answer.dataset.shareConsentAnswer === "grant");
+    });
     document.querySelector("#onlineNewMatch")?.addEventListener("click", resetOnlineSetup);
     document.querySelector("#onlineFreeTableLampButton")?.addEventListener("click", leaveToFreeTable);
     document.querySelector("#onlineGameoverMissions")?.addEventListener("click", openPostMatchMissions);
@@ -7570,6 +7645,22 @@ function bindChatEvents() {
   const input = document.querySelector("#onlineChatInput");
   input?.addEventListener("input", () => captureOnlineChatDraft(input));
   input?.addEventListener("compositionend", () => captureOnlineChatDraft(input));
+  // 入力中の合図はフォームで拾う（下書きの保存とは別にする）。
+  const chatForm = document.querySelector("#onlineChatForm");
+  chatForm?.addEventListener("input", () => notifyLocalTyping(Boolean(state.chatDraft.trim())));
+  chatForm?.addEventListener("focusout", () => notifyLocalTyping(false));
+  const effectPicker = document.querySelector(".chat-panel .chat-effect-picker");
+  // キーボードを開いたまま言い方を切り替えられるよう、チップを押してもフォーカスを奪わない。
+  effectPicker?.addEventListener("pointerdown", (event) => {
+    if (document.activeElement === input && event.target.closest("[data-chat-effect]")) event.preventDefault();
+  });
+  effectPicker?.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-chat-effect]");
+    if (!chip || chip.disabled) return;
+    const next = normalizeChatEffect(chip.dataset.chatEffect);
+    setChatEffect(next && next === state.chatEffect ? "" : next);
+  });
+  document.querySelector("#onlineChatMessages")?.addEventListener("click", handleChatReactionClick);
   document.querySelector("#onlineChatForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -7622,6 +7713,257 @@ function captureOnlineChatDraft(input = document.querySelector("#onlineChatInput
   if (draft === state.chatDraft) return;
   state.chatDraft = draft;
   state.chatDraftRevision += 1;
+}
+
+function setChatEffect(value) {
+  state.chatEffect = normalizeChatEffect(value);
+  document.querySelectorAll(".chat-panel [data-chat-effect]").forEach((chip) => {
+    chip.setAttribute("aria-pressed", String(normalizeChatEffect(chip.dataset.chatEffect) === state.chatEffect));
+  });
+  document.querySelector("#onlineChatForm")?.classList.toggle("has-effect", Boolean(state.chatEffect));
+}
+
+// 入力中・リアクション・名場面カードの許可は、Firebaseを通さずP2Pだけで送る。
+function sendChatPeerMessage(payload, targetState = state) {
+  const channel = targetState.channel;
+  if (!channel || channel.readyState !== "open" || targetState.playerSafetyStopped) return false;
+  try {
+    channel.send(JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function notifyLocalTyping(active, targetState = state) {
+  if (useOfflineBattlePreview) return;
+  const now = Date.now();
+  if (active) {
+    if (now - targetState.chatTypingSentAt < TYPING_SEND_INTERVAL_MS) return;
+    targetState.chatTypingSentAt = now;
+  } else {
+    if (!targetState.chatTypingSentAt) return;
+    targetState.chatTypingSentAt = 0;
+  }
+  sendChatPeerMessage({ type: "chat-typing", active: Boolean(active), voiceSetId: localRoleplayVoiceSetId(targetState) }, targetState);
+}
+
+function syncChatTyping(targetState = state) {
+  if (state !== targetState) return;
+  const typing = activeRemoteTyping(targetState);
+  const line = document.querySelector("#onlineChatTyping");
+  if (line) {
+    line.innerHTML = typing ? renderChatTypingContent(typing) : "";
+    line.hidden = !typing;
+  }
+  const peek = document.querySelector("#battleChatPeek");
+  if (peek) {
+    peek.innerHTML = renderBattleChatPeek();
+    peek.classList.toggle("is-typing", Boolean(typing));
+  }
+}
+
+function clearRemoteTyping(targetState = state) {
+  window.clearTimeout(targetState.remoteTypingTimer);
+  targetState.remoteTypingTimer = null;
+  targetState.remoteTyping = null;
+  syncChatTyping(targetState);
+}
+
+function handleRemoteChatTyping(message, targetState = state) {
+  if (targetState.playerSafetyStopped) return;
+  if (message?.active !== true) {
+    clearRemoteTyping(targetState);
+    return;
+  }
+  window.clearTimeout(targetState.remoteTypingTimer);
+  targetState.remoteTyping = { voiceSetId: normalizeChatPersonaId(message.voiceSetId), until: Date.now() + TYPING_VISIBLE_MS };
+  targetState.remoteTypingTimer = window.setTimeout(() => clearRemoteTyping(targetState), TYPING_VISIBLE_MS);
+  syncChatTyping(targetState);
+}
+
+function handleChatReactionClick(event) {
+  const toggle = event.target.closest("[data-chat-react-toggle]");
+  if (toggle) {
+    const messageId = toggle.dataset.chatReactToggle;
+    state.chatReactionPickerId = state.chatReactionPickerId === messageId ? "" : messageId;
+    refreshChat({ preserveScroll: true });
+    if (state.chatReactionPickerId) document.querySelector("[data-chat-react-picker] [data-chat-react-pick]")?.focus({ preventScroll: true });
+    return;
+  }
+  const pick = event.target.closest("[data-chat-react-pick]");
+  if (pick) setLocalChatReaction(pick.closest("[data-chat-react-picker]")?.dataset.chatReactPicker, pick.dataset.chatReactPick);
+}
+
+function setLocalChatReaction(messageId, value) {
+  const message = state.chatMessages.find((entry) => entry.id === messageId);
+  if (!message || !canReactToChatMessage(message)) return;
+  const reactionId = normalizeChatReactionId(value);
+  if (!useOfflineBattlePreview && !sendChatPeerMessage({ type: "chat-reaction", messageId, reactionId })) {
+    showToast("相手との接続が切れているため、リアクションを送れませんでした。");
+    return;
+  }
+  if (reactionId) {
+    state.chatReactions.set(messageId, reactionId);
+    state.chatFreshReactionIds.add(messageId);
+  } else {
+    state.chatReactions.delete(messageId);
+  }
+  state.chatReactionPickerId = "";
+  refreshChat({ preserveScroll: true });
+}
+
+function handleRemoteChatReaction(message, targetState = state) {
+  if (targetState.playerSafetyStopped || typeof message?.messageId !== "string" || message.messageId.length > 64) return;
+  const target = targetState.chatMessages.find((entry) => entry.id === message.messageId);
+  // 相手が付けられるのは、こちらが書いた吹き出しだけ。
+  if (!target || target.authorUid !== targetState.uid) return;
+  const reactionId = normalizeChatReactionId(message.reactionId);
+  if (reactionId) {
+    targetState.chatReactions.set(target.id, reactionId);
+    targetState.chatFreshReactionIds.add(target.id);
+  } else {
+    targetState.chatReactions.delete(target.id);
+  }
+  if (state === targetState) refreshChat({ preserveScroll: true });
+}
+
+function resetChatPersonaState(targetState = state) {
+  window.clearTimeout(targetState.remoteTypingTimer);
+  const controller = targetState.shareCardController;
+  Object.assign(targetState, {
+    chatEffect: "",
+    chatReactions: new Map(),
+    chatFreshReactionIds: new Set(),
+    chatAnimatedIds: new Set(),
+    chatReactionPickerId: "",
+    chatTypingSentAt: 0,
+    remoteTyping: null,
+    remoteTypingTimer: null,
+    shareConsent: "none",
+    shareConsentRequestId: "",
+    incomingShareConsentRequestId: "",
+    shareConsentAnswered: false,
+    shareCardController: null,
+  });
+  controller?.close();
+}
+
+/* ---------- 名場面カード ---------- */
+
+function createShareConsentRequestId() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function requestShareConsent(targetState = state) {
+  if (targetState.shareConsent !== "none") return false;
+  const requestId = createShareConsentRequestId();
+  if (useOfflineBattlePreview) {
+    targetState.shareConsent = "pending";
+    targetState.shareConsentRequestId = requestId;
+    window.setTimeout(() => handleRemoteShareConsent({ requestId, granted: true }, targetState), 1_600);
+    return true;
+  }
+  if (!sendChatPeerMessage({ type: "share-consent-request", requestId }, targetState)) {
+    targetState.shareConsent = "unavailable";
+    return false;
+  }
+  targetState.shareConsent = "pending";
+  targetState.shareConsentRequestId = requestId;
+  return true;
+}
+
+function handleRemoteShareConsent(message, targetState = state) {
+  if (targetState.shareConsent !== "pending" || message?.requestId !== targetState.shareConsentRequestId) return;
+  targetState.shareConsent = message.granted === true ? "granted" : "denied";
+  if (state !== targetState) return;
+  targetState.shareCardController?.refresh();
+  showToast(targetState.shareConsent === "granted" ? "相手が名場面カードへの掲載を許可しました。" : "相手は今回の掲載を見送りました。相手の発言はぼかして載せます。");
+}
+
+function handleRemoteShareConsentRequest(message, targetState = state) {
+  const requestId = typeof message?.requestId === "string" && /^[0-9a-f]{16}$/.test(message.requestId) ? message.requestId : "";
+  if (!requestId || targetState.playerSafetyStopped || targetState.shareConsentAnswered) return;
+  targetState.incomingShareConsentRequestId = requestId;
+  if (state !== targetState) return;
+  syncShareConsentAsk();
+  showToast(`${getOpponent()?.name || "相手"}さんが、名場面カードへの掲載の許可を求めています。`);
+}
+
+function answerShareConsent(granted, targetState = state) {
+  const requestId = targetState.incomingShareConsentRequestId;
+  if (!requestId) return;
+  targetState.incomingShareConsentRequestId = "";
+  targetState.shareConsentAnswered = true;
+  const sent = sendChatPeerMessage({ type: "share-consent", requestId, granted: Boolean(granted) }, targetState);
+  syncShareConsentAsk();
+  showToast(!sent ? "相手との接続が切れているため、返事を届けられませんでした。" : granted ? "掲載を許可しました。" : "今回は見送りました。あなたの発言はぼかして載ります。");
+}
+
+function renderShareConsentAsk() {
+  const requestId = state.incomingShareConsentRequestId;
+  const content = requestId
+    ? `<p>${escapeHtml(getOpponent()?.name || "相手")}さんが「名場面カード」の画像に、あなたの名前と発言をそのまま載せたいそうです。見送ると、あなたの発言はぼかして載ります。</p><div><button type="button" class="button button-primary button-small" data-share-consent-answer="grant">許可する</button><button type="button" class="button button-ghost button-small" data-share-consent-answer="deny">今回は見送る</button></div>`
+    : "";
+  return `<section class="share-consent-ask" id="onlineShareConsentAsk" aria-label="名場面カードへの掲載の確認"${requestId ? "" : " hidden"}>${content}</section>`;
+}
+
+function syncShareConsentAsk() {
+  const slot = document.querySelector("#onlineShareConsentAsk");
+  if (!slot) return;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderShareConsentAsk();
+  slot.replaceWith(wrapper.firstElementChild);
+}
+
+function canOpenShareCard() {
+  return !state.playerSafetyStopped && state.chatMessages.some((message) => message?.id && (message.text || message.stampId));
+}
+
+function openOnlineShareCard() {
+  if (state.shareCardController?.isOpen()) return;
+  if (!canOpenShareCard()) {
+    showToast("カードにできる発言がまだありません。チャットで話してから作れます。");
+    return;
+  }
+  const outcome = state.outcome;
+  const localPlayer = state.players[state.playerIndex];
+  const localResult = !outcome ? "" : outcome.winnerIndex === null ? "DRAW" : outcome.winnerIndex === state.playerIndex ? "WIN" : "LOSE";
+  const frame = getChatCosmeticProduct(getEquippedChatCosmetics(state.economy).chatFrameId, "chatFrame");
+  const targetState = state;
+  targetState.shareCardController = openShareCardDialog({
+    messages: targetState.chatMessages.slice(-50),
+    localUid: targetState.uid,
+    players: targetState.players,
+    result: localResult ? { result: localResult, details: [`残りHP ${Number(localPlayer?.hp || 0)}`, `全${targetState.round}ラウンド`] } : null,
+    modeLabel: "通常型1on1",
+    reactions: targetState.chatReactions,
+    cosmeticClasses: chatCosmeticClassNames,
+    getStamp,
+    localFrameLabel: frame?.name || "",
+    getConsent: () => targetState.shareConsent,
+    requestConsent: () => requestShareConsent(targetState),
+    onClose: () => {
+      targetState.shareCardController = null;
+      document.querySelector("#onlineShareCard")?.focus({ preventScroll: true });
+    },
+  });
+}
+
+// プレビューでは、相手が入力して口紅を付ける流れを手元で再現する。
+function simulatePreviewChatResponse(messageId) {
+  const targetState = state;
+  window.setTimeout(() => handleRemoteChatTyping({ active: true, voiceSetId: "oneesan" }, targetState), 500);
+  window.setTimeout(() => {
+    clearRemoteTyping(targetState);
+    const message = targetState.chatMessages.find((entry) => entry.id === messageId);
+    if (!message || state !== targetState) return;
+    targetState.chatReactions.set(messageId, "kiss");
+    targetState.chatFreshReactionIds.add(messageId);
+    refreshChat({ preserveScroll: true });
+  }, 2_600);
 }
 
 async function handleImageInput(event) {
@@ -10252,6 +10594,7 @@ async function setupRoomListeners(context) {
     state.seenChatIds.add(snapshot.key);
     state.chatMessages.push({ id: snapshot.key, ...snapshot.val() });
     if (state.chatMessages.length > 50) state.chatMessages.shift();
+    if (snapshot.val()?.authorUid !== state.uid && state.remoteTyping) clearRemoteTyping(state);
     refreshChat();
   }));
   listenToRound(context);
@@ -11032,6 +11375,14 @@ async function handleChannelMessage(data, expectedState = state, expectedChannel
       handleRemoteFinishReplyAck(message, expectedState, expectedChannel);
     } else if (message.type === "score-reaction") {
       handleRemoteScoreReaction(message, expectedState);
+    } else if (message.type === "chat-typing") {
+      handleRemoteChatTyping(message, expectedState);
+    } else if (message.type === "chat-reaction") {
+      handleRemoteChatReaction(message, expectedState);
+    } else if (message.type === "share-consent-request") {
+      handleRemoteShareConsentRequest(message, expectedState);
+    } else if (message.type === "share-consent") {
+      handleRemoteShareConsent(message, expectedState);
     } else if (message.type === "profile-avatar-start") {
       assertIncomingTransferNamespaceExclusive(state, "profile");
       if (state.incomingAvatarTransfer) {
@@ -12210,9 +12561,14 @@ async function sendChat(value, stampId = "") {
   }
   const text = stamp ? stamp.label : String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId) return false;
+  const voiceSetId = normalizeChatPersonaId(localRoleplayVoiceSetId());
+  const effect = stamp ? "" : normalizeChatEffect(state.chatEffect);
   if (useOfflineBattlePreview) {
-    state.chatMessages.push({ id: `preview-${Date.now()}`, authorUid: state.uid, name: state.players[state.playerIndex]?.name || "PLAYER", text, stampId: stamp ? stampId : "", round: state.round });
+    const id = `preview-${Date.now()}`;
+    state.chatMessages.push({ id, authorUid: state.uid, name: state.players[state.playerIndex]?.name || "PLAYER", text, stampId: stamp ? stampId : "", round: state.round, voiceSetId, effect });
+    if (effect) setChatEffect("");
     refreshChat();
+    simulatePreviewChatResponse(id);
     return true;
   }
   try {
@@ -12223,6 +12579,8 @@ async function sendChat(value, stampId = "") {
       round: state.round,
       createdAt: serverTimestamp(),
     };
+    if (voiceSetId) message.voiceSetId = voiceSetId;
+    if (effect) message.effect = effect;
     if (stamp) {
       message.stampId = stamp.id;
       startStampButtonCooldown("[data-online-stamp]");
@@ -12231,6 +12589,8 @@ async function sendChat(value, stampId = "") {
     if (equippedTitle && state.economy.inventory?.[equippedTitle.id]) message.titleId = equippedTitle.id;
     attachEquippedChatCosmetics(message);
     await set(push(ref(database, `online/rooms/${state.roomId}/chat`)), message);
+    if (effect && state.chatEffect === effect) setChatEffect("");
+    notifyLocalTyping(false);
     return true;
   } catch {
     showToast("チャットを送信できませんでした。");
@@ -12238,17 +12598,27 @@ async function sendChat(value, stampId = "") {
   }
 }
 
-function refreshChat() {
+function refreshChat({ preserveScroll = false } = {}) {
   const list = document.querySelector("#onlineChatMessages");
   if (!list) return;
+  const scrollTop = list.scrollTop;
   const wrapper = document.createElement("div");
   wrapper.innerHTML = renderOnlineChat();
   const next = wrapper.querySelector("#onlineChatMessages");
   if (next) list.innerHTML = next.innerHTML;
-  scrollChat();
+  if (preserveScroll) {
+    list.scrollTop = scrollTop;
+    const picker = list.querySelector("[data-chat-react-picker]");
+    if (picker && picker.offsetTop + picker.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = picker.offsetTop + picker.offsetHeight - list.clientHeight + 8;
+    }
+  } else {
+    scrollChat();
+  }
   const peek = document.querySelector("#battleChatPeek");
   if (peek) {
     peek.innerHTML = renderBattleChatPeek();
+    peek.classList.toggle("is-typing", Boolean(activeRemoteTyping()));
     if (battleChatOpen) battleChatSeenCount = state.chatMessages.length;
     peek.closest(".vb-chat-peek")?.classList.toggle("has-new", !battleChatOpen && state.chatMessages.length > battleChatSeenCount);
   }
@@ -13346,6 +13716,7 @@ function releaseMatchMedia() {
   state.chatDraft = "";
   state.chatDraftRevision += 1;
   state.chatSendInFlight = false;
+  resetChatPersonaState(state);
 }
 
 function releaseAllImages() {
