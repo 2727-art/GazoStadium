@@ -1,0 +1,210 @@
+{
+  "change": "Static Open Graph and Twitter Card preview",
+  "sourceCommit": "a705dfcb969f6906b84381f49e7f0b256a891b5b",
+  "baselineCommit": "aafb14f5bdef53705267ea508103956f7a49d1c9",
+  "checkedAt": "2026-10-07T11:38:52.560Z",
+  "scope": {
+    "publicFiles": [
+      "index.html",
+      "ogp.png"
+    ],
+    "deployTargets": [
+      "hosting"
+    ],
+    "changedGameLogic": false,
+    "changedDatabaseRules": false,
+    "addedBackendCalls": false
+  },
+  "hosting": {
+    "release": "sites/gazostadium/releases/1791373111040000",
+    "releaseTime": "2026-10-07T11:38:31.040Z",
+    "version": "sites/gazostadium/versions/e4d0a5e81f839277",
+    "status": "FINALIZED"
+  },
+  "tests": {
+    "focused": {
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    "full": {
+      "command": "npm --prefix functions run check",
+      "total": 1891,
+      "passed": 1862,
+      "failed": 0,
+      "skipped": 29
+    },
+    "image": {
+      "visualInspection": "PASS: Japanese text and layout; original image ratio retained; no clipped labels",
+      "decoder": "sharp metadata and stats",
+      "opaque": true
+    }
+  },
+  "delivery": {
+    "userAgent": "Twitterbot/1.0",
+    "readOnly": true,
+    "local": {
+      "htmlSha256LF": "16c1f9f0031c8334c035478a9e314f75a87c9a37663fef8b3427988d54d38664",
+      "imageSha256": "571be53464719454edaa3232657a33db437fafd1ecaf5e5c063a27aab6d8421b",
+      "imageBytes": 273323,
+      "width": 1200,
+      "height": 630
+    },
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "pages": [
+          {
+            "url": "https://gazostadium.web.app/",
+            "status": 200,
+            "ok": true,
+            "htmlSha256LF": "16c1f9f0031c8334c035478a9e314f75a87c9a37663fef8b3427988d54d38664",
+            "metadataIssues": []
+          }
+        ],
+        "image": {
+          "url": "https://gazostadium.web.app/ogp.png",
+          "status": 200,
+          "contentType": "image/png",
+          "cacheControl": "max-age=3600",
+          "etag": "\"4b249920de6e18de1f30a68edb08bf9835ab9b7b8c3af0e9ab9700c4f76a05a9-br\"",
+          "bytes": 273323,
+          "elapsedMs": 397,
+          "expectedSha256": "571be53464719454edaa3232657a33db437fafd1ecaf5e5c063a27aab6d8421b",
+          "actualSha256": "571be53464719454edaa3232657a33db437fafd1ecaf5e5c063a27aab6d8421b",
+          "png": {
+            "signatureOk": true,
+            "ihdrOk": true,
+            "width": 1200,
+            "height": 630,
+            "sizeOk": true,
+            "ok": true
+          },
+          "cachePolicyOk": true,
+          "ok": true
+        }
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "pages": [
+          {
+            "url": "https://gazostadium.firebaseapp.com/",
+            "status": 200,
+            "ok": true,
+            "htmlSha256LF": "16c1f9f0031c8334c035478a9e314f75a87c9a37663fef8b3427988d54d38664",
+            "metadataIssues": []
+          }
+        ],
+        "image": {
+          "url": "https://gazostadium.firebaseapp.com/ogp.png",
+          "status": 200,
+          "contentType": "image/png",
+          "cacheControl": "max-age=3600",
+          "etag": "\"4b249920de6e18de1f30a68edb08bf9835ab9b7b8c3af0e9ab9700c4f76a05a9-br\"",
+          "bytes": 273323,
+          "elapsedMs": 495,
+          "expectedSha256": "571be53464719454edaa3232657a33db437fafd1ecaf5e5c063a27aab6d8421b",
+          "actualSha256": "571be53464719454edaa3232657a33db437fafd1ecaf5e5c063a27aab6d8421b",
+          "png": {
+            "signatureOk": true,
+            "ihdrOk": true,
+            "width": 1200,
+            "height": 630,
+            "sizeOk": true,
+            "ok": true
+          },
+          "cachePolicyOk": true,
+          "ok": true
+        }
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "pages": [
+          {
+            "url": "https://gazostadium.anjugames.workers.dev/",
+            "status": 200,
+            "ok": true,
+            "htmlSha256LF": "16c1f9f0031c8334c035478a9e314f75a87c9a37663fef8b3427988d54d38664",
+            "metadataIssues": []
+          },
+          {
+            "url": "https://gazostadium.anjugames.workers.dev/?v=2",
+            "status": 200,
+            "ok": true,
+            "htmlSha256LF": "16c1f9f0031c8334c035478a9e314f75a87c9a37663fef8b3427988d54d38664",
+            "metadataIssues": []
+          }
+        ],
+        "image": {
+          "url": "https://gazostadium.anjugames.workers.dev/ogp.png",
+          "status": 200,
+          "contentType": "image/png",
+          "cacheControl": "public, max-age=0, must-revalidate",
+          "etag": "\"8b3ab20f7b5b89aa3e83fc561a09f93b\"",
+          "bytes": 273323,
+          "elapsedMs": 430,
+          "expectedSha256": "571be53464719454edaa3232657a33db437fafd1ecaf5e5c063a27aab6d8421b",
+          "actualSha256": "571be53464719454edaa3232657a33db437fafd1ecaf5e5c063a27aab6d8421b",
+          "png": {
+            "signatureOk": true,
+            "ihdrOk": true,
+            "width": 1200,
+            "height": 630,
+            "sizeOk": true,
+            "ok": true
+          },
+          "cachePolicyOk": true,
+          "ok": true
+        }
+      }
+    ],
+    "robots": {
+      "url": "https://gazostadium.anjugames.workers.dev/robots.txt",
+      "status": 200,
+      "contentType": "text/plain; charset=utf-8",
+      "directives": [],
+      "review": "Cloudflare comment-only content; no User-agent/Disallow directives observed."
+    },
+    "workerNormalRequestHeaders": {
+      "paths": [
+        "/",
+        "/?v=2",
+        "/ogp.png"
+      ],
+      "statuses": [
+        200,
+        200,
+        200
+      ],
+      "xRobotsTag": null
+    }
+  },
+  "heroRegression": {
+    "command": "node functions/scripts/verify-hero-image-release.cjs",
+    "checkedAt": "2026-10-07T11:39:19.755Z",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true
+      }
+    ]
+  },
+  "limitations": [
+    "Twitterbot User-Agent fetch is not a request from X infrastructure.",
+    "X draft/card rendering and crawler cache refresh have not been verified.",
+    "Full test run includes 29 environment-dependent skips; no game logic or backend was changed."
+  ],
+  "ok": true
+}
