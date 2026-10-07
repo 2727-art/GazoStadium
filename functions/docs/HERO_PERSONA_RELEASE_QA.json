@@ -1,0 +1,413 @@
+{
+  "checkedAt": "2026-10-07T13:08:23.276Z",
+  "readOnly": true,
+  "productionDataAccessed": false,
+  "sourceCommit": "f61c7657f01ea7765aa3f367d6abed856ca69558",
+  "marker": "hero-persona-v1",
+  "normalization": "CRLF and CR converted to LF before SHA-256",
+  "routes": [
+    {
+      "origin": "https://gazostadium.web.app",
+      "index": [
+        {
+          "url": "https://gazostadium.web.app/",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "actualSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "expectedSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.web.app/?releaseCheck=1791378501837",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "actualSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "expectedSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "app.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "expectedSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "expectedSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1-hero-persona-v1",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "actualSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "expectedSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1-hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "actualSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "expectedSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "landing-hero.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/landing-hero.mjs?v=hero-persona-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "expectedSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/landing-hero.mjs?v=hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "expectedSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "finish-roleplay.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/finish-roleplay.mjs?v=finish-reply-v2-girl-voice-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "expectedSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/finish-roleplay.mjs?v=finish-reply-v2-girl-voice-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "expectedSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "ok": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/functions/scripts/verify-hero-persona-release.cjs",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/functions/test/landing-hero-persona.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/database.rules.json",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.firebaseapp.com",
+      "index": [
+        {
+          "url": "https://gazostadium.firebaseapp.com/",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "actualSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "expectedSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.firebaseapp.com/?releaseCheck=1791378501837",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "actualSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "expectedSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "app.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "expectedSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "expectedSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1-hero-persona-v1",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "actualSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "expectedSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1-hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "actualSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "expectedSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "landing-hero.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/landing-hero.mjs?v=hero-persona-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "expectedSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/landing-hero.mjs?v=hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "expectedSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "finish-roleplay.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/finish-roleplay.mjs?v=finish-reply-v2-girl-voice-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "expectedSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/finish-roleplay.mjs?v=finish-reply-v2-girl-voice-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "expectedSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "ok": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/functions/scripts/verify-hero-persona-release.cjs",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/functions/test/landing-hero-persona.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/database.rules.json",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.anjugames.workers.dev",
+      "index": [
+        {
+          "url": "https://gazostadium.anjugames.workers.dev/",
+          "status": 200,
+          "contentType": "text/html",
+          "actualSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "expectedSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.anjugames.workers.dev/?releaseCheck=1791378501837",
+          "status": 200,
+          "contentType": "text/html",
+          "actualSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "expectedSha256LF": "9bddc6aaccc8b6e588d57e54f3e4577ff8464461dc588030120b2e24483ea158",
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "app.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "expectedSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "expectedSha256LF": "526b92c81b99672cec41e9c305edbd97792bcc641b1f8d2e32fdfaeddf438122",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1-hero-persona-v1",
+              "status": 200,
+              "contentType": "text/css",
+              "actualSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "expectedSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1-hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/css",
+              "actualSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "expectedSha256LF": "1d708fad47aa1fefc837cebc72ddd699c1f25c7a1ee298b1db161e31b7914398",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "landing-hero.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/landing-hero.mjs?v=hero-persona-v1",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "expectedSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/landing-hero.mjs?v=hero-persona-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "expectedSha256LF": "71d6fa580eb02cea84392c7e0148165abff9a6b0db03b7bb7ccdaa7f11519805",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "finish-roleplay.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/finish-roleplay.mjs?v=finish-reply-v2-girl-voice-v1",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "expectedSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/finish-roleplay.mjs?v=finish-reply-v2-girl-voice-v1&releaseCheck=1791378501837",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "expectedSha256LF": "bf2e65a59b5cc0621b3d6a7bdd41b5ad0f9e3791f1f16d686a540377460a57f2",
+              "ok": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/functions/scripts/verify-hero-persona-release.cjs",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/functions/test/landing-hero-persona.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/database.rules.json",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "ok": true
+}
