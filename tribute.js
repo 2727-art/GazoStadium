@@ -92,6 +92,9 @@ let walletUnsubscribe = null;
 let markReadTimer = null;
 let tickTimer = null;
 let hold = null;
+let stateRequest = null;
+let threadGeneration = 0;
+let markReadProgress = new Map();
 
 function createState() {
   return {
@@ -987,12 +990,37 @@ function notifyAchievementUnlocks(value) {
   });
 }
 
+// 同じ入場中・同じ利用者の進行中リクエストだけを共有する。完了後の再表示や手動更新は必ず再取得する。
+function requestState({ fresh = false } = {}) {
+  const generation = lifecycleGeneration;
+  const targetState = state;
+  const uid = state.uid;
+  if (!previewScreen && auth.currentUser?.uid !== uid) {
+    return Promise.reject(Object.assign(new Error("アカウントを確認できませんでした。ページを読み直してください。"), { code: "unauthenticated" }));
+  }
+  if (!fresh && stateRequest?.generation === generation && stateRequest?.targetState === targetState && stateRequest?.uid === uid) {
+    return stateRequest.promise;
+  }
+  const request = { generation, targetState, uid, promise: null };
+  stateRequest = request;
+  request.promise = (async () => {
+    const payload = await call("state");
+    if (!isCurrent(generation) || state !== targetState || state.uid !== uid || stateRequest !== request
+      || (!previewScreen && auth.currentUser?.uid !== uid)) return null;
+    applyState(payload);
+    return payload;
+  })().finally(() => {
+    if (stateRequest === request) stateRequest = null;
+  });
+  return request.promise;
+}
+
 async function refreshState() {
   const generation = lifecycleGeneration;
+  const targetState = state;
   try {
-    const payload = await call("state");
-    if (!isCurrent(generation)) return;
-    applyState(payload);
+    const payload = await requestState();
+    if (!payload || !isCurrent(generation) || state !== targetState) return;
     if (["hub"].includes(state.screen)) render();
   } catch (error) {
     if (isCurrent(generation)) showToast(friendlyError(error));
@@ -1053,7 +1081,7 @@ async function loadList(key, action, mapper) {
   render();
 }
 
-function navigate(screen) {
+function navigate(screen, { refresh = true } = {}) {
   if (!SCREENS.has(screen)) return;
   if (screen !== "thread") stopThread();
   state.sheet = null;
@@ -1066,13 +1094,14 @@ function navigate(screen) {
   else if (screen === "fund") loadList("fund", "fund", (payload) => ({ data: payload }));
   else {
     render();
-    if (screen === "hub") refreshState();
+    if (screen === "hub" && refresh) refreshState();
   }
 }
 
 // ───────────── スレッドの購読 ─────────────
 
 function stopThread() {
+  threadGeneration += 1;
   contractUnsubscribe?.();
   eventsUnsubscribe?.();
   contractUnsubscribe = null;
@@ -1096,36 +1125,102 @@ function openThread(contractId) {
     return;
   }
   const generation = lifecycleGeneration;
+  const currentThreadGeneration = threadGeneration;
+  const targetThread = state.thread;
+  const uid = state.uid;
+  const current = () => isCurrentThread(generation, currentThreadGeneration, targetThread, uid);
   contractUnsubscribe = onSnapshot(doc(firestore, "tributeContracts", contractId), (snapshot) => {
-    if (!isCurrent(generation) || state.thread.contractId !== contractId) return;
+    if (!current()) return;
     if (!snapshot.exists()) return;
     state.thread.raw = snapshot.data();
     state.thread.view = viewContract(state.thread.raw, state.uid);
+    applyReadAcknowledgement(contractId, markReadProgress.get(contractId)?.acknowledgedSeq || 0);
     state.thread.status = "ready";
     updateThreadParts();
     scheduleMarkRead();
   }, (error) => {
-    if (!isCurrent(generation)) return;
+    if (!current()) return;
     state.thread.status = "error";
     showToast(friendlyError(error, "スレッドを読み込めませんでした。"));
     render();
   });
   eventsUnsubscribe = onSnapshot(query(collection(firestore, "tributeContracts", contractId, "events"), orderBy("seq"), limitToLast(EVENTS_LIMIT)), (snapshot) => {
-    if (!isCurrent(generation) || state.thread.contractId !== contractId) return;
+    if (!current()) return;
     state.thread.events = snapshot.docs.map((entry) => entry.data());
     if (state.thread.view) updateThreadParts();
     scheduleMarkRead();
   }, () => {});
 }
 
+function isCurrentThread(generation, currentThreadGeneration, targetThread, uid) {
+  return isCurrent(generation) && threadGeneration === currentThreadGeneration && state.thread === targetThread
+    && state.screen === "thread" && state.uid === uid && (previewScreen || auth.currentUser?.uid === uid);
+}
+
+function visibleReadSequence(thread) {
+  if (!thread.view || document.visibilityState !== "visible") return 0;
+  const loadedSeq = thread.events.reduce((last, event) => Number.isSafeInteger(event.seq) ? Math.max(last, event.seq) : last, 0);
+  return Math.min(thread.view.eventSeq, loadedSeq);
+}
+
+function applyReadAcknowledgement(contractId, readSeq) {
+  if (!Number.isSafeInteger(readSeq) || readSeq < 1) return;
+  const thread = state.thread;
+  const threadView = thread.contractId === contractId ? thread.view : null;
+  const row = state.contracts.find((contract) => contract.contractId === contractId);
+  if (row) {
+    const knownReadSeq = Math.max(row.eventSeq - row.unread, threadView ? threadView.eventSeq - threadView.unread : 0, readSeq);
+    row.eventSeq = Math.max(row.eventSeq, threadView?.eventSeq || 0);
+    row.unread = Math.max(0, row.eventSeq - knownReadSeq);
+  }
+  if (!threadView) return;
+  thread.view.unread = Math.min(thread.view.unread, Math.max(0, thread.view.eventSeq - readSeq));
+  if (thread.raw) {
+    const role = thread.view.role;
+    thread.raw.readSeq = { ...thread.raw.readSeq, [role]: Math.max(Number(thread.raw.readSeq?.[role]) || 0, readSeq) };
+  }
+}
+
 function scheduleMarkRead() {
   window.clearTimeout(markReadTimer);
-  markReadTimer = window.setTimeout(() => {
-    const view = state.thread.view;
-    if (!active || state.screen !== "thread" || !view || !view.unread || document.visibilityState !== "visible") return;
-    call("mark_read", { contractId: view.contractId, seq: view.eventSeq }).catch(() => {});
-    const row = state.contracts.find((contract) => contract.contractId === view.contractId);
-    if (row) row.unread = 0;
+  const generation = lifecycleGeneration;
+  const currentThreadGeneration = threadGeneration;
+  const targetThread = state.thread;
+  const uid = state.uid;
+  markReadTimer = window.setTimeout(async () => {
+    markReadTimer = null;
+    if (!isCurrentThread(generation, currentThreadGeneration, targetThread, uid)) return;
+    const view = targetThread.view;
+    const seq = visibleReadSequence(targetThread);
+    if (!view || !view.unread || seq < 1) return;
+    const contractId = view.contractId;
+    let progress = markReadProgress.get(contractId);
+    if (!progress) {
+      progress = { acknowledgedSeq: 0, promise: null };
+      markReadProgress.set(contractId, progress);
+    }
+    const observedReadSeq = Math.max(0, view.eventSeq - view.unread);
+    if (progress.promise || seq <= Math.max(progress.acknowledgedSeq, observedReadSeq)) return;
+    let succeeded = false;
+    progress.promise = call("mark_read", { contractId, seq });
+    try {
+      const result = await progress.promise;
+      succeeded = result?.ok === true;
+      if (!isCurrent(generation) || state.uid !== uid || (!previewScreen && auth.currentUser?.uid !== uid)) return;
+      // 旧サーバーの { ok: true } は購読結果を待つ。送信成功だけで既読扱いにはしない。
+      if (succeeded && result.contractId === contractId && Number.isSafeInteger(result.readSeq) && result.readSeq >= 0) {
+        progress.acknowledgedSeq = Math.max(progress.acknowledgedSeq, Math.min(seq, result.readSeq));
+        if (isCurrentThread(generation, currentThreadGeneration, targetThread, uid)) {
+          applyReadAcknowledgement(contractId, progress.acknowledgedSeq);
+        }
+      }
+    } catch {
+      // 通信失敗では未読表示を維持する。次の購読通知・再表示で再試行する。
+    } finally {
+      progress.promise = null;
+      if (succeeded && isCurrent(generation) && state.uid === uid && state.screen === "thread"
+        && state.thread.contractId === contractId && visibleReadSequence(state.thread) > seq) scheduleMarkRead();
+    }
   }, 800);
 }
 
@@ -1133,17 +1228,24 @@ function scheduleMarkRead() {
 
 async function mutate(action, payload, { success = "", after = null, form = null } = {}) {
   if (state.busy) return null;
+  const generation = lifecycleGeneration;
+  const targetState = state;
+  const uid = state.uid;
   state.busy = action;
   const errorTarget = form?.querySelector?.("[data-form-error]")
     || (form ? layer.querySelector("[data-form-error]") : null);
   try {
     const result = await call(action, payload);
-    state.busy = "";
+    targetState.busy = "";
+    if (!isCurrent(generation) || state !== targetState || state.uid !== uid || (!previewScreen && auth.currentUser?.uid !== uid)) return null;
+    // 書き込み前に開始した一覧取得は、成功後の画面遷移で再利用しない。
+    if (stateRequest?.generation === generation && stateRequest?.targetState === targetState) stateRequest = null;
     if (success) showToast(success);
     if (after) after(result);
     return result;
   } catch (error) {
-    state.busy = "";
+    targetState.busy = "";
+    if (!isCurrent(generation) || state !== targetState || state.uid !== uid || (!previewScreen && auth.currentUser?.uid !== uid)) return null;
     const message = friendlyError(error);
     if (errorTarget?.isConnected) errorTarget.textContent = message;
     else showToast(message);
@@ -1234,16 +1336,18 @@ async function handleSubmit(form) {
   setFormError(form, "");
   switch (kind) {
     case "age": {
+      const generation = lifecycleGeneration;
+      const targetState = state;
       const result = await mutate("age_confirm", {
         version: TRIBUTE_AGE_VERSION,
         adult: form.elements.adult.checked,
         premise: form.elements.premise.checked,
       }, { form });
-      if (!result) return;
+      if (!result || !isCurrent(generation) || state !== targetState) return;
       state.ageConfirmed = true;
-      const payload = await call("state").catch(() => null);
-      if (payload) applyState(payload);
-      navigate("hub");
+      const payload = await requestState({ fresh: true }).catch(() => null);
+      if (!isCurrent(generation) || state !== targetState) return;
+      navigate("hub", { refresh: !payload });
       return;
     }
     case "wallet-name":
@@ -1711,6 +1815,8 @@ async function start({ initialScreen = "" } = {}) {
   active = true;
   const generation = ++lifecycleGeneration;
   state = createState();
+  stateRequest = null;
+  markReadProgress = new Map();
   setChrome("OMITSUGI RANCH / CONNECTING");
   render();
   try {
@@ -1721,9 +1827,8 @@ async function start({ initialScreen = "" } = {}) {
       if (!isCurrent(generation)) return;
       state.uid = user.uid;
     }
-    const payload = await call("state");
-    if (!isCurrent(generation)) return;
-    applyState(payload);
+    const payload = await requestState();
+    if (!payload || !isCurrent(generation)) return;
     setChrome();
     subscribeWallet();
     window.clearInterval(tickTimer);
@@ -1742,7 +1847,7 @@ async function start({ initialScreen = "" } = {}) {
       startPreview(previewScreen);
       return;
     }
-    navigate(SCREENS.has(initialScreen) ? initialScreen : "hub");
+    navigate(SCREENS.has(initialScreen) ? initialScreen : "hub", { refresh: false });
   } catch (error) {
     if (!isCurrent(generation)) return;
     state.screen = "error";

@@ -1998,10 +1998,10 @@ async function ensureEconomyProgress(uid) {
   return progress;
 }
 
-async function ensureAchievementState(uid) {
+async function ensureAchievementState(uid, { deferTributeBackfill = false } = {}) {
   await Promise.all([
     anjuPayFleaAchievementStatsStore.ensure(uid),
-    tributeService.ensureAchievementStats(uid),
+    ...(deferTributeBackfill ? [] : [tributeService.ensureAchievementStats(uid)]),
   ]);
   const progressRef = economyProgressRef(uid);
   const profileRef = achievementProfileRef(uid);
@@ -2014,8 +2014,7 @@ async function ensureAchievementState(uid) {
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
   const rouletteSellerStatsRef = rouletteTrainingSellerStatsRef(uid);
   const tributeStatsRef = tributeService.achievementStatsRef(uid);
-  let result = null;
-  await firestore.runTransaction(async (transaction) => {
+  const readState = () => firestore.runTransaction(async (transaction) => {
     const [
       progressSnapshot,
       profileSnapshot,
@@ -2041,6 +2040,11 @@ async function ensureAchievementState(uid) {
       transaction.get(rouletteSellerStatsRef),
       transaction.get(tributeStatsRef),
     ]);
+    // The common achievement screen can use this transaction's tribute stats
+    // directly once history is initialized. Other callers retain their existing
+    // eager initialization, and no snapshot is reused across transactions.
+    if (deferTributeBackfill
+      && (!tributeStatsSnapshot.exists || tributeStatsSnapshot.get("historyBackfilled") !== true)) return null;
     const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
     const progress = normalizeEconomyProgress(progressData);
     const crownMonthlyStats = normalizeCrownMonthlyStats(crownMonthlyStatsSnapshot.data());
@@ -2078,7 +2082,7 @@ async function ensureAchievementState(uid) {
     if (!profileSnapshot.exists || unlockResult.newlyUnlocked.length) {
       transaction.set(profileRef, unlockResult.profile);
     }
-    result = {
+    return {
       progress,
       marketStats,
       fleaStats,
@@ -2092,6 +2096,12 @@ async function ensureAchievementState(uid) {
       newlyUnlocked: unlockResult.newlyUnlocked,
     };
   });
+  let result = await readState();
+  if (!result && deferTributeBackfill) {
+    await tributeService.ensureAchievementStats(uid);
+    result = await readState();
+    if (!result) throw new HttpsError("unavailable", "実績を確認できませんでした。もう一度お試しください。");
+  }
   return result;
 }
 
@@ -3171,8 +3181,8 @@ async function setCrownCustomization(uid, data) {
   };
 }
 
-async function getAchievements(uid, { syncPublic = false } = {}) {
-  const state = await ensureAchievementState(uid);
+async function getAchievements(uid, { syncPublic = false, deferTributeBackfill = false } = {}) {
+  const state = await ensureAchievementState(uid, { deferTributeBackfill });
   if (syncPublic) await syncAchievementPublicSurfaces(uid, state.profile);
   return publicAchievementProfile(
     state.profile,
@@ -11357,7 +11367,7 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "set_crown_customization") return await setCrownCustomization(uid, request.data);
     if (action === "get_match_tip") return await getPostMatchTip(uid, request.data);
     if (action === "send_match_tip") return await sendPostMatchTip(uid, request.data);
-    if (action === "get_achievements") return await getAchievements(uid, { syncPublic: request.data?.syncPublic === true });
+    if (action === "get_achievements") return await getAchievements(uid, { syncPublic: request.data?.syncPublic === true, deferTributeBackfill: true });
     if (action === "ack_achievements") return await acknowledgeAchievements(uid, request.data?.achievementIds);
     if (action === "set_achievement_showcase") return await setAchievementShowcase(uid, request.data?.achievementIds);
     if (action === "publish_creator_card") {
@@ -11371,7 +11381,7 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     }
     if (action === "delete_creator_card") return await deleteCreatorCard(uid);
     if (action === "sync_achievement_showcase") {
-      return { synced: true, achievements: await getAchievements(uid, { syncPublic: true }) };
+      return { synced: true, achievements: await getAchievements(uid, { syncPublic: true, deferTributeBackfill: true }) };
     }
     throw new HttpsError("invalid-argument", "未対応のAnjuPay操作です。");
   } catch (error) {

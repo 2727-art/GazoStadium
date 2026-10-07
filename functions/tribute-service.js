@@ -653,6 +653,38 @@ function createTributeService(deps) {
     ended: "この契約は終了しています。",
   });
 
+  // Reading a thread does not normally need either wallet or the pair ledger.
+  // Keep the policy/age checks in this transaction, and let the full runner do
+  // its existing accounting when this read also needs a lifecycle transition.
+  async function tryMarkRead(transaction, contractId, uid, data) {
+    const reference = contractRef(contractId);
+    const snapshot = await transaction.get(reference);
+    if (!snapshot.exists) fail("not-found", "契約が見つかりません。");
+    const contract = object(snapshot.data());
+    const managerUid = String(contract.managerUid || "");
+    const payerUid = String(contract.payerUid || "");
+    if (!managerUid || !payerUid) fail("failed-precondition", "契約の参加者を確認できません。");
+    const role = uid === managerUid ? "manager" : uid === payerUid ? "payer" : "";
+    if (!role) fail("permission-denied", "この契約の参加者ではありません。");
+    requireAge(readProfile(await transaction.get(profileRef(uid))));
+    if (!["pending", "active", "ended"].includes(contract.status)) {
+      fail("failed-precondition", STATUS_MESSAGES[contract.status] || "この契約は操作できません。");
+    }
+    const now = currentTime();
+    const blocked = playerSafety ? await playerSafety.isBlocked(managerUid, payerUid, transaction) === true : false;
+    const expiresAt = integer(contract.expiresAt, 0, Number.MAX_SAFE_INTEGER, 0);
+    if ((OPEN_STATUSES.includes(contract.status) && (blocked || (expiresAt && expiresAt <= now)))
+      || (contract.status === "active" && effectiveCaps(contract, now).applied)) {
+      return null;
+    }
+    const eventSeq = integer(contract.eventSeq, 0, Number.MAX_SAFE_INTEGER, 0);
+    const readSeq = object(contract.readSeq);
+    const previous = integer(readSeq[role], 0, Number.MAX_SAFE_INTEGER, 0);
+    const next = Math.max(previous, Math.min(eventSeq, integer(data?.seq, 0, Number.MAX_SAFE_INTEGER, 0)));
+    if (next > previous) transaction.set(reference, { readSeq: { ...readSeq, [role]: next } }, { merge: true });
+    return { ok: true, contractId, readSeq: next, eventSeq };
+  }
+
   async function runContract(uid, data, spec) {
     const contractId = requireContractId(data?.contractId);
     if (spec.ensureWallets?.length) {
@@ -678,6 +710,10 @@ function createTributeService(deps) {
       deferredError = "";
       wallets = [];
       unlocks = [];
+      if (spec.lightweightMarkRead) {
+        result = await tryMarkRead(transaction, contractId, uid, data);
+        if (result) return;
+      }
       const ctx = await loadContext(transaction, contractId, uid);
       if (uid) {
         if (!spec.roles.includes(ctx.role)) fail("permission-denied", "この操作はできません。");
@@ -1019,13 +1055,14 @@ function createTributeService(deps) {
   }
 
   async function ensureAchievementState(uid) {
-    await ensureAchievementStats(uid);
-    let result = null;
-    await firestore.runTransaction(async (transaction) => {
+    const readState = () => firestore.runTransaction(async (transaction) => {
       const [statsSnapshot, profileSnapshot] = await Promise.all([
         transaction.get(achievementStatsRef(uid)),
         transaction.get(achievementProfileRef(uid)),
       ]);
+      // Ready users need only the atomic stats/profile read. Never carry a
+      // preflight stats value into the transaction that unlocks achievements.
+      if (!statsSnapshot.exists || statsSnapshot.get("historyBackfilled") !== true) return null;
       const stats = normalizeTributeStats(statsSnapshot.data());
       const unlockResult = unlockAchievements(
         profileSnapshot.data(),
@@ -1033,8 +1070,14 @@ function createTributeService(deps) {
         currentTime(),
       );
       if (unlockResult.newlyUnlocked.length) transaction.set(achievementProfileRef(uid), unlockResult.profile);
-      result = { stats, profile: unlockResult.profile, newlyUnlocked: unlockResult.newlyUnlocked };
+      return { stats, profile: unlockResult.profile, newlyUnlocked: unlockResult.newlyUnlocked };
     });
+    let result = await readState();
+    if (!result) {
+      await ensureAchievementStats(uid);
+      result = await readState();
+      if (!result) fail("unavailable", "実績を確認できませんでした。もう一度お試しください。");
+    }
     return result;
   }
 
@@ -1797,6 +1840,7 @@ function createTributeService(deps) {
     mark_read: {
       roles: ["manager", "payer"],
       statuses: ["pending", "active", "ended"],
+      lightweightMarkRead: true,
       write(ctx, _extra, data) {
         const seq = Math.min(ctx.seq, integer(data?.seq, 0, Number.MAX_SAFE_INTEGER, 0));
         const readSeq = object(ctx.contract.readSeq);
@@ -1804,7 +1848,7 @@ function createTributeService(deps) {
           ctx.quiet = true;
           setContract(ctx, { readSeq: { ...readSeq, [ctx.role]: seq } });
         }
-        return { ok: true };
+        return { ok: true, contractId: ctx.contractId, readSeq: integer(object(ctx.contract.readSeq)[ctx.role], 0, Number.MAX_SAFE_INTEGER, 0), eventSeq: ctx.seq };
       },
     },
     report_user: {
