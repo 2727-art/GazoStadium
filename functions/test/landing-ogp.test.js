@@ -1,13 +1,15 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
 const root = path.resolve(__dirname, "..", "..");
 const canonicalUrl = "https://gazostadium.anjugames.workers.dev/";
-const imageUrl = `${canonicalUrl}ogp.png`;
+// 共有画像は内容のSHA-256先頭12桁を名前に含める。差し替えるとURLが変わり、Xなどの取得済み画像が残らない。
+const imagePattern = /^https:\/\/gazostadium\.anjugames\.workers\.dev\/assets\/ogp\/ogp\.([0-9a-f]{12})\.png$/;
 const title = "貼り合いスタジアム";
-const description = "好きな画像で通常型・戦略型1on1、AI文字コラやルーレットのソロトレーニングを楽しめる画像ゲーム。";
+const description = "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。";
 
 const attributes = (tag) => Object.fromEntries(
   Array.from(tag.matchAll(/([^\s=<>/]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g), (match) => [
@@ -37,6 +39,13 @@ const metaContent = (document, attribute, key) => {
   return inHead[0].content;
 };
 
+const sharedImage = () => {
+  const url = metaContent(staticDocument(), "property", "og:image");
+  const match = url.match(imagePattern);
+  assert.ok(match, "og:image is the fingerprinted share card");
+  return { url, hash: match[1], file: path.join(root, "assets", "ogp", `ogp.${match[1]}.png`) };
+};
+
 test("the initial HTML head provides one complete Open Graph website preview", () => {
   const document = staticDocument();
   const expected = {
@@ -44,7 +53,7 @@ test("the initial HTML head provides one complete Open Graph website preview", (
     "og:url": canonicalUrl,
     "og:title": title,
     "og:description": description,
-    "og:image": imageUrl,
+    "og:image": sharedImage().url,
     "og:image:width": "1200",
     "og:image:height": "630",
     "og:image:type": "image/png",
@@ -69,6 +78,7 @@ test("the initial HTML head provides a large Twitter image card with the same pr
 
 test("preview URLs use the public canonical HTTPS origin without relative paths or cache queries", () => {
   const document = staticDocument();
+  const imageUrl = sharedImage().url;
   for (const [attribute, key, expected] of [
     ["property", "og:url", canonicalUrl],
     ["property", "og:image", imageUrl],
@@ -88,7 +98,9 @@ test("preview URLs use the public canonical HTTPS origin without relative paths 
 });
 
 test("the shared preview is a static 1200 by 630 PNG below five megabytes", () => {
-  const image = fs.readFileSync(path.join(root, "ogp.png"));
+  const { file, hash } = sharedImage();
+  const image = fs.readFileSync(file);
+  assert.equal(crypto.createHash("sha256").update(image).digest("hex").slice(0, 12), hash, "the filename matches the image content");
   assert.ok(image.length >= 33, "the asset includes a complete PNG header");
   assert.ok(image.length < 5_000_000, "the share image remains below 5 MB");
   assert.equal(image.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", "the asset is a PNG");
@@ -96,4 +108,21 @@ test("the shared preview is a static 1200 by 630 PNG below five megabytes", () =
   assert.equal(image.subarray(12, 16).toString("ascii"), "IHDR");
   assert.equal(image.readUInt32BE(16), 1200);
   assert.equal(image.readUInt32BE(20), 630);
+});
+
+test("the share card is rendered from a private template that keeps X's title corner clear", () => {
+  const template = fs.readFileSync(path.join(root, "functions", "scripts", "ogp-card.html"), "utf8");
+  const renderer = fs.readFileSync(path.join(root, "functions", "scripts", "render-ogp.cjs"), "utf8");
+  assert.match(renderer, /`ogp\.\$\{sha256\.slice\(0, 12\)\}\.png`/);
+  assert.match(renderer, /--window-size=\$\{width\},\$\{height\}/);
+  assert.ok(template.includes('src="../../assets/landing/hero-example.d9a004076802.png"'), "the card reuses the homepage sample image");
+  assert.ok(fs.existsSync(path.join(root, "assets", "landing", "hero-example.d9a004076802.png")));
+  assert.match(template, /<span class="tag">#貼り合い<\/span>/);
+  assert.match(template, /DMじゃ物足りない貼り合いに。<br><em>女の子になり切れる吹き出し<\/em>で。/);
+  // 左下は X がタイトルの札を重ねるので、チップは折り返さず1行に収める。
+  assert.match(template, /\.chips \{ display: flex; gap: 10px; margin-top: 26px; \}/);
+  assert.doesNotMatch(template, /https?:\/\/gazostadium|workers\.dev/, "the card image carries no site URL");
+  assert.equal(fs.existsSync(path.join(root, "ogp.png")), false, "the old unversioned share image is retired");
+  const ignore = JSON.parse(fs.readFileSync(path.join(root, "firebase.json"), "utf8")).hosting.ignore;
+  assert.ok(ignore.includes("functions/**"), "the template and renderer stay out of Hosting");
 });

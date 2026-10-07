@@ -53,12 +53,13 @@ python -m http.server 4173 --bind 127.0.0.1
 
 ### X / SNSの共有プレビュー
 
-`index.html` の初期 `<head>` にOpen GraphとTwitter Cardのタグを静的に定義しています。正規URLは `https://gazostadium.anjugames.workers.dev/`、共有画像は同じ公開先の `/ogp.png`（1200×630 PNG）です。JavaScriptの実行・ログイン・App Checkは画像取得に不要です。通常ページでは共有画像を表示・プリロードせず、Firestore・Realtime Database・Functionsの呼出しも追加しません。
+`index.html` の初期 `<head>` にOpen GraphとTwitter Cardのタグを静的に定義しています。正規URLは `https://gazostadium.anjugames.workers.dev/`、共有画像は同じ公開先の `/assets/ogp/ogp.<SHA-256先頭12桁>.png`（1200×630 PNG）です。JavaScriptの実行・ログイン・App Checkは画像取得に不要です。通常ページでは共有画像を表示・プリロードせず、Firestore・Realtime Database・Functionsの呼出しも追加しません。
 
-共有画像は既存のトップ画像とサイト名・配色をコードで配置した静的成果物です。再作成する場合のみ、開発環境の `@napi-rs/canvas` と日本語太字フォントを用意し、`node functions/scripts/render-ogp.cjs` を実行してください。既定フォントはWindowsのMeiryo Bold、別環境は `OGP_FONT_PATH` で指定します。レンダラーはサイト・Functionsから呼び出さず、配信からも除外します。差し替え可能な `/ogp.png` に長期 `immutable` は付けず、既存の指紋付きトップ画像のキャッシュ設定は維持します。
+共有画像は貼り合い界隈向けの「なりきりDM」の見た目です。左に「#貼り合い」「貼って、刺して、点で返す。」「DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで。」と2つのチップ（なりきり口調6種・画像はサーバーに残らない）、右にトップと同じ見本（DMの見出し、小悪魔の吹き出しと口紅のリアクション、90点の返事、入力中の一文）を置きます。Xは大きなカードの左下にタイトル（`og:title`）の札を重ねるので、左下は空けておき、`og:title` は短いまま（`貼り合いスタジアム`）にします。画像の中にURLは入れません。
 
-検証は `node --test functions/test/landing-ogp.test.js`、公開後は `node functions/scripts/verify-ogp-release.cjs`。後者はTwitterbotのUser-Agentで初期HTMLと画像を読み取り、3公開先を独立確認します。これはX内部の取得・カード表示を保証するものではありません。反映後のX側確認は、例えば `https://gazostadium.anjugames.workers.dev/?v=2` を投稿せず下書きへ貼って行います。
+画像は `functions/scripts/ogp-card.html`（非公開のひな形）を、インストール済みのChromeまたはEdgeのヘッドレス表示で撮影して作ります。再作成する時は `node functions/scripts/render-ogp.cjs` を実行してください（ブラウザは `OGP_BROWSER_PATH` で指定可、見出しの書体をGoogle Fontsから読むためネット接続が必要。読めない時は画像に「フォント未読込」と大きく出ます）。出力は内容のSHA-256先頭12桁を含む新しいファイル名になるので、表示されたURLで `og:image` と `twitter:image` を差し替え、古い画像ファイルは消してください。名前が変わるため、X・LINE・Discordなどが以前の画像を取得済みでも新しい画像を読み直します。長期 `immutable` のキャッシュ設定は付けていません。
 
+検証は `node --test functions/test/landing-ogp.test.js`、公開後は `node functions/scripts/verify-ogp-release.cjs`。後者はTwitterbotのUser-Agentで初期HTMLと画像を読み取り、3公開先を独立確認します（以前の `/ogp.png` が配信から外れていることも確認）。これはX内部の取得・カード表示を保証するものではありません。Xは同じページURLのカードをしばらく保存するので、反映後の確認は、例えば `https://gazostadium.anjugames.workers.dev/?v=3` のようにまだ使っていない `?v=` 付きのURLを投稿せず下書きへ貼って行います。
 ## Firebase費用削減（2026-09-11 / firebase-cost-v1）
 
 今回の変更対象は、長期保留セッションの後処理と、対戦前後に重なる初期化・実績読取りだけです。

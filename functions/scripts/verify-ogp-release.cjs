@@ -14,25 +14,28 @@ const TIMEOUT_MS = 20_000;
 const MAX_BODY_BYTES = 5_000_000;
 const USER_AGENT = "Twitterbot/1.0";
 const TITLE = "貼り合いスタジアム";
-const DESCRIPTION = "好きな画像で通常型・戦略型1on1、AI文字コラやルーレットのソロトレーニングを楽しめる画像ゲーム。";
-const EXPECTED_META = Object.freeze({
+const DESCRIPTION = "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。";
+// 共有画像は内容のSHA-256先頭12桁を名前に含む。期待するURLは手元の index.html から読み、名前と中身の一致も確かめる。
+const IMAGE_PATTERN = /^https:\/\/gazostadium\.anjugames\.workers\.dev\/(assets\/ogp\/ogp\.([0-9a-f]{12})\.png)$/;
+const expectedMeta = (imageUrl) => Object.freeze({
   "og:type": "website",
   "og:url": CANONICAL,
   "og:title": TITLE,
   "og:description": DESCRIPTION,
-  "og:image": `${CANONICAL}ogp.png`,
+  "og:image": imageUrl,
   "og:image:width": "1200",
   "og:image:height": "630",
   "og:image:type": "image/png",
   "twitter:card": "summary_large_image",
   "twitter:title": TITLE,
   "twitter:description": DESCRIPTION,
-  "twitter:image": `${CANONICAL}ogp.png`,
+  "twitter:image": imageUrl,
 });
-const ALLOWED_URLS = new Set([
-  ...ORIGINS.flatMap((origin) => [`${origin}/`, `${origin}/ogp.png`]),
+const allowedUrls = (imagePath) => new Set([
+  ...ORIGINS.flatMap((origin) => [`${origin}/`, `${origin}/${imagePath}`, `${origin}/ogp.png`]),
   `${WORKER}/?v=2`, `${WORKER}/robots.txt`,
 ]);
+let ALLOWED_URLS = new Set();
 
 const sha256 = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const mimeIs = (type, expected) => String(type || "").split(";", 1)[0].trim().toLowerCase() === expected;
@@ -42,7 +45,15 @@ const attributes = (tag) => Object.fromEntries(
   ]),
 );
 
-function inspectHtml(source) {
+function localImageUrl(source) {
+  const match = String(source).match(/<meta\s+property="og:image"\s+content="([^"]+)"/);
+  const parsed = match?.[1].match(IMAGE_PATTERN);
+  if (!parsed) throw new Error("og:image must be the fingerprinted share card under assets/ogp/");
+  return { url: match[1], path: parsed[1], hash: parsed[2] };
+}
+
+function inspectHtml(source, imageUrl) {
+  const EXPECTED_META = expectedMeta(imageUrl);
   const html = String(source).replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<(script|style|template|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
   const heads = Array.from(html.matchAll(/<head\b[^>]*>([\s\S]*?)<\/head\s*>/gi));
@@ -119,10 +130,10 @@ function responseDetails(response) {
   return details;
 }
 
-function checkHtml(response, expectedHash) {
+function checkHtml(response, expectedHash, imageUrl) {
   const html = response.body?.toString("utf8") || "";
   const actualHash = response.body ? sha256LF(html) : null;
-  const metadata = inspectHtml(html);
+  const metadata = inspectHtml(html, imageUrl);
   return {
     ...responseDetails(response), expectedSha256LF: expectedHash, actualSha256LF: actualHash, metadata,
     ok: response.status === 200 && mimeIs(response.contentType, "text/html") && actualHash === expectedHash && metadata.ok,
@@ -159,10 +170,13 @@ function inspectRobots(response) {
 
 async function verifyOrigin(origin, expected) {
   const pageUrls = [`${origin}/`, ...(origin === WORKER ? [`${origin}/?v=2`] : [])];
-  const responses = await Promise.all([...pageUrls, `${origin}/ogp.png`].map((url) => readPublic(url)));
-  const pages = responses.slice(0, pageUrls.length).map((response) => checkHtml(response, expected.htmlHash));
-  const image = checkImage(responses.at(-1), expected.imageHash);
-  return { origin, pages, image, ok: pages.every((page) => page.ok) && image.ok };
+  const responses = await Promise.all([...pageUrls, `${origin}/${expected.imagePath}`, `${origin}/ogp.png`].map((url) => readPublic(url)));
+  const pages = responses.slice(0, pageUrls.length).map((response) => checkHtml(response, expected.htmlHash, expected.imageUrl));
+  const image = checkImage(responses.at(-2), expected.imageHash);
+  // 以前の名前のない共有画像は配信から外れている（古いカードは X 側が保存した画像を使う）。
+  const retired = responses.at(-1);
+  const retiredImage = { ...responseDetails(retired), ok: retired.status === 404 };
+  return { origin, pages, image, retiredImage, ok: pages.every((page) => page.ok) && image.ok && retiredImage.ok };
 }
 
 async function main() {
@@ -173,12 +187,16 @@ async function main() {
     routes: [], robots: null, ok: false,
   };
   try {
-    const [html, image] = await Promise.all([
-      fs.readFile(path.join(ROOT, "index.html"), "utf8"), fs.readFile(path.join(ROOT, "ogp.png")),
-    ]);
-    const expected = { htmlHash: sha256LF(html), imageHash: sha256(image) };
-    report.local = { htmlSha256LF: expected.htmlHash, imageSha256: expected.imageHash, imageBytes: image.length, metadata: inspectHtml(html), png: inspectPng(image) };
-    if (!report.local.metadata.ok || !report.local.png.ok) throw new Error("Local OGP HTML or image validation failed before public requests");
+    const html = await fs.readFile(path.join(ROOT, "index.html"), "utf8");
+    const shared = localImageUrl(html);
+    const image = await fs.readFile(path.join(ROOT, shared.path));
+    ALLOWED_URLS = allowedUrls(shared.path);
+    const expected = { htmlHash: sha256LF(html), imageHash: sha256(image), imageUrl: shared.url, imagePath: shared.path };
+    report.local = { htmlSha256LF: expected.htmlHash, imageUrl: shared.url, imageSha256: expected.imageHash, imageBytes: image.length,
+      metadata: inspectHtml(html, shared.url), png: inspectPng(image) };
+    if (!report.local.metadata.ok || !report.local.png.ok || !expected.imageHash.startsWith(shared.hash)) {
+      throw new Error("Local OGP HTML or image validation failed before public requests");
+    }
     const settled = await Promise.allSettled([
       ...ORIGINS.map((origin) => verifyOrigin(origin, expected)),
       readPublic(`${WORKER}/robots.txt`).then(inspectRobots),
@@ -196,5 +214,5 @@ async function main() {
   return report;
 }
 
-module.exports = { inspectHtml, inspectPng, inspectRobots, readPublic, checkHtml, checkImage, main };
+module.exports = { localImageUrl, inspectHtml, inspectPng, inspectRobots, readPublic, checkHtml, checkImage, main };
 if (require.main === module) main();
