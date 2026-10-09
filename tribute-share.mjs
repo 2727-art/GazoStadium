@@ -5,6 +5,10 @@ import {
   CROWN_JEWELS,
   CROWN_PATH,
   HEART_PATH,
+  FLOURISH_PATH,
+  ROSE_PATHS,
+  THRONE_CROWN_PATH,
+  framePalette,
   inkColor,
   mixColor,
   normalizeDecorations,
@@ -12,7 +16,7 @@ import {
   sealSvg,
   sealTextLayout,
   waxPoints,
-} from "./tribute-deco.mjs?v=ranch-deco-v1";
+} from "./tribute-deco.mjs?v=ranch-frame-color-v1";
 
 export const SHARE_WIDTH = 1080;
 export const SHARE_HEIGHT = 1350;
@@ -991,19 +995,18 @@ function eachCorner(ctx, box, inset, draw) {
   });
 }
 
-function goldGradient(ctx, box) {
-  const gold = ctx.createLinearGradient(box.x, box.y, box.x + box.width, box.y + box.height);
-  gold.addColorStop(0, "#7d5d1c");
-  gold.addColorStop(0.22, "#f7e4a6");
-  gold.addColorStop(0.45, "#b8892b");
-  gold.addColorStop(0.62, "#fff2c4");
-  gold.addColorStop(0.82, "#9a7224");
-  gold.addColorStop(1, "#f0d48a");
-  return gold;
+// 金属の縁（金縁と玉座）。色は枠の色の m（明暗の段）から作る。
+function metalGradient(ctx, box, stops) {
+  const gradient = ctx.createLinearGradient(box.x, box.y, box.x + box.width, box.y + box.height);
+  const positions = stops.length === 6 ? [0, 0.22, 0.45, 0.62, 0.82, 1] : [0, 0.3, 0.5, 0.7, 1];
+  const colors = stops.length === 6 ? stops : [...stops, stops[0]];
+  colors.forEach((color, index) => gradient.addColorStop(positions[index], color));
+  return gradient;
 }
 
-function strokeMetal(ctx, path) {
-  for (const [width, color, alpha] of [[9, "#3e424b", 1], [5, "#cfd4dd", 1], [1.6, "#ffffff", 0.7]]) {
+// 鎖の輪。外側の暗い線、金属の線、細い光の3重で描く。
+function strokeMetal(ctx, path, [high, middle, low]) {
+  for (const [width, color, alpha] of [[9, mixColor(low, "#000000", 0.25), 1], [5, middle, 1], [1.6, high, 0.75]]) {
     ctx.lineWidth = width;
     ctx.strokeStyle = color;
     ctx.globalAlpha = alpha;
@@ -1013,27 +1016,28 @@ function strokeMetal(ctx, path) {
   ctx.globalAlpha = 1;
 }
 
-function paintRose(ctx) {
+function paintRose(ctx, [petal, dark, light]) {
   ctx.save();
   ctx.scale(1.7, 1.7);
   ctx.translate(-20, -20);
   ctx.fillStyle = "#3f7d4e";
-  ctx.fill(new Path2D("M6 30 Q1 21 11 20 Q12 29 6 30Z"));
-  ctx.fill(new Path2D("M30 35 Q39 31 35 23 Q28 27 30 35Z"));
-  ctx.fillStyle = "#b0153f";
+  for (const leaf of ROSE_PATHS.leaves) ctx.fill(new Path2D(leaf));
+  ctx.fillStyle = petal;
   ctx.beginPath();
   ctx.arc(20, 20, 11.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.lineWidth = 1.6;
-  ctx.strokeStyle = "#e2557b";
-  ctx.stroke(new Path2D("M11 15 Q20 5 29 15"));
+  ctx.strokeStyle = light;
+  ctx.stroke(new Path2D(ROSE_PATHS.highlight));
   ctx.lineWidth = 1.7;
-  ctx.strokeStyle = "#6e0a26";
-  ctx.stroke(new Path2D("M20 11.5 a8.5 8.5 0 1 1 -7.4 12.4 M20 15.5 a4.8 4.8 0 1 1 -4.2 7 M20 19.5 a1.6 1.6 0 1 1 1.1 1.3"));
+  ctx.strokeStyle = dark;
+  ctx.stroke(new Path2D(ROSE_PATHS.spiral));
   ctx.restore();
 }
 
-function paintCrown(ctx, centerX, top, width) {
+function paintCrown(ctx, centerX, top, width, palette) {
+  const [high, middle, low] = palette.metal;
+  const [center, side] = palette.jewels;
   const scale = width / 58;
   ctx.save();
   ctx.translate(centerX - width / 2, top);
@@ -1042,22 +1046,22 @@ function paintCrown(ctx, centerX, top, width) {
   ctx.shadowBlur = 6;
   ctx.shadowOffsetY = 2;
   const fill = ctx.createLinearGradient(0, 0, 0, 36);
-  fill.addColorStop(0, "#fff4c9");
-  fill.addColorStop(0.55, "#e2b04f");
-  fill.addColorStop(1, "#8a6a24");
-  const crown = new Path2D("M8 32 L4 8 L17 19 L29 3 L41 19 L54 8 L50 32 Z");
+  fill.addColorStop(0, high);
+  fill.addColorStop(0.55, middle);
+  fill.addColorStop(1, low);
+  const crown = new Path2D(THRONE_CROWN_PATH);
   ctx.fillStyle = fill;
   ctx.fill(crown);
   ctx.shadowColor = "transparent";
   ctx.lineWidth = 1.2;
-  ctx.strokeStyle = "#5c4210";
+  ctx.strokeStyle = palette.crownLine;
   ctx.stroke(crown);
-  ctx.fillStyle = "#c99a3c";
+  ctx.fillStyle = middle;
   roundRectPath(ctx, 8, 29, 42, 5, 1.5);
   ctx.fill();
   ctx.lineWidth = 1;
   ctx.stroke();
-  for (const [x, y, radius, color] of [[29, 22, 3.4, "#d3264f"], [17, 24, 2.4, "#3a7bd5"], [41, 24, 2.4, "#3a7bd5"], [4, 8, 2.4, "#fff4c9"], [29, 3, 2.6, "#fff4c9"], [54, 8, 2.4, "#fff4c9"]]) {
+  for (const [x, y, radius, color] of [[29, 22, 3.4, center], [17, 24, 2.4, side], [41, 24, 2.4, side], [4, 8, 2.4, high], [29, 3, 2.6, high], [54, 8, 2.4, high]]) {
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -1066,15 +1070,16 @@ function paintCrown(ctx, centerX, top, width) {
   ctx.restore();
 }
 
-// カードの枠と背景。中の文字の色と位置は、どの枠でも同じ。
-function paintFrame(ctx, frame, box, color) {
+// カードの枠と背景。中の文字の色と位置は、どの枠・どの色でも同じ。色は枠の色（tribute-deco.mjs）から。
+function paintFrame(ctx, frame, box, color, frameColor) {
   const { x, y, width, height } = box;
+  const palette = framePalette(frame, frameColor);
   ctx.save();
   if (frame === "kurokawa") {
     const leather = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
-    leather.addColorStop(0, "#2c201c");
-    leather.addColorStop(0.58, "#171112");
-    leather.addColorStop(1, "#120d0f");
+    leather.addColorStop(0, palette.a);
+    leather.addColorStop(0.58, palette.b);
+    leather.addColorStop(1, palette.c);
     roundRectPath(ctx, x, y, width, height, 30);
     ctx.fillStyle = leather;
     ctx.fill();
@@ -1092,15 +1097,15 @@ function paintFrame(ctx, frame, box, color) {
     ctx.stroke();
     ctx.setLineDash([12, 8]);
     ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(232, 194, 122, 0.62)";
+    ctx.strokeStyle = palette.stitch;
     roundRectPath(ctx, x + 14, y + 14, width - 28, height - 28, 22);
     ctx.stroke();
     ctx.setLineDash([]);
   } else if (frame === "kusari") {
     const steel = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
-    steel.addColorStop(0, "#23262e");
-    steel.addColorStop(0.6, "#15161b");
-    steel.addColorStop(1, "#15161b");
+    steel.addColorStop(0, palette.a);
+    steel.addColorStop(0.6, palette.b);
+    steel.addColorStop(1, palette.b);
     roundRectPath(ctx, x, y, width, height, 8);
     ctx.fillStyle = steel;
     ctx.fill();
@@ -1115,33 +1120,34 @@ function paintFrame(ctx, frame, box, color) {
           ctx.beginPath();
           ctx.moveTo(start - 4, band / 2);
           ctx.lineTo(start + pitch * 0.3, band / 2);
-        });
+        }, palette.metal);
         strokeMetal(ctx, () => {
           ctx.beginPath();
           ctx.ellipse(start + pitch * 0.64, band / 2, pitch * 0.34, 10, 0, 0, Math.PI * 2);
-        });
+        }, palette.metal);
       }
     });
     eachCorner(ctx, box, band / 2, () => strokeMetal(ctx, () => {
       ctx.beginPath();
       ctx.arc(0, 0, 11, 0, Math.PI * 2);
-    }));
+    }, palette.metal));
   } else if (frame === "bara") {
     const wine = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
-    wine.addColorStop(0, "#3a0f1f");
-    wine.addColorStop(0.62, "#1c0a12");
-    wine.addColorStop(1, "#1c0a12");
+    wine.addColorStop(0, palette.a);
+    wine.addColorStop(0.62, palette.b);
+    wine.addColorStop(1, palette.b);
     roundRectPath(ctx, x, y, width, height, 8);
     ctx.fillStyle = wine;
     ctx.fill();
     const glow = ctx.createRadialGradient(x, y, 0, x, y, width * 0.7);
-    glow.addColorStop(0, "rgba(176, 21, 63, 0.4)");
-    glow.addColorStop(1, "rgba(176, 21, 63, 0)");
+    glow.addColorStop(0, palette.glow);
+    glow.addColorStop(1, "rgba(0, 0, 0, 0)");
     ctx.fillStyle = glow;
     ctx.fill();
     eachEdge(ctx, box, (length) => {
-      ctx.strokeStyle = "rgba(245, 228, 234, 0.85)";
-      ctx.fillStyle = "rgba(245, 228, 234, 0.85)";
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = palette.lace;
+      ctx.fillStyle = palette.lace;
       const count = Math.round(length / 22);
       const pitch = length / count;
       ctx.lineWidth = 3;
@@ -1166,39 +1172,40 @@ function paintFrame(ctx, frame, box, color) {
       ctx.lineTo(length, 30);
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
     });
     eachCorner(ctx, box, 4, (index) => {
-      if (index === 0 || index === 2) paintRose(ctx);
+      if (index === 0 || index === 2) paintRose(ctx, palette.rose);
     });
   } else if (frame === "kinbuchi") {
     roundRectPath(ctx, x, y, width, height, 4);
     const inside = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
-    inside.addColorStop(0, "#221a14");
-    inside.addColorStop(0.6, "#141016");
-    inside.addColorStop(1, "#141016");
+    inside.addColorStop(0, palette.a);
+    inside.addColorStop(0.6, palette.b);
+    inside.addColorStop(1, palette.b);
     ctx.fillStyle = inside;
     ctx.fill();
     const tint = ctx.createRadialGradient(x + width / 2, y, 0, x + width / 2, y, width * 0.7);
-    tint.addColorStop(0, "rgba(232, 194, 122, 0.16)");
-    tint.addColorStop(1, "rgba(232, 194, 122, 0)");
+    tint.addColorStop(0, palette.glow);
+    tint.addColorStop(1, "rgba(0, 0, 0, 0)");
     ctx.fillStyle = tint;
     ctx.fill();
     ctx.lineWidth = 22;
-    ctx.strokeStyle = goldGradient(ctx, box);
+    ctx.strokeStyle = metalGradient(ctx, box, palette.m);
     ctx.strokeRect(x + 11, y + 11, width - 22, height - 22);
     ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
     ctx.strokeRect(x + 24, y + 24, width - 48, height - 48);
-    ctx.strokeStyle = "rgba(232, 194, 122, 0.55)";
+    ctx.strokeStyle = palette.line;
     ctx.strokeRect(x + 28, y + 28, width - 56, height - 56);
-    const flourish = new Path2D("M3 3 H24 Q30 3 30 9 Q30 14 25 14 Q21 14 21 10 M3 3 V24 Q3 30 9 30 Q14 30 14 25 Q14 21 10 21");
+    const flourish = new Path2D(FLOURISH_PATH);
     eachCorner(ctx, box, 34, () => {
       ctx.scale(2, 2);
       ctx.lineWidth = 2.4;
       ctx.lineCap = "round";
-      ctx.strokeStyle = "#e9c46f";
+      ctx.strokeStyle = palette.metal[1];
       ctx.stroke(flourish);
-      ctx.fillStyle = "#f6dfa6";
+      ctx.fillStyle = palette.metal[0];
       ctx.beginPath();
       ctx.arc(9, 9, 3.2, 0, Math.PI * 2);
       ctx.fill();
@@ -1206,9 +1213,9 @@ function paintFrame(ctx, frame, box, color) {
   } else if (frame === "gyokuza") {
     roundRectPath(ctx, x, y, width, height, 30);
     const velvet = ctx.createRadialGradient(x + width / 2, y, 0, x + width / 2, y, width * 1.05);
-    velvet.addColorStop(0, "#6a1326");
-    velvet.addColorStop(0.58, "#2c0812");
-    velvet.addColorStop(1, "#190409");
+    velvet.addColorStop(0, palette.a);
+    velvet.addColorStop(0.58, palette.b);
+    velvet.addColorStop(1, palette.c);
     ctx.fillStyle = velvet;
     ctx.fill();
     ctx.save();
@@ -1225,18 +1232,18 @@ function paintFrame(ctx, frame, box, color) {
     ctx.fillRect(x, y, width, height);
     ctx.restore();
     ctx.save();
-    ctx.shadowColor = "rgba(255, 196, 92, 0.32)";
+    ctx.shadowColor = palette.glow;
     ctx.shadowBlur = 60;
     ctx.lineWidth = 7;
-    ctx.strokeStyle = goldGradient(ctx, box);
+    ctx.strokeStyle = metalGradient(ctx, box, palette.m);
     roundRectPath(ctx, x, y, width, height, 30);
     ctx.stroke();
     ctx.restore();
     ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(255, 215, 130, 0.35)";
+    ctx.strokeStyle = palette.line;
     roundRectPath(ctx, x + 6, y + 6, width - 12, height - 12, 25);
     ctx.stroke();
-    paintCrown(ctx, x + width / 2, y - 58, 140);
+    paintCrown(ctx, x + width / 2, y - 58, 140, palette);
   } else {
     const panel = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
     panel.addColorStop(0, mixColor(PANEL, color, 0.14));
@@ -1277,7 +1284,7 @@ function wrapLines(ctx, text, maxWidth, maxLines) {
 
 export async function renderRecruitImage(data) {
   const manager = managerPresentation(data.manager);
-  const frame = normalizeDecorations({ frame: data.frame }).frame;
+  const look = normalizeDecorations({ frame: data.frame, frameColor: data.frameColor });
   const word = String(data.word || "");
   const intro = String(data.intro || "");
   const achievements = (Array.isArray(data.achievements) ? data.achievements : []).slice(0, 3);
@@ -1311,7 +1318,7 @@ export async function renderRecruitImage(data) {
   ctx.restore();
 
   const box = RECRUIT_CARD;
-  paintFrame(ctx, frame, box, manager.color);
+  paintFrame(ctx, look.frame, box, manager.color, look.frameColor);
   const left = box.x + 64;
   const right = box.x + box.width - 64;
   const innerWidth = right - left;

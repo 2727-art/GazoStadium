@@ -85,10 +85,11 @@ import {
   renderExcerptImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-deco-v1";
+} from "./tribute-share.mjs?v=ranch-frame-color-v1";
 import {
   CARD_FRAMES,
   DECORATION_FUND_PERCENT,
+  FRAME_PALETTES,
   SEAL_INKS,
   SEAL_SHAPES,
   decorationChoice,
@@ -96,7 +97,7 @@ import {
   normalizeDecorations,
   requiredDecorationProducts,
   sealSvg,
-} from "./tribute-deco.mjs?v=ranch-deco-v1";
+} from "./tribute-deco.mjs?v=ranch-frame-color-v1";
 
 const appRoot = document.querySelector("#app");
 // 確認シートとレシートは画面の外側に置く。画面要素の入場アニメーションが transform を使うため、
@@ -525,8 +526,8 @@ function cardAchievementsMarkup(ids, extra = "") {
 // preview: カード編集の見本（押しても開かない）。
 function renderManagerCard(card, { compact = false, preview = false } = {}) {
   const face = preview
-    ? `<div class="tribute-card-face"${frameAttr(card.frame)}>`
-    : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame)}>`;
+    ? `<div class="tribute-card-face"${frameAttr(card.frame, card.frameColor)}>`
+    : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame, card.frameColor)}>`;
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
     ${face}
       <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
@@ -584,7 +585,7 @@ function renderManagerDetail() {
         : `<p class="tribute-note">この管理人は受付を止めています。</p>`;
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
-    <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame)}>
+    <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame, card.frameColor)}>
       <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}</div></div></div>
       ${cardAchievementsMarkup(card.achievements, " is-large")}
       ${wordBubble(card.word, " is-large")}
@@ -729,7 +730,7 @@ function formDecorations(form) {
   const card = state.profile?.card || {};
   const data = new FormData(form);
   const pick = (name) => (data.has(name) ? String(data.get(name)) : card[name]);
-  return normalizeDecorations({ frame: pick("frame"), sealShape: pick("sealShape"), sealInk: pick("sealInk") });
+  return normalizeDecorations({ frame: pick("frame"), frameColor: pick("frameColor"), sealShape: pick("sealShape"), sealInk: pick("sealInk") });
 }
 
 function decorationStatus(entry, selected) {
@@ -764,7 +765,8 @@ function renderDecorationSettings(card) {
   }
   return `<fieldset class="tribute-deco"><legend>牧場の飾り</legend>
     <div class="tribute-deco-group"><h3>カードの枠 <small>掲示板・詳細・招待・財布募集の画像</small></h3>
-      <div class="tribute-deco-tiles">${CARD_FRAMES.map((frame) => decorationTile("frame", frame, look.frame, `<span class="tribute-deco-swatch"${frameAttr(frame.id)}></span>`)).join("")}</div></div>
+      <div class="tribute-deco-tiles">${CARD_FRAMES.map((frame) => decorationTile("frame", frame, look.frame, frameSwatch(frame.id, look))).join("")}</div></div>
+    <div class="tribute-deco-group" data-frame-colors>${renderFrameColors(look)}</div>
     <div class="tribute-deco-group"><h3>受取印の形 <small>受け取る時の印・レシート・貢ぎ報告の画像</small></h3>
       <div class="tribute-deco-tiles">${SEAL_SHAPES.map((shape) => decorationTile("sealShape", shape, look.sealShape, shapeArt(shape.id, look, card.personaName))).join("")}</div></div>
     <div class="tribute-deco-group"><h3>朱肉の色</h3>
@@ -772,6 +774,29 @@ function renderDecorationSettings(card) {
     <div data-deco-trial>${renderDecorationTrial(look)}</div>
     <small>飾りが変えるのは見た目だけです。中の人の札・入場料・管理中の人数は、どの飾りでも同じ位置に出ます。AnjuPayストアの「お貢ぎ牧場の飾り」でも買えます。</small>
   </fieldset>`;
+}
+
+// 枠の見本。選んでいる枠は、選んでいる色で見せる。
+function frameSwatch(frame, look) {
+  return `<span class="tribute-deco-swatch"${frameAttr(frame, frame === look.frame ? look.frameColor : "")}></span>`;
+}
+
+// 枠の色。持っている枠なら、どの色も追加料金なし（試着中の枠でも色を選べる）。
+function renderFrameColors(look) {
+  const palettes = FRAME_PALETTES[look.frame];
+  if (!palettes) return "";
+  const name = decorationChoice("frame", look.frame)?.name || "枠";
+  return `<h3>${escapeHtml(name)}の色 <small>持っている枠は、どの色も追加料金なし</small></h3>
+    <div class="tribute-frame-colors" role="radiogroup" aria-label="${escapeHtml(name)}の色">${palettes.map((palette) => `<label class="tribute-frame-color"><input type="radio" name="frameColor" value="${palette.id}" ${palette.id === look.frameColor ? "checked" : ""} /><i style="--dot-fill:${palette.dot[0]};--dot-ring:${palette.dot[1]}" aria-hidden="true"></i>${escapeHtml(palette.name)}</label>`).join("")}</div>`;
+}
+
+// 枠を選び直したら、その枠の色の丸に替える（保存してある枠に戻した時は、保存してある色）。
+function refreshFrameColors(form) {
+  const group = form.querySelector("[data-frame-colors]");
+  if (!group) return;
+  const saved = normalizeDecorations(state.profile?.card);
+  const frame = form.querySelector('input[name="frame"]:checked')?.value || "";
+  group.innerHTML = renderFrameColors(normalizeDecorations({ frame, frameColor: frame === saved.frame ? saved.frameColor : "" }));
 }
 
 function renderDecorationTrial(look) {
@@ -802,10 +827,9 @@ function updateDecorations(form) {
     tile.classList.add(`is-${status.key}`);
     const label = tile.querySelector("[data-deco-status]");
     if (label) label.textContent = status.label;
-    if (slot === "sealShape") {
-      const art = tile.querySelector("[data-deco-art]");
-      if (art) art.innerHTML = shapeArt(entry.id, look, form.elements.personaName?.value);
-    }
+    const art = tile.querySelector("[data-deco-art]");
+    if (art && slot === "sealShape") art.innerHTML = shapeArt(entry.id, look, form.elements.personaName?.value);
+    if (art && slot === "frame") art.innerHTML = frameSwatch(entry.id, look);
   }
   const trial = form.querySelector("[data-deco-trial]");
   if (trial) trial.innerHTML = renderDecorationTrial(look);
@@ -922,12 +946,15 @@ function stopDecorationTrial(form) {
   const saved = normalizeDecorations(state.profile?.card);
   const owned = ownedDecorations();
   const look = formDecorations(form);
-  for (const slot of Object.keys(look)) {
+  let frameReset = false;
+  for (const slot of ["frame", "sealShape", "sealInk"]) {
     const entry = decorationChoice(slot, look[slot]);
     if (!entry?.productId || owned.has(entry.productId)) continue;
     const input = form.querySelector(`input[name="${slot}"][value="${CSS.escape(saved[slot])}"]`);
     if (input) input.checked = true;
+    if (slot === "frame") frameReset = true;
   }
+  if (frameReset) refreshFrameColors(form);
   updateDecorations(form);
   updateCardPreview(form);
   updateSealPreview(form);
@@ -2808,7 +2835,8 @@ function bindRoot(root) {
     if (target) handleClick(target);
     const cardForm = event.target.closest?.('form[data-form="card"]');
     if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee"].includes(event.target.name)) updateCardPreview(cardForm);
-    if (cardForm && ["frame", "sealShape", "sealInk"].includes(event.target.name)) {
+    if (cardForm && ["frame", "frameColor", "sealShape", "sealInk"].includes(event.target.name)) {
+      if (event.target.name === "frame") refreshFrameColors(cardForm);
       updateDecorations(cardForm);
       updateCardPreview(cardForm);
       updateSealPreview(cardForm);
@@ -3161,6 +3189,7 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   avatar: 7,
   seals: ["yoku", "zako", "kakunin"],
   frame: "gyokuza",
+  frameColor: "pink",
   sealShape: "heart",
   sealInk: "sakura",
   achievements: ["tribute_manager_10", "battle_total_10", "tribute_wallet_3"],
@@ -3256,7 +3285,7 @@ function previewCall(action, payload) {
         ageConfirmed: previewScreen !== "age",
         profile: previewSavedProfile || {
           walletName: "ポチ財布",
-          card: { ...PREVIEW_MANAGER_CARD, personaName: "レイ", disclosure: "as_is", style: "cold", sigil: 2, avatar: 5, frame: "kurokawa", sealShape: "heart", sealInk: "sakura", achievements: ["tribute_manager_10"], mine: true },
+          card: { ...PREVIEW_MANAGER_CARD, personaName: "レイ", disclosure: "as_is", style: "cold", sigil: 2, avatar: 5, frame: "kurokawa", frameColor: "navy", sealShape: "heart", sealInk: "sakura", achievements: ["tribute_manager_10"], mine: true },
           accepting: true,
           publicManagerId: "f".repeat(24),
           hidden: false,
@@ -3282,10 +3311,10 @@ function previewCall(action, payload) {
         ok: true,
         managers: [
           PREVIEW_MANAGER_CARD,
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, honor: null, recommendedCount: 0, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", achievements: ["tribute_manager_3"] },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, honor: null, recommendedCount: 0, intro: "甘やかし担当。無理はさせない。", frame: "bara", achievements: [] },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, honor: null, recommendedCount: 0, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "kusari", achievements: [] },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, honor: null, recommendedCount: 0, intro: "毎日決まった額を、決まった時間に。", frame: "kurokawa", achievements: ["battle_total_1"] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, honor: null, recommendedCount: 0, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, honor: null, recommendedCount: 0, intro: "甘やかし担当。無理はさせない。", frame: "bara", frameColor: "pink", achievements: [] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, honor: null, recommendedCount: 0, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "kusari", frameColor: "gold", achievements: [] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, honor: null, recommendedCount: 0, intro: "毎日決まった額を、決まった時間に。", frame: "kurokawa", frameColor: "pink", achievements: ["battle_total_1"] },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
         recommended: [PREVIEW_MANAGER_CARD],
       });

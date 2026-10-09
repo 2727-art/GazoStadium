@@ -74,6 +74,14 @@ const DECORATION_SLOTS = Object.freeze({
   sealShape: Object.freeze({ type: "ranchSealShape", prefix: "ranch_seal_", ids: SEAL_SHAPES, fallback: DEFAULT_SEAL_SHAPE }),
   sealInk: Object.freeze({ type: "ranchSealInk", prefix: "ranch_ink_", ids: SEAL_INKS, fallback: DEFAULT_SEAL_INK }),
 });
+// 枠の色。持っている枠なら、どの色も追加料金なしで選べる。どの枠にもピンク系を入れ、1色目はいまの色。
+const FRAME_COLORS = Object.freeze({
+  kurokawa: Object.freeze(["black", "pink", "brown", "bordeaux", "navy"]),
+  kusari: Object.freeze(["silver", "pinkgold", "gold", "iron", "chrome"]),
+  bara: Object.freeze(["red", "pink", "black", "white", "blue"]),
+  kinbuchi: Object.freeze(["gold", "pinkgold", "silver", "rosegold", "blackgold"]),
+  gyokuza: Object.freeze(["crimson", "pink", "jet", "violet", "lapis"]),
+});
 const DECORATION_PRODUCT_TYPES = Object.freeze(Object.values(DECORATION_SLOTS).map((slot) => slot.type));
 const DECORATION_PRODUCT_IDS = Object.freeze(Object.values(DECORATION_SLOTS).flatMap((slot) => (
   slot.ids.filter((id) => id !== slot.fallback).map((id) => `${slot.prefix}${id}`)
@@ -318,6 +326,10 @@ function normalizeDecorations(value) {
     const requested = String(value?.[key] ?? "");
     decorations[key] = slot.ids.includes(requested) ? requested : slot.fallback;
   }
+  // 枠の色は枠ごとの一覧から。枠がなければ空、知らない色はその枠の1色目。
+  const colors = FRAME_COLORS[decorations.frame] || [];
+  const color = String(value?.frameColor ?? "");
+  decorations.frameColor = colors.includes(color) ? color : colors[0] || "";
   return decorations;
 }
 
@@ -563,6 +575,7 @@ module.exports = {
   DEFAULT_SEAL_SHAPE,
   DEFAULT_SEAL_INK,
   DECORATION_SLOTS,
+  FRAME_COLORS,
   DECORATION_PRODUCT_TYPES,
   DECORATION_PRODUCT_IDS,
   DECORATION_FUND_BASIS_POINTS,

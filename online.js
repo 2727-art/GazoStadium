@@ -122,7 +122,7 @@ import {
   runOnlineOpponentDestroyedTransition,
 } from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v2";
 import { createSoloHiddenWaitGuard } from "./online-solo-idle-guard.mjs?v=solo-match-cost-guard-v1";
-import { DECORATION_FUND_PERCENT, RANCH_DECORATION_PRODUCTS, sealSvg as ranchSealSvg } from "./tribute-deco.mjs?v=ranch-deco-v1";
+import { DECORATION_FUND_PERCENT, RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, sealSvg as ranchSealSvg } from "./tribute-deco.mjs?v=ranch-frame-color-v1";
 import {
   ONLINE_P2P_RECOVERY_PHASES,
   createOnlineP2pGenerationToken,
@@ -5453,7 +5453,7 @@ function renderPointShop() {
           ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
           : RANCH_DECORATION_TYPES.has(product.type)
             ? `<div class="shop-ranch-preview">${product.type === "ranchFrame"
-              ? `<span class="tribute-deco-swatch" data-frame="${escapeHtml(product.deco)}"></span>`
+              ? `<span class="tribute-deco-swatch"${ranchFrameAttr(product.deco)}></span>`
               : ranchSealSvg({ label: "受領", name: "管理人", at: Date.now(), size: 84, shape: product.type === "ranchSealShape" ? product.deco : "date", ink: product.type === "ranchSealInk" ? product.deco : "shu", rough: false })}</div>`
           : product.type === "aiTextTrainingStyle"
             ? `<div class="shop-ai-training-style-preview" data-att-panel-theme="${escapeHtml(product.id)}" data-att-message-decoration="${escapeHtml(product.id)}"><div class="shop-ai-training-style-window"><span>ROUND 1</span><strong>20</strong><div class="shop-ai-training-style-message is-doodle is-collage" data-att-doodle-layout="diagonal-banner" data-att-doodle-density="medium" data-att-doodle-part-count="2" role="img" aria-label="今日の気分で、一緒に最後までいこう"><span class="att-doodle-copy is-part-1" data-text="今日の気分で、" aria-hidden="true">今日の気分で、</span><span class="att-doodle-copy is-part-2" data-text="一緒に最後までいこう" aria-hidden="true">一緒に最後までいこう</span><i class="att-doodle-ornament is-heart" aria-hidden="true">♡</i><i class="att-doodle-ornament is-spark-a" aria-hidden="true">✦</i><i class="att-doodle-ornament is-ribbon" aria-hidden="true">୨୧</i><i class="att-doodle-meta" aria-hidden="true">R1 · 80 BPM</i></div></div><small>窓とデコ台詞を別々に組み合わせ可能 · 全画面コラージュ</small></div>`
@@ -5542,7 +5542,7 @@ function renderPointShop() {
         <p class="shop-oshi-market-shared"><strong>通常の商品棚と同じ商品です。</strong> 商品ID・購入状態・装備状態は共通のため、どちらの棚から購入しても二重購入にはなりません。</p>
         <div class="shop-oshi-market-groups">${oshiMarketCollectionGroups}</div>
       </section>
-      <section class="shop-category shop-ranch-category" id="shopRanchCategory" aria-labelledby="shopRanchTitle"><div class="shop-category-head shop-ranch-head"><div><span>OMITSUGI RANCH / ${RANCH_DECORATION_PRODUCTS.length} ITEMS</span><h2 id="shopRanchTitle">お貢ぎ牧場の飾り</h2></div><p>管理人カードの枠と、財布に押す受取印を飾ります。掲示板・招待・財布募集の画像と、財布が保存する貢ぎ報告の画像に出ます。買ったあとは、お貢ぎ牧場の管理人カードの編集で選べます（試着もそこでできます）。</p>
+      <section class="shop-category shop-ranch-category" id="shopRanchCategory" aria-labelledby="shopRanchTitle"><div class="shop-category-head shop-ranch-head"><div><span>OMITSUGI RANCH / ${RANCH_DECORATION_PRODUCTS.length} ITEMS</span><h2 id="shopRanchTitle">お貢ぎ牧場の飾り</h2></div><p>管理人カードの枠と、財布に押す受取印を飾ります。掲示板・招待・財布募集の画像と、財布が保存する貢ぎ報告の画像に出ます。買ったあとは、お貢ぎ牧場の管理人カードの編集で選べます（試着もそこでできます）。枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。</p>
         <p class="shop-ranch-fund">売上の<b>${DECORATION_FUND_PERCENT}%</b>は牧場基金に積まれ、新しい財布の献上手数料の補填に使われます。飾りは見た目だけで、掲示板の並び順・手数料・番付には影響しません。</p></div>
         <h3 class="shop-ranch-sub">カードの枠</h3><div class="shop-grid">${ranchShelf("ranchFrame")}</div>
         <h3 class="shop-ranch-sub">受取印の形</h3><div class="shop-grid">${ranchShelf("ranchSealShape")}</div>

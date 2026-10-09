@@ -1164,15 +1164,16 @@ test("ranch decorations and card achievements need a purchase or an unlock, reac
 
   await rejects(save({ frame: "gyokuza", achievements: ["battle_total_10", "tribute_wallet_3"] }), /まだ解除していない実績/);
   await rejects(save({ frame: "kusari" }), /持っていない飾りは保存できません/);
-  const saved = await save({ frame: "gyokuza", sealShape: "heart", sealInk: "sakura", achievements: ["battle_total_10", "battle_total_10", "tribute_manager_1"] });
+  const saved = await save({ frame: "gyokuza", frameColor: "pink", sealShape: "heart", sealInk: "sakura", achievements: ["battle_total_10", "battle_total_10", "tribute_manager_1"] });
   assert.equal(saved.profile.card.frame, "gyokuza");
+  assert.equal(saved.profile.card.frameColor, "pink", "a color of an owned frame is free");
   assert.deepEqual(saved.profile.card.achievements, ["battle_total_10", "tribute_manager_1"]);
 
   await confirmAge(harness, "viewer");
   const boardCard = (await harness.act("viewer", "board")).managers.find((entry) => entry.publicManagerId === publicManagerId);
   assert.deepEqual(
-    { frame: boardCard.frame, sealShape: boardCard.sealShape, sealInk: boardCard.sealInk, achievements: boardCard.achievements, disclosure: boardCard.disclosure, entryFee: boardCard.entryFee },
-    { frame: "gyokuza", sealShape: "heart", sealInk: "sakura", achievements: ["battle_total_10", "tribute_manager_1"], disclosure: "nekama", entryFee: 0 },
+    { frame: boardCard.frame, frameColor: boardCard.frameColor, sealShape: boardCard.sealShape, sealInk: boardCard.sealInk, achievements: boardCard.achievements, disclosure: boardCard.disclosure, entryFee: boardCard.entryFee },
+    { frame: "gyokuza", frameColor: "pink", sealShape: "heart", sealInk: "sakura", achievements: ["battle_total_10", "tribute_manager_1"], disclosure: "nekama", entryFee: 0 },
   );
   assert.equal((await harness.act("viewer", "manager", { publicManagerId })).card.frame, "gyokuza");
 
@@ -1189,6 +1190,8 @@ test("ranch decorations and card achievements need a purchase or an unlock, reac
   assert.deepEqual(look(share.receipt), { sealShape: "heart", sealInk: "sakura" });
 
   // 知らない値は標準に戻り、保存しても持ち物の確認に引っかからない。
-  const reset = await save({ frame: "<script>", sealShape: "star", sealInk: "#000" });
-  assert.deepEqual({ frame: reset.profile.card.frame, sealShape: reset.profile.card.sealShape, sealInk: reset.profile.card.sealInk }, { frame: "", sealShape: "date", sealInk: "shu" });
+  const recolored = await save({ frame: "gyokuza", frameColor: "kusari-only" });
+  assert.equal(recolored.profile.card.frameColor, "crimson", "an unknown color becomes the frame's first color");
+  const reset = await save({ frame: "<script>", frameColor: "pink", sealShape: "star", sealInk: "#000" });
+  assert.deepEqual({ frame: reset.profile.card.frame, frameColor: reset.profile.card.frameColor, sealShape: reset.profile.card.sealShape, sealInk: reset.profile.card.sealInk }, { frame: "", frameColor: "", sealShape: "date", sealInk: "shu" });
 });

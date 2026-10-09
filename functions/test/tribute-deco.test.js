@@ -120,9 +120,12 @@ test("seals keep one look per shape and ink, escape their words, and frames only
   assert.match(deco.sealSvg({ label: "受領", name: "ミオ様", at, shape: "heart", ink: "ai", surface: "paper" }), /stroke="#1f3f8f"/, "a seal on paper uses the deep ink");
   assert.match(deco.sealSvg({ label: "受領", name: "ミオ様", at, shape: "wax", ink: "sakura" }), /<polygon[^>]*fill="url\(#/);
   assert.match(deco.sealSvg({ label: "受領", name: "ミオ様", at, shape: "unknown", ink: "unknown" }), /class="tribute-seal is-date"[\s\S]*stroke="#ff5a4e"/, "unknown looks fall back to 日付印・朱");
-  assert.equal(deco.frameAttr("gyokuza"), ' data-frame="gyokuza"');
+  assert.equal(deco.frameAttr("gyokuza"), ' data-frame="gyokuza" data-frame-color="crimson"', "no color means the frame's first color");
+  assert.equal(deco.frameAttr("gyokuza", "pink"), ' data-frame="gyokuza" data-frame-color="pink"');
+  assert.equal(deco.frameAttr("kusari", "crimson"), ' data-frame="kusari" data-frame-color="silver"', "a color of another frame falls back");
   assert.equal(deco.frameAttr(""), "");
   assert.equal(deco.frameAttr('" onmouseover="alert(1)'), "");
+  assert.equal(deco.frameAttr("bara", '" onmouseover="alert(1)'), ' data-frame="bara" data-frame-color="red"');
   for (const id of rules.CARD_FRAMES) {
     assert.match(styles, new RegExp(`\\[data-frame="${id}"\\]`), id);
   }
@@ -135,7 +138,7 @@ test("seals keep one look per shape and ink, escape their words, and frames only
   assert.equal(typeof tributeShare.renderRecruitImage, "function");
   assert.match(tributeShare.sealSvg({ label: "受領", name: "ミオ様", at, shape: "crown", ink: "kin", rough: false }), /class="tribute-seal is-crown"/, "the share module re-exports the shared seal");
   // 画面・ストア・共有画像は同じ URL で読み込み、ブラウザでは1つのモジュールになる。
-  const specifier = './tribute-deco.mjs?v=ranch-deco-v1"';
+  const specifier = './tribute-deco.mjs?v=ranch-frame-color-v1"';
   for (const [name, source] of [["tribute.js", client], ["tribute-share.mjs", share], ["online.js", online]]) {
     assert.ok(source.includes(`from "${specifier}`), name);
   }
@@ -146,13 +149,13 @@ test("seals keep one look per shape and ink, escape their words, and frames only
 
 test("the card shows the frame and up to three achievements, and the editor lets managers try before they buy", () => {
   const card = sourceBlock(client, "function renderManagerCard", "function renderBoard");
-  assert.match(card, /\$\{frameAttr\(card\.frame\)\}/);
+  assert.match(card, /\$\{frameAttr\(card\.frame, card\.frameColor\)\}/);
   assert.match(card, /\$\{cardAchievementsMarkup\(card\.achievements\)\}/);
   // 中の人の札・入場料・管理中の人数は、枠があっても同じ場所に出る。
   assert.match(card, /\$\{disclosureTag\(card\.disclosure\)\}/);
   assert.match(card, /入場料 <b>\$\{escapeHtml\(formatPay\(card\.entryFee\)\)\}<\/b>/);
   assert.match(card, /管理中 <b>\$\{Number\(card\.activeContracts \|\| 0\)\}<\/b>/);
-  assert.match(sourceBlock(client, "function renderManagerDetail", "function renderApply"), /tribute-profile" style="--sigil:\$\{sigilColor\(card\)\}"\$\{frameAttr\(card\.frame\)\}/);
+  assert.match(sourceBlock(client, "function renderManagerDetail", "function renderApply"), /tribute-profile" style="--sigil:\$\{sigilColor\(card\)\}"\$\{frameAttr\(card\.frame, card\.frameColor\)\}/);
   const achievements = sourceBlock(client, "function cardAchievementsMarkup", "// preview:");
   assert.match(achievements, /\.slice\(0, CARD_ACHIEVEMENT_LIMIT\)/);
   assert.match(achievements, /escapeHtml\(entry\.name\)/);
@@ -200,7 +203,9 @@ test("the recruit image is drawn on the manager's device with the disclosure, th
 });
 
 test("the AnjuPay store sells the ranch shelf with a confirmation and the fund share, and the design doc records the rules", () => {
-  assert.match(online, /import \{ DECORATION_FUND_PERCENT, RANCH_DECORATION_PRODUCTS, sealSvg as ranchSealSvg \} from "\.\/tribute-deco\.mjs\?v=ranch-deco-v1";/);
+  assert.match(online, /import \{ DECORATION_FUND_PERCENT, RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, sealSvg as ranchSealSvg \} from "\.\/tribute-deco\.mjs\?v=ranch-frame-color-v1";/);
+  assert.match(online, /<span class="tribute-deco-swatch"\$\{ranchFrameAttr\(product\.deco\)\}><\/span>/, "store swatches get their color variables");
+  assert.match(online, /枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。/);
   assert.match(online, /\.\.\.CHAT_COSMETIC_PRODUCTS,\r?\n  \.\.\.RANCH_DECORATION_PRODUCTS,\r?\n\];/);
   assert.match(online, /<h2 id="shopRanchTitle">お貢ぎ牧場の飾り<\/h2>/);
   assert.match(online, /売上の<b>\$\{DECORATION_FUND_PERCENT\}%<\/b>は牧場基金に積まれ/);
@@ -213,4 +218,47 @@ test("the AnjuPay store sells the ranch shelf with a confirmation and the fund s
   assert.match(design, /売上の20%/);
   assert.match(design, /財布募集の画像/);
   assert.match(design, /実績（3つまで）|実績を3つまで/);
+});
+
+test("each frame has five free colors with a pink one, mirrored on the server and drawn only through color variables", async () => {
+  const deco = await loadDeco();
+  assert.deepEqual(Object.keys(deco.FRAME_PALETTES), [...rules.CARD_FRAMES]);
+  for (const frame of rules.CARD_FRAMES) {
+    const ids = deco.FRAME_PALETTES[frame].map((palette) => palette.id);
+    assert.deepEqual(ids, [...rules.FRAME_COLORS[frame]], frame);
+    assert.equal(ids.length, 5, frame);
+    assert.ok(ids.some((id) => id.includes("pink")), `${frame} has a pink color`);
+    assert.ok(deco.FRAME_PALETTES[frame].some((palette) => /ピンク|桃/.test(palette.name)), `${frame} names its pink`);
+    for (const value of [{ frame }, { frame, frameColor: ids[1] }, { frame, frameColor: "nope" }]) {
+      assert.deepEqual(deco.normalizeDecorations(value), rules.normalizeDecorations(value), JSON.stringify(value));
+    }
+    // 色は無料: 色を変えても、持っている必要があるのは枠だけ。
+    for (const color of ids) {
+      assert.deepEqual(rules.requiredDecorationProducts(rules.normalizeDecorations({ frame, frameColor: color })), [`ranch_frame_${frame}`]);
+    }
+    for (const palette of deco.FRAME_PALETTES[frame]) {
+      const rule = deco.frameColorRule(frame, palette.id);
+      assert.ok(rule.startsWith(`[data-frame="${frame}"][data-frame-color="${palette.id}"] { `), `${frame}:${palette.id}`);
+      assert.doesNotMatch(rule, /<|javascript:|expression\(/i);
+      for (const [name] of Object.entries(deco.frameVars(frame, palette.id))) assert.match(name, /^--fr-[a-z0-9-]+$/);
+    }
+  }
+  assert.deepEqual(rules.normalizeDecorations({ frame: "", frameColor: "pink" }).frameColor, "");
+  // 1色目は、色を選ぶ前の見た目と同じ。
+  assert.deepEqual(deco.FRAME_PALETTES.gyokuza[0].m, ["#8a6a24", "#fff0bf", "#c79a3a", "#fff3c8"]);
+  assert.equal(deco.FRAME_PALETTES.kusari[0].metal.join(), "#f4f6fa,#a3a9b4,#585d68");
+
+  // tribute.css は色を持たず、変数で描く（文字の色と位置には触れない）。
+  const frames = sourceBlock(styles, "/* ───────────── 牧場の飾り：カードの枠", "/* 牧場のカードに出す実績（3つまで） */");
+  assert.doesNotMatch(frames, /data:image\/svg/);
+  for (const name of ["--fr-a", "--fr-chain", "--fr-lace", "--fr-rose", "--fr-crown", "--fr-stitch", "--fr-m1", "--fr-fl-tl"]) assert.ok(frames.includes(`var(${name})`), name);
+  assert.doesNotMatch(frames, /\bcolor:\s*var\(--fr/, "frame colors never change the text color");
+
+  const editor = sourceBlock(client, "// 枠の色。持っている枠なら", "function renderDecorationTrial");
+  assert.match(editor, /name="frameColor" value="\$\{palette\.id\}"/);
+  assert.match(editor, /どの色も追加料金なし/);
+  assert.match(sourceBlock(client, "function formDecorations", "function decorationStatus"), /frameColor: pick\("frameColor"\)/);
+  assert.match(share, /paintFrame\(ctx, look\.frame, box, manager\.color, look\.frameColor\);/);
+  assert.match(sourceBlock(share, "function paintFrame", "// 文字を幅で折り返す"), /const palette = framePalette\(frame, frameColor\);/);
+  assert.match(design, /枠の色/);
 });
