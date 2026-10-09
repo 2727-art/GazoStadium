@@ -1,0 +1,227 @@
+{
+  "checkedAt": "2026-10-09T12:21:40.877Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "5e40c21",
+  "releaseHead": "2675e3d",
+  "baseCommit": "5030ad8",
+  "scope": {
+    "functions": [],
+    "hosting": true,
+    "hostingFiles": 106,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js"
+    ],
+    "serverCodeChanged": false,
+    "firestoreRules": false,
+    "firestoreIndexes": false
+  },
+  "tests": {
+    "total": 1987,
+    "passed": 1956,
+    "failed": 0,
+    "skipped": 31
+  },
+  "functions": {
+    "listed": 36,
+    "allActive": true,
+    "changedSincePreviousRelease": []
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-09T12:19:41Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-wallet-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-wallet-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-wallet-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-wallet-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.anjugames.workers.dev",
+    "moduleInitialized": true,
+    "failedLoadsOtherThanAppCheck": 0,
+    "userCheck": "User confirmed in Chrome incognito that the ranch opens (App Check passes in a normal browser) and reported the 確認中 balance that this release fixes."
+  },
+  "caveats": [
+    "HTML is cached up to one hour; an old screen can still show 確認中 until reload.",
+    "No two-player run; no iPhone/Android/Safari check."
+  ]
+}
