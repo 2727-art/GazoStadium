@@ -1,0 +1,203 @@
+{
+  "checkedAt": "2026-10-09T03:07:36.514Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "e6e20a4b79802f96408cccc0d8048ee4ecf99d84",
+  "releaseHead": "ae3717fbcb3d86bfd3974bbaadd6c46f8c2843d6",
+  "baseCommit": "502599543e2e9b5076f007e7cac247b050fccf7c",
+  "scope": {
+    "functions": [
+      "tributeAction",
+      "expireTributeContracts"
+    ],
+    "hosting": true,
+    "hostingFiles": 105,
+    "newPublicFiles": 12,
+    "databaseRules": false,
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "otherModesChanged": false
+  },
+  "tests": {
+    "total": 1973,
+    "passed": 1942,
+    "failed": 0,
+    "skipped": 31,
+    "note": "Skipped tests are emulator-only. Same result in Functions predeploy."
+  },
+  "functions": {
+    "listed": 36,
+    "allActive": true,
+    "deployedHash": "5ea3252dcacb0d0539f8d2741166aef12a41f3ed",
+    "sameHashOnlyOn": [
+      "tributeAction",
+      "expireTributeContracts"
+    ]
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-gohoubi-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexMatchesRelease": true,
+        "previousReleaseMarkers": true,
+        "text": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "avatars": {
+          "count": 12,
+          "ok": true
+        },
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-gohoubi-release.cjs",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexMatchesRelease": true,
+        "previousReleaseMarkers": true,
+        "text": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "avatars": {
+          "count": 12,
+          "ok": true
+        },
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-gohoubi-release.cjs",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexMatchesRelease": true,
+        "previousReleaseMarkers": true,
+        "text": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "avatars": {
+          "count": 12,
+          "ok": true
+        },
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-gohoubi-release.cjs",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.anjugames.workers.dev",
+    "moduleInitialized": true,
+    "consoleErrors": 0,
+    "productionWrites": "none beyond page load"
+  },
+  "caveats": [
+    "HTML is cached up to one hour; older screens keep working but do not show receive marks or purpose changes.",
+    "Existing contracts start without consent to sexual purposes.",
+    "Receipts list keeps the purpose recorded at the time even after consent is withdrawn.",
+    "No two-player production or emulator run; no iPhone/Android/Safari check."
+  ]
+}
