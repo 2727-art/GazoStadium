@@ -583,6 +583,26 @@
 .tribute-tally .is-awaiting { border-color: rgba(232, 194, 122, 0.5); color: var(--tr-gold); }
 .tribute-chip.is-awaiting { background: rgba(232, 194, 122, 0.16); color: var(--tr-gold); }
 
+/* 財布の始め方・招待リンク・見学 */
+.tribute-start-guide { display: grid; gap: 8px; margin-top: 6px; padding: 12px 14px; border: 1px solid rgba(126, 224, 138, 0.35); border-radius: 14px; background: rgba(126, 224, 138, 0.06); }
+.tribute-start-guide ol { display: grid; gap: 8px; margin: 0; padding-left: 1.3em; }
+.tribute-start-guide li { display: grid; gap: 2px; font-size: 0.86rem; }
+.tribute-start-guide li span { color: var(--tr-mist); font-size: 0.8rem; line-height: 1.6; }
+.tribute-start-guide li .button { justify-self: start; margin-top: 4px; }
+.tribute-invite { display: grid; gap: 6px; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--tr-line); }
+.tribute-invite p { font-size: 0.82rem; color: var(--tr-mist); }
+.tribute-invite-link { display: flex; gap: 8px; }
+.tribute-invite-link input { flex: 1; min-width: 0; font-size: 0.8rem !important; }
+.tribute-invite-welcome,
+.tribute-demo-banner { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid rgba(232, 194, 122, 0.45); border-radius: 14px; background: rgba(232, 194, 122, 0.08); }
+.tribute-invite-welcome b,
+.tribute-demo-banner b { color: var(--tr-gold); }
+.tribute-invite-welcome span,
+.tribute-demo-banner span { color: var(--tr-text); font-size: 0.84rem; line-height: 1.6; }
+.tribute-invite-welcome .button { justify-self: start; }
+.tribute-trial { display: grid; gap: 4px; justify-items: start; }
+.tribute-board-tools .tribute-link { font-size: 0.8rem; }
+
 /* 今日のひとこと */
 .tribute-card-word { display: grid; justify-items: start; gap: 3px; min-width: 0; }
 .tribute-card-word > span,

@@ -61,6 +61,8 @@ async function harness(dispatch) {
     threadGeneration: 0, markReadProgress: new Map(), contractUnsubscribe: null, eventsUnsubscribe: null,
     walletUnsubscribe: null, markReadTimer: null, tickTimer: null, hold: null,
     previewScreen: "", EVENTS_LIMIT: 100, TRIBUTE_AGE_VERSION: 1,
+    // 見学用の見本と招待リンク（ranch-invite-v1）。見本の契約IDはサーバーへ送られず、招待がなければ通常の入場になる。
+    DEMO_CONTRACT_ID: "demo", pendingInvite: "", openManager(id) { calls.push({ ui: "manager", id }); },
     SCREENS: new Set(["loading", "age", "hub", "thread", "board"]), firestore: {},
     layer: { innerHTML: "", querySelector() { return null; } },
     tributeActionCallable: async (request) => {

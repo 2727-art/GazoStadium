@@ -45,8 +45,10 @@ import {
   SIGIL_COLORS,
   STYLE_LABELS,
   TONE_LABELS,
+  INVITE_QUERY_KEY,
   TODAY_WORD,
   TOTAL_OPTIONS,
+  TRIAL_DURATION_DAYS,
   TRIBUTE_AGE_VERSION,
   capViolation,
   X_EXTERNAL_CONFIRM_MESSAGE,
@@ -54,6 +56,10 @@ import {
   avatarId,
   avatarUrl,
   formatPay,
+  inviteFromUrl,
+  inviteText,
+  inviteUrl,
+  jstDateKey,
   messageProblem,
   normalizeCaps,
   normalizeXProfile,
@@ -67,11 +73,12 @@ import {
   templatesFor,
   textLength,
   todayWordProblem,
+  trialCaps,
   tributeFee,
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1";
 import {
   SEAL_INK,
   SHARE_TEXT,
@@ -201,7 +208,7 @@ async function ensureUser() {
 }
 
 async function call(action, payload = {}) {
-  if (previewScreen) return previewCall(action, payload);
+  if (previewScreen || payload?.contractId === DEMO_CONTRACT_ID) return previewCall(action, payload);
   const response = await tributeActionCallable({ action, ...payload });
   return response.data || {};
 }
@@ -359,6 +366,7 @@ function renderHub() {
         </form>
         <button class="button button-primary" type="button" data-t="nav" data-screen="board">管理人を探す</button>
         <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="receipts">献上レシート（${Number(profile.receiptCount || 0)}枚）</button>
+        ${isNewWallet() ? renderStartGuide() : ""}
       </div>
       <div class="tribute-me-manager">
         <span class="tribute-eyebrow">管理人として</span>
@@ -367,7 +375,8 @@ function renderHub() {
             <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
             <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
           </div>
-          ${renderWordForm(profile)}`
+          ${renderWordForm(profile)}
+          ${renderInvite(profile)}`
     : `<p>管理する側になるには、管理人カードを作ります。印は12種のアイコンか、ペルソナ名の1文字から選べます。</p>
           <button class="button button-ghost" type="button" data-t="nav" data-screen="card">管理人カードを作る</button>`}
       </div>
@@ -391,6 +400,43 @@ function renderHub() {
       </div>
     </section>
   </div>`, { title: "契約" });
+}
+
+// まだ財布として契約したことがない人。財布の始め方と見学の入口を出す。
+function isNewWallet() {
+  return !state.contracts.some((contract) => contract.role === "payer");
+}
+
+function renderStartGuide() {
+  const balance = state.walletBalance;
+  const trial = trialCaps(0);
+  return `<div class="tribute-start-guide">
+    <span class="tribute-eyebrow">財布の始め方</span>
+    <ol>
+      <li><b>見学する</b><span>受取印・ご褒美・首輪番号がどう届くかを、見本の契約で見られます。Payは動きません。</span><button class="button button-ghost button-small" type="button" data-t="open-demo">見学する</button></li>
+      <li><b>管理人を選ぶ</b><span>掲示板から。入場料0 Payの管理人なら、入場料なしで始められます。</span></li>
+      <li><b>お試しで申し込む</b><span>申し込みの「お試しの設定」なら、${TRIAL_DURATION_DAYS}日・1回${trial.perTribute} Pay・合計${trial.total} Payから。上限を下げるのも解約も、いつでもあなたが決めます。</span></li>
+    </ol>
+    <p class="tribute-note">いまの財布：${balance === null ? "確認中" : escapeHtml(formatPay(balance))}。AnjuPayはデイリーミッションや毎日のプレイで貯まります（現金では買えません）。${balance !== null && balance < trial.perTribute ? ' <button class="tribute-link" type="button" data-t="open-missions">デイリーミッションを見る</button>' : ""}</p>
+  </div>`;
+}
+
+// 招待リンク（管理人だけ）。Xのフォロワーを、自分の管理人カードへ直接案内する。牧場の中へ向かう一方通行のリンク。
+function inviteUrlFor(publicManagerId) {
+  const base = document.querySelector('link[rel="canonical"]')?.href || `${window.location.origin}/`;
+  return inviteUrl(base, publicManagerId);
+}
+
+function renderInvite(profile) {
+  const url = inviteUrlFor(profile.publicManagerId || profile.card?.publicManagerId);
+  if (!url) return "";
+  return `<div class="tribute-invite">
+    <span class="tribute-eyebrow">招待リンク</span>
+    <p>Xのフォロワーを、あなたの管理人カードへ直接案内できます。開いた人は年齢確認のあと、このカードに着きます。</p>
+    <div class="tribute-invite-link"><input readonly value="${escapeHtml(url)}" aria-label="招待リンク" data-invite-url /><button class="button button-ghost button-small" type="button" data-t="copy-invite">コピー</button></div>
+    <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="post-invite">Xで告知する</button></div>
+    <small>告知の文には、中の人の札が必ず入ります。${profile.accepting ? "" : "いまは受付を止めているので、受付を始めてから告知してください。"}</small>
+  </div>`;
 }
 
 // 今日のひとこと（管理人だけ）。掲示板のカードに24時間出て、出すとカードが上に並ぶ。
@@ -468,6 +514,7 @@ function renderBoard() {
     <div class="tribute-board-tools">
       <label class="tribute-switch"><input type="checkbox" data-t="toggle-nekama" ${board.nekamaOnly ? "checked" : ""} /><span>ネカマ開示のみ</span></label>
       <small>性別で絞る機能はありません。中の人の札は、分かって渡すための札です。</small>
+      ${isNewWallet() ? '<button class="tribute-link" type="button" data-t="open-demo">初めてなら、見本の契約を見学できます</button>' : ""}
     </div>
     ${board.recommended.length ? `<section class="tribute-shelf"><h2>推薦棚 <small>上納した管理人たちの推薦</small></h2><div class="tribute-card-grid is-shelf">${board.recommended.map((card) => renderManagerCard(card, { compact: true })).join("")}</div></section>` : ""}
     <section><h2 class="tribute-section-title">受付中の管理人</h2>${body}</section>
@@ -485,6 +532,9 @@ function renderManagerDetail() {
     return frame(`<p class="tribute-empty">${entry.status === "error" ? "この管理人を開けませんでした。" : "管理人カードを開いています…"}</p>`, { title: "管理人" });
   }
   const { card, month, openContractId, myTotal, ranking } = entry.data;
+  const welcome = entry.invited && !card.mine
+    ? `<div class="tribute-invite-welcome" role="note"><b>${escapeHtml(card.personaName)}の招待で来ました</b><span>初めてなら、見本の契約で流れを見てから「お試しの設定」で申し込めます。上限を下げるのも解約も、いつでもあなたが決めます。</span><button class="button button-ghost button-small" type="button" data-t="open-demo">見学する</button></div>`
+    : "";
   const fundHonor = state.fund.data?.me?.honor;
   const canRecommend = !card.mine && fundHonor?.tier;
   const recommended = (fundHonor?.recommendations || []).some((row) => row.publicManagerId === card.publicManagerId);
@@ -496,6 +546,7 @@ function renderManagerDetail() {
         ? `<button class="button button-primary" type="button" data-t="open-apply">この管理人に申し込む</button>`
         : `<p class="tribute-note">この管理人は受付を止めています。</p>`;
   return frame(`<div class="tribute-manager-detail">
+    ${welcome}
     <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}">
       <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}</div></div></div>
       ${wordBubble(card.word, " is-large")}
@@ -528,16 +579,22 @@ function renderApply() {
   if (!target) return frame(`<p class="tribute-empty">申し込む管理人を選び直してください。</p>`, { title: "申し込み" });
   const profile = state.profile || {};
   const minPerTribute = PER_TRIBUTE_OPTIONS.find((value) => value >= target.entryFee) || PER_TRIBUTE_OPTIONS[0];
-  const perTribute = Math.max(30, minPerTribute);
+  const trial = trialCaps(target.entryFee);
+  // 初めての申し込みは、お試しの設定から始める。
+  const firstTime = isNewWallet();
+  const defaults = firstTime ? trial : { perTribute: Math.max(30, minPerTribute), perDay: 100, total: 300 };
+  const perTribute = defaults.perTribute;
   return frame(`<form class="tribute-panel tribute-apply" data-form="apply">
     <div class="tribute-apply-head">${sigil(target)}<div><span class="tribute-eyebrow">管理を申し込む</span><h1>${escapeHtml(target.personaName)}</h1>${disclosureTag(target.disclosure)}</div></div>
     <p class="tribute-hold-note">上限と解約は、あなたが握ります。管理人は上限・期間・言葉の設定・解約に触れられません。</p>
     <fieldset><legend>上限（1回 ≦ 1日 ≦ 契約合計）</legend>
       <div class="tribute-three">
         <label><span>1回</span><select name="perTribute">${optionList(PER_TRIBUTE_OPTIONS, perTribute)}</select></label>
-        <label><span>1日</span><select name="perDay">${optionList(PER_DAY_OPTIONS, 100)}</select></label>
-        <label><span>契約合計</span><select name="total">${optionList(TOTAL_OPTIONS, 300)}</select></label>
+        <label><span>1日</span><select name="perDay">${optionList(PER_DAY_OPTIONS, defaults.perDay)}</select></label>
+        <label><span>契約合計</span><select name="total">${optionList(TOTAL_OPTIONS, defaults.total)}</select></label>
       </div>
+      <div class="tribute-trial"><button class="button button-ghost button-small" type="button" data-t="apply-trial">お試しの設定にする（${TRIAL_DURATION_DAYS}日・1回${trial.perTribute}・1日${trial.perDay}・合計${trial.total} Pay）</button>
+        ${firstTime ? "<small>初めての申し込みなので、お試しの設定にしています。</small>" : ""}</div>
       <small>下げる変更はいつでも即時。上げる変更は日本時間の翌日0時から効きます。</small>
     </fieldset>
     <fieldset><legend>期間</legend><div class="tribute-radio-row">${DURATION_DAYS_OPTIONS.map((days, index) => `<label><input type="radio" name="durationDays" value="${days}" ${index === 0 ? "checked" : ""} /><span>${days}日</span></label>`).join("")}</div></fieldset>
@@ -805,7 +862,7 @@ function renderEvent(event, view, statuses) {
 function renderThreadHead(view) {
   const counterpart = contractCounterpart(view);
   const caps = view.caps;
-  const endButton = view.status === "active"
+  const endButton = state.thread.demo ? "" : view.status === "active"
     ? view.role === "payer"
       ? `<button class="button button-danger button-small" type="button" data-t="sheet" data-sheet="end">解約</button>`
       : `<button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="end">解放</button>`
@@ -832,6 +889,10 @@ function renderThreadHead(view) {
 }
 
 function renderThreadActions(view) {
+  if (state.thread.demo) {
+    return `<div class="tribute-actions"><button class="button button-primary tribute-give-button" type="button" data-t="sheet" data-sheet="give" ${view.allowance ? "" : "disabled"}>差し出す（見本）</button></div>
+      <p class="tribute-note">見本では、差し出す・請求に応える・断る・画像で保存を試せます。Payは動きません。</p>`;
+  }
   if (view.status === "pending") {
     return view.role === "manager"
       ? `<div class="tribute-actions"><button class="button button-primary" type="button" data-t="accept">受理する${view.entryFee ? `（入場料 ${escapeHtml(formatPay(view.entryFee))}）` : ""}</button><button class="button button-ghost" type="button" data-t="decline">断る</button></div>`
@@ -883,11 +944,15 @@ function renderThread() {
     return frame(`<p class="tribute-empty">${thread.status === "error" ? "スレッドを開けませんでした。" : "スレッドを開いています…"}</p>`, { title: "スレッド", screenClass: "tribute-thread-screen" });
   }
   const statuses = requestStatusMap(thread.events);
+  const demoBanner = thread.demo
+    ? `<div class="tribute-demo-banner" role="note"><b>見学用の見本の契約です</b><span>実際の契約ではなく、相手もいません。差し出してもPayは動きません。</span><div class="tribute-row"><button class="button button-primary button-small" type="button" data-t="nav" data-screen="board">管理人を探す</button><button class="button button-ghost button-small" type="button" data-t="nav" data-screen="hub">見学をやめる</button></div></div>`
+    : "";
   return frame(`<div class="tribute-thread">
+    ${demoBanner}
     <div class="tribute-thread-head" id="tributeThreadHead">${renderThreadHead(view)}</div>
     <ol class="tribute-events" id="tributeThreadEvents" aria-live="polite">${thread.events.map((event) => renderEvent(event, view, statuses)).join("")}</ol>
     <div class="tribute-thread-actions" id="tributeThreadActions">${renderThreadActions(view)}</div>
-    ${view.status === "active" ? `<form class="tribute-composer" data-form="message">
+    ${view.status === "active" && !thread.demo ? `<form class="tribute-composer" data-form="message">
       <textarea name="text" maxlength="${LIMITS.message}" rows="2" placeholder="${view.role === "manager" ? "管理の言葉（相手の「言われたくない言葉」は送れません）" : "返事・報告・止める言葉"}"></textarea>
       <div class="tribute-composer-foot"><small data-composer-count>0 / ${LIMITS.message}</small><span class="tribute-form-error" data-form-error role="alert"></span><button class="button button-primary button-small" type="submit">送る</button></div>
       ${renderTemplates(view)}
@@ -948,7 +1013,7 @@ function renderSheet() {
           <dl class="tribute-facts">
             <div><dt>今日の残り枠</dt><dd>${escapeHtml(formatPay(Math.max(0, view.caps.perDay - view.todayTributed - sheet.amount)))}</dd></div>
             <div><dt>契約の残り枠</dt><dd>${escapeHtml(formatPay(Math.max(0, view.caps.total - view.totalTributed - sheet.amount)))}</dd></div>
-            <div><dt>支払後の財布</dt><dd>${balanceAfter === null ? "確認中" : escapeHtml(formatPay(balanceAfter))}</dd></div>
+            <div><dt>支払後の財布</dt><dd>${state.thread.demo ? "見本（Payは動きません）" : balanceAfter === null ? "確認中" : escapeHtml(formatPay(balanceAfter))}</dd></div>
             <div><dt>受け手の手数料（消却）</dt><dd>${escapeHtml(formatPay(fee))}</dd></div>
           </dl>
           <button type="button" class="tribute-hold" data-tribute-hold ${state.busy ? "disabled" : ""}><span class="tribute-hold-fill" aria-hidden="true"></span><span class="tribute-hold-label">長押しで差し出す</span></button>
@@ -1311,7 +1376,7 @@ function renderReceiptOverlay() {
   return `<div class="tribute-receipt-overlay" role="dialog" aria-modal="true" aria-label="献上完了">
     <section class="tribute-done">
       <span class="tribute-done-check" aria-hidden="true"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="23"></circle><path d="M15 27.5l7.5 7.5L37.5 19"></path></svg></span>
-      <p class="tribute-done-title">献上完了</p>
+      <p class="tribute-done-title">献上完了${receipt.demo ? "（見本）" : ""}</p>
       <strong class="tribute-done-amount">${escapeHtml(formatPay(receipt.amount))}</strong>
       <p class="tribute-done-to">${sigil(receipt)}<span><b>${escapeHtml(receipt.personaName)}</b> へ</span>${disclosureTag(receipt.disclosure)}</p>
       ${purpose ? `<p class="tribute-done-purpose">${escapeHtml(purpose)}</p>` : ""}
@@ -1322,7 +1387,7 @@ function renderReceiptOverlay() {
         <div><dt>この管理人へ</dt><dd>${Number(receipt.pairCount || 0)}回目</dd></div>
         <div><dt>献上レシート</dt><dd>No.${String(receipt.receiptNo || 0).padStart(5, "0")}</dd></div>
       </dl>
-      <p class="tribute-done-status${waiting ? "" : " is-received"}">${waiting ? "受け取り待ち。管理人が受け取ると、スレッドに「受け取り完了」が付きます。" : "受け取り済み"}</p>
+      <p class="tribute-done-status${waiting ? "" : " is-received"}">${receipt.demo ? "見本なので、Payは動いていません。実際の契約では、ここで財布から管理人へPayが移り、管理人が受け取ると受取印が押されます。" : waiting ? "受け取り待ち。管理人が受け取ると、スレッドに「受け取り完了」が付きます。" : "受け取り済み"}</p>
       <footer>非譲渡・換金不可 ・ AnjuPay only</footer>
     </section>
     <button class="button button-primary" type="button" data-t="receipt-close">閉じる</button>
@@ -1538,11 +1603,11 @@ async function loadBoard() {
   if (state.screen === "board") render();
 }
 
-async function openManager(publicManagerId) {
+async function openManager(publicManagerId, { invited = false } = {}) {
   const generation = lifecycleGeneration;
   stopThread();
   state.screen = "manager";
-  state.manager = { status: "loading", publicManagerId, data: null };
+  state.manager = { status: "loading", publicManagerId, data: null, invited };
   render();
   try {
     const [payload, fund] = await Promise.all([
@@ -1551,7 +1616,7 @@ async function openManager(publicManagerId) {
     ]);
     if (!isCurrent(generation)) return;
     if (fund) state.fund = { status: "ready", data: fund };
-    state.manager = { status: "ready", publicManagerId, data: payload };
+    state.manager = { status: "ready", publicManagerId, data: payload, invited };
   } catch (error) {
     if (!isCurrent(generation)) return;
     state.manager.status = "error";
@@ -1612,9 +1677,10 @@ function openThread(contractId) {
   const known = state.contracts.find((contract) => contract.contractId === contractId);
   state.thread = { contractId, raw: null, view: known || null, events: [], status: "loading" };
   render();
-  if (previewScreen) {
-    const fixture = previewThread(contractId);
-    state.thread = { contractId, raw: fixture.raw, view: viewContract(fixture.raw, state.uid), events: fixture.events, status: "ready" };
+  if (previewScreen || contractId === DEMO_CONTRACT_ID) {
+    const demo = contractId === DEMO_CONTRACT_ID;
+    const fixture = demo ? demoThread() : previewThread(contractId);
+    state.thread = { contractId, raw: fixture.raw, view: viewContract(fixture.raw, state.uid), events: fixture.events, status: "ready", demo };
     render();
     scrollThreadToEnd();
     return;
@@ -1781,12 +1847,13 @@ async function completeGive() {
     return;
   }
   state.sheet = null;
-  if (Number.isFinite(result.walletBalance)) {
+  const demo = state.thread.demo === true;
+  if (!demo && Number.isFinite(result.walletBalance)) {
     state.walletBalance = result.walletBalance;
     paintWallet();
   }
   state.receipt = result.receipt
-    ? { ...result.receipt, walletAfter: Number.isFinite(result.walletBalance) ? result.walletBalance : undefined }
+    ? { ...result.receipt, walletAfter: !demo && Number.isFinite(result.walletBalance) ? result.walletBalance : undefined, demo }
     : null;
   rerenderSheet();
   rerenderReceipt();
@@ -1846,6 +1913,12 @@ async function handleSubmit(form) {
       state.ageConfirmed = true;
       const payload = await requestState({ fresh: true }).catch(() => null);
       if (!isCurrent(generation) || state !== targetState) return;
+      if (pendingInvite) {
+        const invite = pendingInvite;
+        pendingInvite = "";
+        openManager(invite, { invited: true });
+        return;
+      }
       navigate("hub", { refresh: !payload });
       return;
     }
@@ -1950,7 +2023,7 @@ async function handleSubmit(form) {
       if (amount.error) return setFormError(form, amount.error);
       const violation = capViolation(amount.value, state.thread.raw || {}, view.caps);
       if (violation) return setFormError(form, violation);
-      if (state.walletBalance !== null && state.walletBalance < amount.value) return setFormError(form, "AnjuPay残高が足りません。");
+      if (!state.thread.demo && state.walletBalance !== null && state.walletBalance < amount.value) return setFormError(form, "AnjuPay残高が足りません。");
       state.sheet = { ...state.sheet, amount: amount.value, purpose: String(new FormData(form).get("purpose") || ""), step: "hold" };
       rerenderSheet();
       return;
@@ -2132,6 +2205,54 @@ async function handleClick(target) {
       const event = state.thread.events.find((entry) => entry.type === "tribute" && Number(entry.seq) === Number(target.dataset.seq));
       if (!event || !view) return;
       openShare({ contractId: view.contractId, receiptId: event.receiptId || "", seq: event.seq });
+      return;
+    }
+    case "open-demo":
+      openThread(DEMO_CONTRACT_ID);
+      return;
+    case "open-missions":
+      requestHome();
+      window.setTimeout(() => {
+        const open = window.HariaiOnline?.openDailyMissions;
+        if (typeof open === "function") open();
+        else showToast("デイリーミッションを開けませんでした。ホームから開いてください。");
+      }, 0);
+      return;
+    case "apply-trial": {
+      const form = target.closest("form");
+      const trial = trialCaps(state.applyTarget?.entryFee);
+      if (!form) return;
+      form.elements.perTribute.value = String(trial.perTribute);
+      form.elements.perDay.value = String(trial.perDay);
+      form.elements.total.value = String(trial.total);
+      const duration = form.querySelector(`input[name="durationDays"][value="${TRIAL_DURATION_DAYS}"]`);
+      if (duration) duration.checked = true;
+      if (form.elements.allowSexualPurposes) form.elements.allowSexualPurposes.checked = false;
+      showToast("お試しの設定にしました。");
+      return;
+    }
+    case "copy-invite": {
+      const url = inviteUrlFor(state.profile?.publicManagerId || state.profile?.card?.publicManagerId);
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast("招待リンクをコピーしました。");
+      } catch {
+        const input = document.querySelector("[data-invite-url]");
+        input?.focus();
+        input?.select();
+        showToast("リンクを選びました。コピーしてください。");
+      }
+      return;
+    }
+    case "post-invite": {
+      const card = state.profile?.card;
+      const url = inviteUrlFor(state.profile?.publicManagerId || card?.publicManagerId);
+      if (!card || !url) return;
+      const intent = new URL("https://x.com/intent/tweet");
+      intent.searchParams.set("text", inviteText(card));
+      intent.searchParams.set("url", url);
+      window.open(intent.href, "_blank", "noopener,noreferrer");
       return;
     }
     case "clear-word":
@@ -2394,11 +2515,13 @@ function subscribeWallet() {
   }, () => {});
 }
 
-async function start({ initialScreen = "" } = {}) {
+async function start({ initialScreen = "", inviteManager = "" } = {}) {
   if (active) {
-    if (initialScreen) navigate(initialScreen);
+    if (inviteManager) openManager(inviteManager, { invited: true });
+    else if (initialScreen) navigate(initialScreen);
     return;
   }
+  if (inviteManager) pendingInvite = inviteManager;
   if (location.protocol === "file:") {
     showToast("お貢ぎ牧場はローカルサーバーまたは公開URLから開いてください。");
     return;
@@ -2438,6 +2561,12 @@ async function start({ initialScreen = "" } = {}) {
       render();
       return;
     }
+    if (pendingInvite) {
+      const invite = pendingInvite;
+      pendingInvite = "";
+      openManager(invite, { invited: true });
+      return;
+    }
     if (previewScreen) {
       startPreview(previewScreen);
       return;
@@ -2457,6 +2586,7 @@ function isActive() {
 }
 
 function requestHome() {
+  pendingInvite = "";
   if (!active) return;
   active = false;
   lifecycleGeneration += 1;
@@ -2496,6 +2626,79 @@ window.addEventListener("hariai-player-safety-updated", () => {
 
 function previewNow() {
   return Date.now();
+}
+
+// 見学用の見本の契約。本番でも開けるが、サーバーには何も送らない（call() が見本の処理へ回す）。
+// 性的な名目にまだ同意していない人も見るため、名目は管理費・ご褒美代・罰金だけにする。
+const DEMO_CONTRACT_ID = "demo";
+const DEMO_MANAGER_CARD = Object.freeze({ personaName: "ミオ様（見本）", disclosure: "nekama", style: "harsh", sigil: 0, avatar: 7 });
+
+function demoThread() {
+  const now = Date.now();
+  const at = (minutes) => now - minutes * 60_000;
+  const raw = {
+    contractId: DEMO_CONTRACT_ID,
+    managerUid: "demo-manager",
+    payerUid: state.uid || "demo-wallet",
+    status: "active",
+    managerCard: DEMO_MANAGER_CARD,
+    payerWalletName: "あなた",
+    entryFee: 0,
+    caps: { perTribute: 100, perDay: 300, total: 1_000 },
+    pendingCaps: null,
+    pendingCapsEffectiveDateKey: "",
+    durationDays: 3,
+    tone: "harsh",
+    ngWords: [],
+    allowReportRequests: false,
+    rankOptIn: false,
+    allowSexualPurposes: false,
+    collarNo: 3,
+    purposeCounts: { management: 1, reward_fee: 1 },
+    rewardCount: 1,
+    awaitingReceipt: 1,
+    createdAt: at(180),
+    acceptedAt: at(170),
+    expiresAt: now + 2.5 * 86_400_000,
+    totalTributed: 60,
+    tributeCount: 2,
+    todayKey: jstDateKey(now),
+    todayTributed: 60,
+    escrowBalance: 0,
+    escrowWithdrawRequest: null,
+    pendingRequests: { "0123456789abcdef": { amount: 30, note: "待たせた罰金。", purpose: "penalty", createdAt: at(3) } },
+    reportRequestedAt: 0,
+    eventSeq: 9,
+    readSeq: { manager: 9, payer: 9 },
+  };
+  const events = [
+    { seq: 1, type: "applied", actor: "payer", caps: raw.caps, durationDays: 3, tone: "harsh", entryFee: 0, createdAt: at(180) },
+    { seq: 2, type: "accepted", actor: "manager", expiresAt: raw.expiresAt, collarNo: 3, createdAt: at(170) },
+    { seq: 3, type: "message", actor: "manager", text: "やっと来た。財布のくせに待たせるな。", createdAt: at(168) },
+    { seq: 4, type: "request", actor: "manager", requestId: "fedcba9876543210", amount: 30, note: "今日の管理費。", purpose: "management", createdAt: at(120) },
+    { seq: 5, type: "tribute", actor: "payer", kind: "request", requestId: "fedcba9876543210", amount: 30, purpose: "management", receiptId: "d".repeat(40), receivedAt: at(117), seal: "yoku", reward: "gohoubi", createdAt: at(118) },
+    { seq: 6, type: "received", actor: "manager", tributeSeq: 5, amount: 30, seal: "yoku", reward: "gohoubi", createdAt: at(117) },
+    { seq: 7, type: "tribute", actor: "payer", kind: "silent", amount: 30, purpose: "reward_fee", receiptId: "c".repeat(40), createdAt: at(30) },
+    { seq: 8, type: "message", actor: "manager", text: "それっぽっち？まあ、あとで受け取ってやる。", createdAt: at(20) },
+    { seq: 9, type: "request", actor: "manager", requestId: "0123456789abcdef", amount: 30, note: "待たせた罰金。", purpose: "penalty", createdAt: at(3) },
+  ];
+  return { raw, events };
+}
+
+// 招待リンク（?ranch=公開ID）。読んだらすぐURLから消し、年齢確認のあと、その管理人の詳細を開く。
+let pendingInvite = "";
+
+function takeInviteFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(INVITE_QUERY_KEY)) return "";
+    const invite = inviteFromUrl(url.href);
+    url.searchParams.delete(INVITE_QUERY_KEY);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    return invite;
+  } catch {
+    return "";
+  }
 }
 
 // 見本で保存したカード。ページを読み直すまで、見本の state がこれを返す。
@@ -2633,8 +2836,9 @@ function previewCall(action, payload) {
           unlocked: ["tribute_manager_1", "tribute_manager_3", "tribute_manager_10", "tribute_wallet_1", "tribute_wallet_3"],
           newlyUnlocked: [],
         },
+        // newcomer: まだ財布として契約したことがない人（財布の始め方と見学を確かめる）。
         contracts: [
-          viewContract(previewRaw("payer"), "preview-me", now),
+          ...(previewScreen === "newcomer" ? [] : [viewContract(previewRaw("payer"), "preview-me", now)]),
           viewContract(previewRaw("manager"), "preview-me", now),
           viewContract(previewRaw("manager", "pending"), "preview-me", now),
         ],
@@ -2722,10 +2926,11 @@ function previewCall(action, payload) {
         if (purpose) raw.purposeCounts = { ...raw.purposeCounts, [purpose]: Number(raw.purposeCounts?.[purpose] || 0) + 1 };
         push({ type: "tribute", actor: "payer", kind: payload.kind, amount: Number(payload.amount), receiptId: "9".repeat(40), ...(payload.requestId ? { requestId: payload.requestId } : {}), ...(purpose ? { purpose } : {}) });
       });
+      const threadCard = state.thread.raw?.managerCard || PREVIEW_MANAGER_CARD;
       return Promise.resolve({
         ok: true,
-        walletBalance: (state.walletBalance ?? 1_000) - Number(payload.amount || 0),
-        receipt: { receiptId: "preview", receiptNo: 4, kind: payload.kind, amount: Number(payload.amount), ...(purpose ? { purpose } : {}), personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, pairCount: 4, createdAt: now },
+        ...(payload.contractId === DEMO_CONTRACT_ID ? {} : { walletBalance: (state.walletBalance ?? 1_000) - Number(payload.amount || 0) }),
+        receipt: { receiptId: "preview", receiptNo: 4, kind: payload.kind, amount: Number(payload.amount), ...(purpose ? { purpose } : {}), personaName: threadCard.personaName, disclosure: threadCard.disclosure, sigil: threadCard.sigil, avatar: threadCard.avatar, collarNo: Number(state.thread.raw?.collarNo) || 0, pairCount: 4, createdAt: now },
       });
     }
     case "receive": {
@@ -2759,15 +2964,24 @@ function previewCall(action, payload) {
       const listed = state.receipts.items.find((receipt) => receipt.receiptId === payload.receiptId);
       const event = state.thread.events.find((entry) => entry.type === "tribute" && entry.receiptId && entry.receiptId === payload.receiptId);
       const receipt = listed || (event ? { receiptId: event.receiptId, receiptNo: 40 + Number(event.seq), kind: event.kind, amount: event.amount, purpose: event.purpose || "", pairCount: 40 + Number(event.seq), createdAt: event.createdAt, receivedAt: event.receivedAt || 0, seal: event.seal || "", reward: event.reward || "" } : null);
+      const card = state.thread.raw?.managerCard || PREVIEW_MANAGER_CARD;
       return Promise.resolve({
         ok: true,
         contractId: payload.contractId,
         consent: true,
-        manager: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", sigil: 0, avatar: 7 },
-        collarNo: 3,
-        walletName: "ポチ財布",
+        manager: { personaName: card.personaName, disclosure: card.disclosure, style: card.style, sigil: card.sigil, avatar: card.avatar },
+        collarNo: Number(state.thread.raw?.collarNo) || 3,
+        walletName: state.thread.raw?.payerWalletName || "ポチ財布",
         receipt,
       });
+    }
+    case "decline_request": {
+      previewThreadChange((raw, push) => {
+        const { [payload.requestId]: _declined, ...rest } = raw.pendingRequests || {};
+        raw.pendingRequests = rest;
+        push({ type: "request_declined", actor: "payer", requestId: payload.requestId });
+      });
+      return Promise.resolve({ ok: true });
     }
     case "set_purposes": {
       const view = previewThreadChange((raw, push) => {
@@ -2815,9 +3029,10 @@ function previewCall(action, payload) {
 }
 
 function startPreview(screen) {
-  state.walletBalance = 1_000;
+  state.walletBalance = screen === "newcomer" ? 0 : 1_000;
   const map = {
     hub: () => navigate("hub"),
+    newcomer: () => navigate("hub"),
     board: () => navigate("board"),
     manager: () => openManager(PREVIEW_MANAGER_CARD.publicManagerId),
     apply: () => {
@@ -2852,3 +3067,6 @@ window.HariaiTribute = Object.freeze({
   requestHome,
 });
 window.dispatchEvent(new Event("hariai-tribute-ready"));
+
+const initialInvite = takeInviteFromUrl();
+if (initialInvite) start({ inviteManager: initialInvite });

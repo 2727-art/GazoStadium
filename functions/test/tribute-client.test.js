@@ -30,9 +30,9 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1"/);
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-collar-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
@@ -470,4 +470,79 @@ test("today's word mirrors the server check, sits only in the manager's own hub,
   assert.match(client, /mutate\("set_word", \{ clear: true \}/);
   assert.match(styles, /\.tribute-card-word \{/);
   assert.match(design, /今日のひとこと/);
+});
+
+test("the trial preset is always a valid, small first contract that still fits the entry fee", async () => {
+  const core = await loadCore();
+  assert.deepEqual(core.trialCaps(0), { perTribute: 30, perDay: 30, total: 100 });
+  assert.equal(core.TRIAL_DURATION_DAYS, 1);
+  assert.ok(rules.DURATION_DAYS_OPTIONS.includes(core.TRIAL_DURATION_DAYS));
+  for (const entryFee of rules.ENTRY_FEE_OPTIONS) {
+    const caps = core.trialCaps(entryFee);
+    assert.deepEqual(rules.normalizeCaps(caps), caps, `fee ${entryFee}`);
+    assert.ok(caps.perTribute >= entryFee, `the entry fee ${entryFee} fits one tribute`);
+    assert.ok(caps.total <= 100 || caps.total === rules.TOTAL_OPTIONS.find((value) => value >= caps.perDay), `fee ${entryFee} stays small`);
+  }
+  const apply = sourceBlock(client, "function renderApply", "function renderCardEditor");
+  assert.match(apply, /const firstTime = isNewWallet\(\);/);
+  assert.match(apply, /data-t="apply-trial"/);
+  const trial = sourceBlock(client, 'case "apply-trial": {', 'case "copy-invite": {');
+  assert.match(trial, /form\.elements\.allowSexualPurposes\.checked = false;/, "the trial never consents to sexual names");
+});
+
+test("invite links carry only the public manager id, open after the age check, and never skip it", async () => {
+  const core = await loadCore();
+  assert.equal(core.INVITE_QUERY_KEY, "ranch");
+  const id = "a1b2c3d4e5f6a1b2c3d4e5f6";
+  const url = core.inviteUrl("https://gazostadium.anjugames.workers.dev/?tributePreview=x#top", id);
+  assert.equal(url, `https://gazostadium.anjugames.workers.dev/?ranch=${id}`);
+  assert.equal(core.inviteFromUrl(url), id);
+  for (const value of ["", "../evil", "A1B2C3D4E5F6A1B2C3D4E5F6", `${id}0`, "javascript:alert(1)"]) {
+    assert.equal(core.inviteFromUrl(`https://example.test/?ranch=${encodeURIComponent(value)}`), "", value);
+    assert.equal(core.inviteUrl("https://example.test/", value), "", value);
+  }
+  for (const [disclosure, wording] of [["nekama", "ネカマ・中身は男"], ["as_is", "演じていない"], ["undisclosed", "中の人は非開示"]]) {
+    const text = core.inviteText({ personaName: "ミオ様", disclosure, entryFee: 10 });
+    assert.ok(text.includes(`ミオ様（${wording}）`), disclosure);
+    assert.match(text, /#お貢ぎ牧場/);
+    assert.doesNotMatch(text, /https?:\/\//, "the link travels separately from the text");
+    assert.match(text, /換金できないAnjuPay/);
+  }
+
+  const take = sourceBlock(client, "function takeInviteFromUrl", "// 見本で保存したカード");
+  assert.match(take, /url\.searchParams\.delete\(INVITE_QUERY_KEY\);\s*window\.history\.replaceState/, "the id leaves the address bar at once");
+  assert.match(client, /const initialInvite = takeInviteFromUrl\(\);\s*if \(initialInvite\) start\(\{ inviteManager: initialInvite \}\);\s*$/, "the ranch opens itself only for an invite link");
+  const startBlock = sourceBlock(client, "async function start(", "function isActive");
+  assert.ok(startBlock.indexOf("if (!state.ageConfirmed)") < startBlock.indexOf("if (pendingInvite)"), "the age check comes before the invited manager");
+  assert.match(sourceBlock(client, 'case "age": {', 'case "wallet-name":'), /if \(pendingInvite\) \{[\s\S]*?openManager\(invite, \{ invited: true \}\);/);
+  const post = sourceBlock(client, 'case "post-invite": {', 'case "clear-word":');
+  assert.match(post, /new URL\("https:\/\/x\.com\/intent\/tweet"\)/);
+  assert.match(post, /window\.open\(intent\.href, "_blank", "noopener,noreferrer"\)/);
+  assert.match(sourceBlock(client, "function renderInvite", "// 今日のひとこと（管理人だけ）"), /中の人の札が必ず入ります/);
+  assert.match(sourceBlock(client, "function renderManagerDetail", "function renderApply"), /entry\.invited && !card\.mine/);
+});
+
+test("the demo contract and the newcomer guide never reach the server or move Pay", async () => {
+  assert.match(client, /if \(previewScreen \|\| payload\?\.contractId === DEMO_CONTRACT_ID\) return previewCall\(action, payload\);/);
+  const demo = sourceBlock(client, "function demoThread", "// 招待リンク（?ranch=公開ID）");
+  assert.match(demo, /allowSexualPurposes: false,/);
+  assert.doesNotMatch(demo, /寸止め|射精|お漏らし|イか|イき|edging|release|leak_penalty/, "people who have not consented see no sexual names");
+  assert.match(client, /const DEMO_CONTRACT_ID = "demo";/);
+  assert.doesNotMatch("demo", /^[a-f0-9]{40}$/, "the demo id can never match a real contract");
+  const thread = sourceBlock(client, "function renderThread()", "function updateThreadParts");
+  assert.match(thread, /view\.status === "active" && !thread\.demo \? `<form class="tribute-composer"/, "no messages are sent from the demo");
+  assert.match(thread, /見学用の見本の契約です/);
+  assert.match(client, /const endButton = state\.thread\.demo \? "" :/);
+  const give = sourceBlock(client, "async function completeGive", "function beginHold");
+  assert.match(give, /if \(!demo && Number\.isFinite\(result\.walletBalance\)\)/, "the wallet chip never changes in the demo");
+  assert.match(client, /if \(!state\.thread\.demo && state\.walletBalance !== null && state\.walletBalance < amount\.value\) return setFormError/);
+  assert.match(client, /\.\.\.\(payload\.contractId === DEMO_CONTRACT_ID \? \{\} : \{ walletBalance:/);
+  assert.match(client, /献上完了\$\{receipt\.demo \? "（見本）" : ""\}/);
+  const guide = sourceBlock(client, "function renderStartGuide", "// 招待リンク（管理人だけ）");
+  assert.match(guide, /現金では買えません/);
+  assert.match(guide, /data-t="open-demo"/);
+  assert.match(sourceBlock(client, "function isNewWallet", "function renderStartGuide"), /!state\.contracts\.some\(\(contract\) => contract\.role === "payer"\)/);
+  assert.match(styles, /\.tribute-demo-banner/);
+  assert.match(design, /見学用の見本の契約/);
+  assert.match(design, /招待リンク/);
 });

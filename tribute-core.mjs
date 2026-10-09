@@ -557,6 +557,47 @@ export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords =
     .filter((situation) => situation.lines.length);
 }
 
+// お試しの申し込み。1日・1回30・1日30・合計100 Pay を基本に、入場料が1回に収まるよう一段ずつ上げる。
+export const TRIAL_DURATION_DAYS = 1;
+export function trialCaps(entryFee = 0) {
+  const fee = Math.max(0, Number(entryFee) || 0);
+  const perTribute = PER_TRIBUTE_OPTIONS.find((value) => value >= Math.max(30, fee)) || PER_TRIBUTE_OPTIONS.at(-1);
+  const perDay = PER_DAY_OPTIONS.find((value) => value >= perTribute) || PER_DAY_OPTIONS.at(-1);
+  const total = TOTAL_OPTIONS.find((value) => value >= Math.max(perDay, 100)) || TOTAL_OPTIONS.at(-1);
+  return { perTribute, perDay, total };
+}
+
+// 招待リンク。管理人の公開IDだけを入れ、開いた人は年齢確認のあと、その管理人の詳細に着く。
+export const INVITE_QUERY_KEY = "ranch";
+export const PUBLIC_MANAGER_ID_PATTERN = /^[a-f0-9]{24}$/;
+
+export function inviteUrl(base, publicManagerId) {
+  if (!PUBLIC_MANAGER_ID_PATTERN.test(String(publicManagerId || ""))) return "";
+  const url = new URL(base);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set(INVITE_QUERY_KEY, publicManagerId);
+  return url.href;
+}
+
+export function inviteFromUrl(href) {
+  try {
+    const value = new URL(href).searchParams.get(INVITE_QUERY_KEY) || "";
+    return PUBLIC_MANAGER_ID_PATTERN.test(value) ? value : "";
+  } catch {
+    return "";
+  }
+}
+
+// 告知の文。中の人の札は必ず入れる（分かって渡すため）。リンクは文とは別に付ける。
+const INVITE_DISCLOSURE = Object.freeze({ nekama: "ネカマ・中身は男", as_is: "演じていない", undisclosed: "中の人は非開示" });
+
+export function inviteText(card) {
+  const disclosure = INVITE_DISCLOSURE[card?.disclosure] || INVITE_DISCLOSURE.undisclosed;
+  const name = String(card?.personaName || "管理人");
+  return `お貢ぎ牧場で財布を受付中。${name}（${disclosure}）・入場料 ${formatPay(card?.entryFee)}。会わない前提、換金できないAnjuPayだけの管理です。 #お貢ぎ牧場 #財布募集`;
+}
+
 // 今日のひとこと。サーバーの normalizeTodayWord と同じ判定を、送る前に画面で行う。
 export const TODAY_WORD = Object.freeze({ length: 30, ttlMs: 24 * 60 * 60 * 1_000, perDay: 3 });
 export const BOARD_SEXUAL_PATTERN = /(?:寸止め|射精|お漏らし|おもらし|イかせ|イきた|イかな|イっ|絶頂|オナ|シコ|しこしこ|勃起|精液|性器|ちんこ|ちんぽ|まんこ|セックス|中出し|フェラ|手コキ|足コキ|乳首|おっぱい|エロ)/u;
