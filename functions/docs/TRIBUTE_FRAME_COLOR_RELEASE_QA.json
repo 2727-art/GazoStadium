@@ -1,0 +1,327 @@
+{
+  "checkedAt": "2026-10-09T14:24:58.506Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "64898f5",
+  "releaseHead": "727724a",
+  "baseCommit": "b2ce741",
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 107,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "online.js",
+      "tribute.js",
+      "tribute.css",
+      "tribute-share.mjs",
+      "tribute-deco.mjs"
+    ],
+    "serverCodeChanged": true,
+    "firestoreRules": false,
+    "firestoreIndexes": false
+  },
+  "frameColors": {
+    "pricing": "free for any owned frame (user decision)",
+    "perFrame": 5,
+    "pinkOnEveryFrame": true,
+    "removed": [
+      "kurokawa green (深緑)",
+      "gyokuza jade (翡翠)",
+      "kinbuchi platinum (白金)"
+    ]
+  },
+  "tests": {
+    "total": 1995,
+    "passed": 1964,
+    "failed": 0,
+    "skipped": 31
+  },
+  "functions": {
+    "listed": 36,
+    "allActive": true,
+    "runtimes": [
+      "nodejs22"
+    ],
+    "changedSincePreviousRelease": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "81a2b70c15c8271140837122632b6aeb0395b372",
+        "sourceHash": "0dcf41c57a1ed97544e7c39d2df7b366c9911330",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      }
+    ]
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-09T14:23:50Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-frame-color-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/product-catalog.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-frame-color-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/ranch-deco.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/frame-colors.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/product-catalog.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-frame-color-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/ranch-deco.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/frame-colors.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/product-catalog.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-frame-color-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/ranch-deco.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/frame-colors.html",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.anjugames.workers.dev",
+    "moduleInitialized": true,
+    "loadedReleaseModules": [
+      "tribute-deco.mjs?v=ranch-frame-color-v1",
+      "tribute-share.mjs?v=ranch-frame-color-v1"
+    ],
+    "failedSameOriginLoads": 0,
+    "firstLoadServedPreviousHtml": "The first browser load at about 14:24:30Z still received the ranch-deco-v1 HTML; a reload with a new query at 14:24:44Z received the release HTML (edge propagation right after the Workers build).",
+    "consoleErrors": "One 403 without a URL, as in the previous release (automated browser).",
+    "ranchActionsInProduction": "none (no sign-in, card save or purchase in production)"
+  },
+  "caveats": [
+    "HTML is cached up to one hour; an old screen saving a card resets the frame color to the frame's first color.",
+    "No two-player run; no iPhone/Android/Safari check."
+  ]
+}
