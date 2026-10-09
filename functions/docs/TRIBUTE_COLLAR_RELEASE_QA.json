@@ -1,0 +1,238 @@
+{
+  "checkedAt": "2026-10-09T04:00:05.313Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "c62b547",
+  "releaseHead": "39c5a81",
+  "baseCommit": "ae3717f",
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "hosting": true,
+    "hostingFiles": 106,
+    "newPublicFiles": [
+      "tribute-share.mjs"
+    ],
+    "databaseRules": false,
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "otherModesChanged": false
+  },
+  "tests": {
+    "total": 1980,
+    "passed": 1949,
+    "failed": 0,
+    "skipped": 31,
+    "note": "Skipped tests are emulator-only. Same result in Functions predeploy."
+  },
+  "functions": {
+    "listed": 36,
+    "allActive": true,
+    "changedOnly": [
+      "tributeAction"
+    ],
+    "tributeActionHash": "a9e18c40290100fd4ecdd0b1997ebcd6cb306e11",
+    "previousHash": "5ea3252dcacb0d0539f8d2741166aef12a41f3ed"
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "startedAt": "2026-10-09T03:59:06Z",
+    "completedAt": "2026-10-09T03:59:35Z",
+    "conclusion": "success"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-collar-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexMatchesRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-collar-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexMatchesRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-collar-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexMatchesRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-collar-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "newModulesLoaded": 4,
+    "moduleInitialized": true,
+    "consoleErrors": 0,
+    "productionWrites": "none beyond page load"
+  },
+  "caveats": [
+    "HTML is cached up to one hour; old screens receive with the first registered seal and saving a card from an old screen resets seals to the defaults and report consent to off.",
+    "Cards saved before this release show 管理人様 in report images until the manager opts in.",
+    "Share-sheet support with image files depends on device and browser; otherwise the image is saved.",
+    "No two-player production or emulator run; no iPhone/Android/Safari check."
+  ]
+}
