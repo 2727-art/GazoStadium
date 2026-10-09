@@ -31,10 +31,11 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1"/);
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1"/);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-collar-v1"/);
+  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-deco-v1"/);
+  assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-deco-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
   assert.doesNotMatch(app, /id="valueMarketButton"/);
@@ -196,7 +197,7 @@ test("manager icons are twelve prepared WebP files chosen in the card editor, ne
   assert.match(editor, /name="avatar" value="0"/, "the letter sigil stays available");
   assert.match(editor, /画像のアップロードはできません/);
   assert.doesNotMatch(editor, /type="file"/);
-  assert.match(editor, /preview\.style\.setProperty\("--sigil"/);
+  assert.match(editor, /\[data-avatar-picker\]"\)\?\.style\.setProperty\("--sigil", sigilColor\(card\)\)/);
   assert.doesNotMatch(editor, /form\.style\./, "form.style is the 管理の型 radio list, not CSS");
   assert.match(sourceBlock(client, 'case "card": {', 'case "apply": {'), /avatar: avatarId\(data\.get\("avatar"\)\),/);
   assert.match(client, /印は12種のアイコンか、ペルソナ名の1文字から選べます。/);
@@ -408,7 +409,7 @@ test("seals, collar numbers, templates and note suggestions mirror the server an
   assert.match(sourceBlock(client, 'case "receive": {', 'case "share-open": {'), /contractPayload\(\{ tributeSeq: seq, reward, seal \}\)/);
   const card = sourceBlock(client, "function renderCardEditor", "function renderSealSettings");
   assert.match(card, /name="reportConsent" \$\{\(profile\.card \? card\.reportConsent === true : true\) \? "checked" : ""\}/, "existing cards are not opted in silently");
-  assert.match(sourceBlock(client, 'case "card": {', 'case "apply": {'), /seals: data\.getAll\("seals"\)\.map\(String\)\.slice\(0, MAX_SEALS\),\s*reportConsent: data\.get\("reportConsent"\) === "on",/);
+  assert.match(sourceBlock(client, 'case "card": {', 'case "apply": {'), /seals: data\.getAll\("seals"\)\.map\(String\)\.slice\(0, MAX_SEALS\),\s*\.\.\.formDecorations\(form\),\s*achievements: data\.getAll\("achievements"\)\.map\(String\)\.slice\(0, CARD_ACHIEVEMENT_LIMIT\),\s*reportConsent: data\.get\("reportConsent"\) === "on",/);
   assert.match(styles, /\.tribute-collar \{/);
   assert.match(styles, /\.tribute-share-preview \{/);
   assert.match(design, /首輪番号/);

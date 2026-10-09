@@ -268,6 +268,11 @@ const {
   serverRateFloorPublicEntry,
 } = require("./rate-floor");
 const PRODUCT_CATALOG = require("./product-catalog");
+const {
+  DECORATION_PRODUCT_TYPES: TRIBUTE_DECORATION_PRODUCT_TYPES,
+  decorationFundShare: tributeDecorationFundShare,
+  jstMonthKey: tributeJstMonthKey,
+} = require("./tribute-rules");
 const RETIRED_TEAM_PRODUCT_IDS = new Set([
   "title_team_link_active",
   "title_trust_my_partner",
@@ -4302,11 +4307,16 @@ async function purchaseProduct(uid, productId) {
   const purchase = firestore.collection("economyPurchases").doc(uid).collection("items").doc(productId);
   let result = null;
   const purchaseTimestamp = Date.now();
+  // お貢ぎ牧場の飾りは、売上の20%をその月の牧場基金に積む（残りは消える）。
+  const ranchDecoration = TRIBUTE_DECORATION_PRODUCT_TYPES.includes(product.type);
+  const fundMonthKey = ranchDecoration ? tributeJstMonthKey(purchaseTimestamp) : "";
+  const fund = ranchDecoration ? firestore.collection("tributeFund").doc(fundMonthKey) : null;
   await firestore.runTransaction(async (transaction) => {
-    const [walletSnapshot, purchaseSnapshot, ledgerConfigSnapshot] = await Promise.all([
+    const [walletSnapshot, purchaseSnapshot, ledgerConfigSnapshot, fundSnapshot] = await Promise.all([
       transaction.get(wallet),
       transaction.get(purchase),
       transaction.get(anjuPayLedgerConfigRef()),
+      fund ? transaction.get(fund) : Promise.resolve(null),
     ]);
     const walletState = walletData(walletSnapshot);
     const before = walletState.balance;
@@ -4387,6 +4397,18 @@ async function purchaseProduct(uid, productId) {
       price: product.price,
       createdAt: purchaseTimestamp,
     });
+    if (fund) {
+      const fundValue = fundSnapshot?.exists ? fundSnapshot.data() || {} : {};
+      const count = (value) => (Number.isSafeInteger(value) && value > 0 ? value : 0);
+      const share = tributeDecorationFundShare(product.price);
+      transaction.set(fund, {
+        monthKey: fundMonthKey,
+        balance: count(fundValue.balance) + share,
+        shopIncome: count(fundValue.shopIncome) + share,
+        shopCount: count(fundValue.shopCount) + 1,
+        updatedAt: purchaseTimestamp,
+      }, { merge: true });
+    }
     result = { outcome: "purchased", balance: after, price: product.price };
   });
   if (result.outcome === "purchased" || result.outcome === "owned") {
@@ -4396,7 +4418,8 @@ async function purchaseProduct(uid, productId) {
       updatedAt: Date.now(),
     };
     await realtime.ref(`online/economy/${uid}`).update(updates);
-    await autoEquipProduct(uid, product);
+    // 牧場の飾りは、お貢ぎ牧場の管理人カードで選ぶ（オンライン対戦の装備ではない）。
+    if (!ranchDecoration) await autoEquipProduct(uid, product);
   } else {
     await mirrorWallet(uid, result.balance);
   }

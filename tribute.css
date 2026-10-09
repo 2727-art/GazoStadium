@@ -313,7 +313,7 @@
 .tribute-shelf { display: grid; gap: 10px; }
 .tribute-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; }
 
-.tribute-card > button {
+.tribute-card > .tribute-card-face {
   display: grid;
   gap: 10px;
   width: 100%;
@@ -328,7 +328,7 @@
   cursor: pointer;
 }
 
-.tribute-card > button:hover { border-color: color-mix(in srgb, var(--sigil) 60%, transparent); }
+button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 60%, transparent); }
 .tribute-card-head { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .tribute-card-head strong { display: block; font-size: 1rem; overflow-wrap: anywhere; }
 .tribute-card-intro { color: var(--tr-mist); font-size: 0.84rem; line-height: 1.6; overflow-wrap: anywhere; }
@@ -921,4 +921,157 @@
   background:
     linear-gradient(120deg, rgba(255, 79, 163, 0.12), rgba(232, 194, 122, 0.1));
   color: #ffe6c2;
+}
+
+
+/* ───────────── 牧場の飾り：カードの枠 ─────────────
+   変えるのは縁・背景・飾りの絵だけ。中の文字の色と位置、中の人の札・入場料・管理中の人数は、どの枠でも同じ。 */
+.tribute-card-face[data-frame],
+.tribute-profile[data-frame],
+.tribute-deco-swatch[data-frame] { position: relative; }
+button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border-color: transparent; }
+
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kurokawa"] {
+  border: 1px solid #000;
+  background:
+    radial-gradient(circle at 30% 40%, rgba(255, 255, 255, 0.05) 0 0.6px, transparent 1.2px) 0 0 / 5px 5px,
+    radial-gradient(circle at 70% 60%, rgba(0, 0, 0, 0.45) 0 0.8px, transparent 1.4px) 0 0 / 7px 7px,
+    linear-gradient(160deg, #2c201c, #171112 58%, #120d0f);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 8px 20px rgba(0, 0, 0, 0.55);
+}
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kurokawa"]::after { content: ""; position: absolute; inset: 6px; border: 1.5px dashed rgba(232, 194, 122, 0.62); border-radius: 11px; pointer-events: none; }
+
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kusari"] {
+  border: 13px solid transparent;
+  border-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'72'%20height%3D'72'%20viewBox%3D'0%200%2072%2072'%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D'g'%20x1%3D'0'%20y1%3D'0'%20x2%3D'1'%20y2%3D'1'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%23f4f6fa'%2F%3E%3Cstop%20offset%3D'.45'%20stop-color%3D'%23a3a9b4'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%23585d68'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Cg%20fill%3D'none'%20stroke%3D'url(%23g)'%20stroke-width%3D'3.4'%20stroke-linecap%3D'round'%3E%20%3Ccircle%20cx%3D'12'%20cy%3D'12'%20r%3D'6.5'%2F%3E%3Ccircle%20cx%3D'60'%20cy%3D'12'%20r%3D'6.5'%2F%3E%3Ccircle%20cx%3D'12'%20cy%3D'60'%20r%3D'6.5'%2F%3E%3Ccircle%20cx%3D'60'%20cy%3D'60'%20r%3D'6.5'%2F%3E%20%3Cpath%20d%3D'M18.5%2012H24M12%2018.5V24M53.5%2012H48M60%2018.5V24M18.5%2060H24M12%2053.5V48M53.5%2060H48M60%2053.5V48'%20stroke-width%3D'4'%2F%3E%20%3Cellipse%20cx%3D'36'%20cy%3D'12'%20rx%3D'8.6'%20ry%3D'5.4'%2F%3E%3Cellipse%20cx%3D'36'%20cy%3D'60'%20rx%3D'8.6'%20ry%3D'5.4'%2F%3E%3Cellipse%20cx%3D'12'%20cy%3D'36'%20rx%3D'5.4'%20ry%3D'8.6'%2F%3E%3Cellipse%20cx%3D'60'%20cy%3D'36'%20rx%3D'5.4'%20ry%3D'8.6'%2F%3E%20%3Cpath%20d%3D'M24%2012H27.4M44.6%2012H48M24%2060H27.4M44.6%2060H48M12%2024V27.4M12%2044.6V48M60%2024V27.4M60%2044.6V48'%20stroke-width%3D'4'%2F%3E%20%3C%2Fg%3E%3C%2Fsvg%3E") 24 round;
+  border-radius: 4px;
+  background: linear-gradient(160deg, #23262e, #15161b 60%) padding-box;
+}
+
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="bara"] {
+  border: 11px solid transparent;
+  border-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'60'%20height%3D'60'%20viewBox%3D'0%200%2060%2060'%3E%20%3Cg%20fill%3D'none'%20stroke%3D'%23f5e4ea'%20stroke-opacity%3D'.85'%3E%20%3Cpath%20d%3D'M20%209%20A5%205%200%200%201%2030%209%20A5%205%200%200%201%2040%209'%20stroke-width%3D'1.6'%2F%3E%20%3Cline%20x1%3D'20'%20y1%3D'15'%20x2%3D'40'%20y2%3D'15'%20stroke-width%3D'1.2'%2F%3E%20%3Ccircle%20cx%3D'25'%20cy%3D'9.6'%20r%3D'1.3'%20fill%3D'%23f5e4ea'%20stroke%3D'none'%2F%3E%3Ccircle%20cx%3D'35'%20cy%3D'9.6'%20r%3D'1.3'%20fill%3D'%23f5e4ea'%20stroke%3D'none'%2F%3E%20%3Cpath%20d%3D'M20%2018%20H40'%20stroke-width%3D'.8'%20stroke-dasharray%3D'1.5%202'%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'rotate(90%2030%2030)'%3E%3Cg%20fill%3D'none'%20stroke%3D'%23f5e4ea'%20stroke-opacity%3D'.85'%3E%20%3Cpath%20d%3D'M20%209%20A5%205%200%200%201%2030%209%20A5%205%200%200%201%2040%209'%20stroke-width%3D'1.6'%2F%3E%20%3Cline%20x1%3D'20'%20y1%3D'15'%20x2%3D'40'%20y2%3D'15'%20stroke-width%3D'1.2'%2F%3E%20%3Ccircle%20cx%3D'25'%20cy%3D'9.6'%20r%3D'1.3'%20fill%3D'%23f5e4ea'%20stroke%3D'none'%2F%3E%3Ccircle%20cx%3D'35'%20cy%3D'9.6'%20r%3D'1.3'%20fill%3D'%23f5e4ea'%20stroke%3D'none'%2F%3E%20%3Cpath%20d%3D'M20%2018%20H40'%20stroke-width%3D'.8'%20stroke-dasharray%3D'1.5%202'%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3Cg%20transform%3D'rotate(180%2030%2030)'%3E%3Cg%20fill%3D'none'%20stroke%3D'%23f5e4ea'%20stroke-opacity%3D'.85'%3E%20%3Cpath%20d%3D'M20%209%20A5%205%200%200%201%2030%209%20A5%205%200%200%201%2040%209'%20stroke-width%3D'1.6'%2F%3E%20%3Cline%20x1%3D'20'%20y1%3D'15'%20x2%3D'40'%20y2%3D'15'%20stroke-width%3D'1.2'%2F%3E%20%3Ccircle%20cx%3D'25'%20cy%3D'9.6'%20r%3D'1.3'%20fill%3D'%23f5e4ea'%20stroke%3D'none'%2F%3E%3Ccircle%20cx%3D'35'%20cy%3D'9.6'%20r%3D'1.3'%20fill%3D'%23f5e4ea'%20stroke%3D'none'%2F%3E%20%3Cpath%20d%3D'M20%2018%20H40'%20stroke-width%3D'.8'%20stroke-dasharray%3D'1.5%202'%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3Cg%20transform%3D'rotate(270%2030%2030)'%3E%3Cg%20fill%3D'none'%20stroke%3D'%23f5e4ea'%20stroke-opacity%3D'.85'%3E%20%3Cpath%20d%3D'M20%209%20A5%205%200%200%201%2030%209%20A5%205%200%200%201%2040%209'%20stroke-width%3D'1.6'%2F%3E%20%3Cline%20x1%3D'20'%20y1%3D'15'%20x2%3D'40'%20y2%3D'15'%20stroke-width%3D'1.2'%2F%3E%20%3Ccircle%20cx%3D'25'%20cy%3D'9.6'%20r%3D'1.3'%20fill%3D'%23f5e4ea'%20stroke%3D'none'%2F%3E%3Ccircle%20cx%3D'35'%20cy%3D'9.6'%20r%3D'1.3'%20fill%3D'%23f5e4ea'%20stroke%3D'none'%2F%3E%20%3Cpath%20d%3D'M20%2018%20H40'%20stroke-width%3D'.8'%20stroke-dasharray%3D'1.5%202'%2F%3E%3C%2Fg%3E%3C%2Fg%3E%20%3Cg%20fill%3D'%23f5e4ea'%20fill-opacity%3D'.85'%3E%3Ccircle%20cx%3D'12'%20cy%3D'12'%20r%3D'4'%2F%3E%3Ccircle%20cx%3D'48'%20cy%3D'12'%20r%3D'4'%2F%3E%3Ccircle%20cx%3D'12'%20cy%3D'48'%20r%3D'4'%2F%3E%3Ccircle%20cx%3D'48'%20cy%3D'48'%20r%3D'4'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") 20 round;
+  border-radius: 4px;
+  background: radial-gradient(120% 90% at 0% 0%, rgba(176, 21, 63, 0.4), transparent 60%) padding-box, linear-gradient(160deg, #3a0f1f, #1c0a12 62%) padding-box;
+}
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="bara"]::before,
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="bara"]::after { content: ""; position: absolute; width: 34px; height: 34px; background: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2040%2040'%3E%20%3Cpath%20d%3D'M6%2030%20Q1%2021%2011%2020%20Q12%2029%206%2030Z'%20fill%3D'%233f7d4e'%2F%3E%3Cpath%20d%3D'M30%2035%20Q39%2031%2035%2023%20Q28%2027%2030%2035Z'%20fill%3D'%233f7d4e'%2F%3E%20%3Ccircle%20cx%3D'20'%20cy%3D'20'%20r%3D'11.5'%20fill%3D'%23b0153f'%2F%3E%3Cpath%20d%3D'M11%2015%20Q20%205%2029%2015'%20fill%3D'none'%20stroke%3D'%23e2557b'%20stroke-width%3D'1.6'%2F%3E%20%3Cpath%20d%3D'M20%2011.5%20a8.5%208.5%200%201%201%20-7.4%2012.4%20M20%2015.5%20a4.8%204.8%200%201%201%20-4.2%207%20M20%2019.5%20a1.6%201.6%200%201%201%201.1%201.3'%20fill%3D'none'%20stroke%3D'%236e0a26'%20stroke-width%3D'1.7'%2F%3E%3C%2Fsvg%3E") center / contain no-repeat; pointer-events: none; }
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="bara"]::before { left: -14px; top: -16px; }
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="bara"]::after { right: -14px; bottom: -16px; transform: rotate(180deg); }
+
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kinbuchi"] {
+  border: 9px solid transparent;
+  border-image: linear-gradient(135deg, #7d5d1c, #f7e4a6 22%, #b8892b 45%, #fff2c4 62%, #9a7224 82%, #f0d48a) 1;
+  border-radius: 2px;
+  background: radial-gradient(110% 70% at 50% 0%, rgba(232, 194, 122, 0.16), transparent 62%) padding-box, linear-gradient(160deg, #221a14, #141016 60%) padding-box;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.7), inset 0 0 0 4px rgba(232, 194, 122, 0.55), 0 10px 24px rgba(0, 0, 0, 0.55);
+}
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kinbuchi"]::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  pointer-events: none;
+  background:
+    url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2040%2040'%3E%3Cdefs%3E%3ClinearGradient%20id%3D'k'%20x1%3D'0'%20y1%3D'0'%20x2%3D'1'%20y2%3D'1'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%23fff2c4'%2F%3E%3Cstop%20offset%3D'.5'%20stop-color%3D'%23d9ac4c'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%238a6a24'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Cg%20transform%3D''%20fill%3D'none'%20stroke%3D'url(%23k)'%20stroke-width%3D'2.4'%20stroke-linecap%3D'round'%3E%3Cpath%20d%3D'M3%203%20H24%20Q30%203%2030%209%20Q30%2014%2025%2014%20Q21%2014%2021%2010'%2F%3E%3Cpath%20d%3D'M3%203%20V24%20Q3%2030%209%2030%20Q14%2030%2014%2025%20Q14%2021%2010%2021'%2F%3E%3Ccircle%20cx%3D'9'%20cy%3D'9'%20r%3D'3.2'%20fill%3D'url(%23k)'%20stroke%3D'none'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") top left / 30px no-repeat,
+    url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2040%2040'%3E%3Cdefs%3E%3ClinearGradient%20id%3D'k'%20x1%3D'0'%20y1%3D'0'%20x2%3D'1'%20y2%3D'1'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%23fff2c4'%2F%3E%3Cstop%20offset%3D'.5'%20stop-color%3D'%23d9ac4c'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%238a6a24'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Cg%20transform%3D'translate(40%200)%20scale(-1%201)'%20fill%3D'none'%20stroke%3D'url(%23k)'%20stroke-width%3D'2.4'%20stroke-linecap%3D'round'%3E%3Cpath%20d%3D'M3%203%20H24%20Q30%203%2030%209%20Q30%2014%2025%2014%20Q21%2014%2021%2010'%2F%3E%3Cpath%20d%3D'M3%203%20V24%20Q3%2030%209%2030%20Q14%2030%2014%2025%20Q14%2021%2010%2021'%2F%3E%3Ccircle%20cx%3D'9'%20cy%3D'9'%20r%3D'3.2'%20fill%3D'url(%23k)'%20stroke%3D'none'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") top right / 30px no-repeat,
+    url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2040%2040'%3E%3Cdefs%3E%3ClinearGradient%20id%3D'k'%20x1%3D'0'%20y1%3D'0'%20x2%3D'1'%20y2%3D'1'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%23fff2c4'%2F%3E%3Cstop%20offset%3D'.5'%20stop-color%3D'%23d9ac4c'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%238a6a24'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Cg%20transform%3D'translate(0%2040)%20scale(1%20-1)'%20fill%3D'none'%20stroke%3D'url(%23k)'%20stroke-width%3D'2.4'%20stroke-linecap%3D'round'%3E%3Cpath%20d%3D'M3%203%20H24%20Q30%203%2030%209%20Q30%2014%2025%2014%20Q21%2014%2021%2010'%2F%3E%3Cpath%20d%3D'M3%203%20V24%20Q3%2030%209%2030%20Q14%2030%2014%2025%20Q14%2021%2010%2021'%2F%3E%3Ccircle%20cx%3D'9'%20cy%3D'9'%20r%3D'3.2'%20fill%3D'url(%23k)'%20stroke%3D'none'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") bottom left / 30px no-repeat,
+    url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2040%2040'%3E%3Cdefs%3E%3ClinearGradient%20id%3D'k'%20x1%3D'0'%20y1%3D'0'%20x2%3D'1'%20y2%3D'1'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%23fff2c4'%2F%3E%3Cstop%20offset%3D'.5'%20stop-color%3D'%23d9ac4c'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%238a6a24'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Cg%20transform%3D'translate(40%2040)%20scale(-1%20-1)'%20fill%3D'none'%20stroke%3D'url(%23k)'%20stroke-width%3D'2.4'%20stroke-linecap%3D'round'%3E%3Cpath%20d%3D'M3%203%20H24%20Q30%203%2030%209%20Q30%2014%2025%2014%20Q21%2014%2021%2010'%2F%3E%3Cpath%20d%3D'M3%203%20V24%20Q3%2030%209%2030%20Q14%2030%2014%2025%20Q14%2021%2010%2021'%2F%3E%3Ccircle%20cx%3D'9'%20cy%3D'9'%20r%3D'3.2'%20fill%3D'url(%23k)'%20stroke%3D'none'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") bottom right / 30px no-repeat;
+}
+
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="gyokuza"] {
+  border: 3px solid transparent;
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.022) 0 2px, transparent 2px 5px) padding-box,
+    radial-gradient(120% 80% at 50% 0%, #6a1326, #2c0812 58%, #190409) padding-box,
+    linear-gradient(135deg, #8a6a24, #fff0bf 30%, #c79a3a 50%, #fff3c8 70%, #8a6a24) border-box;
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 130, 0.35), 0 0 26px rgba(255, 196, 92, 0.28), 0 10px 26px rgba(0, 0, 0, 0.6);
+}
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="gyokuza"]::before { content: ""; position: absolute; left: 50%; top: -24px; width: 58px; height: 36px; transform: translateX(-50%); background: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2058%2036'%3E%3Cdefs%3E%3ClinearGradient%20id%3D'c'%20x1%3D'0'%20y1%3D'0'%20x2%3D'0'%20y2%3D'1'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%23fff4c9'%2F%3E%3Cstop%20offset%3D'.55'%20stop-color%3D'%23e2b04f'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%238a6a24'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Cpath%20d%3D'M8%2032%20L4%208%20L17%2019%20L29%203%20L41%2019%20L54%208%20L50%2032%20Z'%20fill%3D'url(%23c)'%20stroke%3D'%235c4210'%20stroke-width%3D'1.2'%2F%3E%3Crect%20x%3D'8'%20y%3D'29'%20width%3D'42'%20height%3D'5'%20rx%3D'1.5'%20fill%3D'%23c99a3c'%20stroke%3D'%235c4210'%20stroke-width%3D'1'%2F%3E%20%3Ccircle%20cx%3D'29'%20cy%3D'22'%20r%3D'3.4'%20fill%3D'%23d3264f'%2F%3E%3Ccircle%20cx%3D'17'%20cy%3D'24'%20r%3D'2.4'%20fill%3D'%233a7bd5'%2F%3E%3Ccircle%20cx%3D'41'%20cy%3D'24'%20r%3D'2.4'%20fill%3D'%233a7bd5'%2F%3E%20%3Ccircle%20cx%3D'4'%20cy%3D'8'%20r%3D'2.4'%20fill%3D'%23fff4c9'%2F%3E%3Ccircle%20cx%3D'29'%20cy%3D'3'%20r%3D'2.6'%20fill%3D'%23fff4c9'%2F%3E%3Ccircle%20cx%3D'54'%20cy%3D'8'%20r%3D'2.4'%20fill%3D'%23fff4c9'%2F%3E%3C%2Fsvg%3E") center / contain no-repeat; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6)); pointer-events: none; }
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="gyokuza"]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(110deg, transparent 38%, rgba(255, 228, 160, 0.16) 50%, transparent 62%) 120% 0 / 260% 100% no-repeat; mix-blend-mode: screen; animation: tribute-throne-shine 6s ease-in-out infinite; }
+.tribute-card > .tribute-card-face[data-frame="gyokuza"] { margin-top: 16px; height: calc(100% - 16px); }
+.tribute-profile[data-frame="gyokuza"] { margin-top: 18px; }
+@keyframes tribute-throne-shine { 0%, 30% { background-position: 120% 0; } 70%, 100% { background-position: -20% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  :is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="gyokuza"]::after { animation: none; background-position: 30% 0; }
+}
+
+/* 牧場のカードに出す実績（3つまで） */
+.tribute-card-achievements { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.tribute-card-achievements > span { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px 2px 3px; border: 1px solid rgba(232, 194, 122, 0.38); border-radius: 999px; background: rgba(0, 0, 0, 0.28); color: var(--tr-text); font-size: 0.66rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tribute-card-achievements i { display: grid; place-items: center; flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%; background: linear-gradient(135deg, #f6e3a3, #c79a3a); color: #2a1a00; font-style: normal; font-size: 0.62rem; font-weight: 900; }
+.tribute-card-achievements.is-large > span { padding: 3px 11px 3px 4px; font-size: 0.74rem; }
+.tribute-card-achievements.is-large i { width: 20px; height: 20px; font-size: 0.7rem; }
+
+/* カードの編集：掲示板での見え方・飾りの選択・試着 */
+.tribute-editor-preview { display: grid; gap: 6px; }
+.tribute-editor-preview > small { color: var(--tr-mist); font-size: 0.72rem; }
+.tribute-editor-preview .tribute-card-grid { grid-template-columns: 1fr; }
+.tribute-deco-group { display: grid; gap: 6px; margin-top: 4px; }
+.tribute-deco-group h3 { margin: 6px 0 0; font-size: 0.82rem; }
+.tribute-deco-group h3 small { margin-left: 4px; color: var(--tr-mist); font-size: 0.68rem; font-weight: 400; }
+.tribute-deco-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.tribute-deco-tiles.is-inks { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.tribute-deco-tile { position: relative; display: grid; justify-items: center; gap: 3px; padding: 8px 4px 6px; border: 1px solid var(--tr-line); border-radius: 12px; background: rgba(255, 255, 255, 0.025); text-align: center; cursor: pointer; min-width: 0; }
+.tribute-deco-tile input { position: absolute; opacity: 0; pointer-events: none; }
+.tribute-deco-tile b { font-size: 0.72rem; overflow-wrap: anywhere; }
+.tribute-deco-tile small { color: var(--tr-mist); font-size: 0.62rem; }
+.tribute-deco-tile.is-locked small { color: var(--tr-gold); }
+.tribute-deco-tile.is-locked::after { content: "🔒"; position: absolute; right: 5px; top: 4px; font-size: 0.6rem; opacity: 0.75; }
+.tribute-deco-tile:has(input:checked) { border-color: var(--tr-accent); background: rgba(255, 79, 163, 0.1); }
+.tribute-deco-tile.is-trying:has(input:checked) { border-color: var(--tr-gold); background: rgba(232, 194, 122, 0.1); box-shadow: 0 0 0 1px rgba(232, 194, 122, 0.4); }
+.tribute-deco-tile.is-trying small { color: #f6dfa6; font-weight: 700; }
+.tribute-deco-tile:has(input:focus-visible) { outline: 2px solid var(--tr-accent); outline-offset: 2px; }
+.tribute-deco-art { display: grid; place-items: center; min-height: 54px; }
+.tribute-deco-art svg { display: block; }
+.tribute-deco-swatch { display: block; width: 74px; height: 46px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.12); background: linear-gradient(160deg, #2a1f30, #17121c); }
+.tribute-deco-swatch[data-frame="kusari"] { border-width: 9px; }
+.tribute-deco-swatch[data-frame="bara"] { border-width: 8px; }
+.tribute-deco-swatch[data-frame="bara"]::before,
+.tribute-deco-swatch[data-frame="bara"]::after { width: 20px; height: 20px; }
+.tribute-deco-swatch[data-frame="bara"]::before { left: -8px; top: -8px; }
+.tribute-deco-swatch[data-frame="bara"]::after { right: -8px; bottom: -8px; }
+.tribute-deco-swatch[data-frame="kinbuchi"] { border-width: 6px; }
+.tribute-deco-swatch[data-frame="kinbuchi"]::before { inset: 3px; background-size: 16px, 16px, 16px, 16px; }
+.tribute-deco-swatch[data-frame="kurokawa"]::after { inset: 4px; border-radius: 6px; }
+.tribute-deco-swatch[data-frame="gyokuza"] { margin-top: 8px; height: 40px; }
+.tribute-deco-swatch[data-frame="gyokuza"]::before { top: -15px; width: 34px; height: 21px; }
+.tribute-deco-ink { display: block; width: 26px; height: 26px; border-radius: 50%; background: var(--ink); box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.25), 0 0 10px color-mix(in srgb, var(--ink) 40%, transparent); }
+.tribute-deco-tiles.is-inks .tribute-deco-art { min-height: 30px; }
+.tribute-deco-trial { display: grid; gap: 6px; margin-top: 8px; padding: 12px; border: 1px solid rgba(232, 194, 122, 0.55); border-radius: 14px; background: linear-gradient(135deg, rgba(232, 194, 122, 0.14), rgba(255, 79, 163, 0.08)); }
+.tribute-deco-trial b { color: #f6dfa6; font-size: 0.9rem; }
+.tribute-deco-trial span { font-size: 0.78rem; }
+.tribute-deco-trial em { font-style: normal; font-weight: 900; color: #f6dfa6; }
+.tribute-deco-trial small { color: var(--tr-mist); font-size: 0.7rem; }
+.tribute-achievement-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap: 6px; }
+.tribute-achievement-choices label { position: relative; cursor: pointer; min-width: 0; }
+.tribute-achievement-choices input { position: absolute; opacity: 0; pointer-events: none; }
+.tribute-achievement-choices span { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 6px; align-items: center; padding: 6px 8px; border: 1px solid var(--tr-line); border-radius: 12px; background: rgba(255, 255, 255, 0.025); }
+.tribute-achievement-choices i { grid-row: span 2; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); font-style: normal; font-weight: 900; font-size: 0.72rem; }
+.tribute-achievement-choices b { font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tribute-achievement-choices small { color: var(--tr-mist); font-size: 0.6rem; }
+.tribute-achievement-choices input:checked + span { border-color: var(--tr-gold); background: rgba(232, 194, 122, 0.12); }
+.tribute-achievement-choices input:checked + span i { background: linear-gradient(135deg, #f6e3a3, #c79a3a); color: #2a1a00; }
+.tribute-achievement-choices input:focus-visible + span { outline: 2px solid var(--tr-accent); outline-offset: 2px; }
+
+/* AnjuPayストアの「お貢ぎ牧場の飾り」の棚（online.js が描く。ストアの画面でも枠の見本を同じ形で出す） */
+.shop-ranch-head { display: grid; gap: 8px; }
+.shop-ranch-fund { display: block; padding: 8px 12px; border-radius: 10px; background: rgba(61, 220, 151, 0.1); border: 1px solid rgba(61, 220, 151, 0.35); font-size: 0.82rem; line-height: 1.6; }
+.shop-ranch-fund b { color: #7ff0bf; }
+.shop-ranch-preview { display: grid; place-items: center; min-height: 96px; border-radius: 12px; background: #0d0a10; }
+.shop-ranch-preview .tribute-deco-swatch { width: 128px; height: 66px; }
+.shop-ranch-preview .tribute-deco-swatch[data-frame="gyokuza"] { margin-top: 16px; height: 58px; }
+
+.shop-ranch-sub { margin: 14px 2px 8px; font-size: 1rem; }
+/* スマホでは棚ごとに横へ送る（ほかの商品が遠くならないように）。 */
+@media (max-width: 719px) {
+  .shop-ranch-category .shop-grid {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(220px, 74%);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 8px;
+  }
+  .shop-ranch-category .shop-card { scroll-snap-align: start; }
 }

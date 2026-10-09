@@ -61,6 +61,26 @@ const SEAL_IDS = Object.freeze(SEALS.map((seal) => seal.id));
 const DEFAULT_SEALS = Object.freeze(["juryo", "yoku", "kakunin"]);
 const FALLBACK_SEAL = "juryo";
 const MAX_SEALS = 3;
+// 牧場の飾り。AnjuPayストアで買い切り、管理人カードで選ぶ。既定（枠なし・日付印・朱）は無料。
+// 飾りが変えるのは見た目だけで、中の人の札・入場料・管理中の人数・掲示板の並び順・手数料には触れない。
+const CARD_FRAMES = Object.freeze(["kurokawa", "kusari", "bara", "kinbuchi", "gyokuza"]);
+const SEAL_SHAPES = Object.freeze(["date", "square", "oval", "heart", "crown", "wax"]);
+const SEAL_INKS = Object.freeze(["shu", "ai", "sumi", "sakura", "kin"]);
+const DEFAULT_FRAME = "";
+const DEFAULT_SEAL_SHAPE = "date";
+const DEFAULT_SEAL_INK = "shu";
+const DECORATION_SLOTS = Object.freeze({
+  frame: Object.freeze({ type: "ranchFrame", prefix: "ranch_frame_", ids: CARD_FRAMES, fallback: DEFAULT_FRAME }),
+  sealShape: Object.freeze({ type: "ranchSealShape", prefix: "ranch_seal_", ids: SEAL_SHAPES, fallback: DEFAULT_SEAL_SHAPE }),
+  sealInk: Object.freeze({ type: "ranchSealInk", prefix: "ranch_ink_", ids: SEAL_INKS, fallback: DEFAULT_SEAL_INK }),
+});
+const DECORATION_PRODUCT_TYPES = Object.freeze(Object.values(DECORATION_SLOTS).map((slot) => slot.type));
+const DECORATION_PRODUCT_IDS = Object.freeze(Object.values(DECORATION_SLOTS).flatMap((slot) => (
+  slot.ids.filter((id) => id !== slot.fallback).map((id) => `${slot.prefix}${id}`)
+)));
+// 牧場の飾りの売上のうち、牧場基金に積む割合（上納と同じ20%）。残りは消える。
+const DECORATION_FUND_BASIS_POINTS = 2_000;
+const CARD_ACHIEVEMENT_ID_PATTERN = /^[a-z0-9_]{1,64}$/;
 const REPORT_REASONS = Object.freeze([
   "external_trade",
   "personal_info",
@@ -104,6 +124,7 @@ const LIMITS = Object.freeze({
   todayWord: 30,
   todayWordTtlMs: 24 * 60 * 60 * 1_000,
   todayWordsPerDay: 3,
+  cardAchievements: 3,
 });
 
 const HONOR_TIERS = Object.freeze([
@@ -290,6 +311,40 @@ function sealFor(value, { seals = DEFAULT_SEALS, ngWords = [] } = {}) {
   return seal && !containsNgWord(seal.label, ngWords) ? id : FALLBACK_SEAL;
 }
 
+// 飾りの選択。知らない値は既定に戻す（持っているかは、保存する時にサービスで確かめる）。
+function normalizeDecorations(value) {
+  const decorations = {};
+  for (const [key, slot] of Object.entries(DECORATION_SLOTS)) {
+    const requested = String(value?.[key] ?? "");
+    decorations[key] = slot.ids.includes(requested) ? requested : slot.fallback;
+  }
+  return decorations;
+}
+
+function decorationProductId(slotKey, id) {
+  const slot = DECORATION_SLOTS[slotKey];
+  if (!slot || id === slot.fallback || !slot.ids.includes(id)) return "";
+  return `${slot.prefix}${id}`;
+}
+
+// 既定ではない飾りの商品ID。保存する前に、この全部を持っているかを確かめる。
+function requiredDecorationProducts(decorations) {
+  return Object.keys(DECORATION_SLOTS)
+    .map((key) => decorationProductId(key, decorations?.[key]))
+    .filter(Boolean);
+}
+
+// 牧場のカードに出す実績（3つまで）。形だけ整え、解除済みかはサービスで確かめる。
+function normalizeCardAchievements(value) {
+  const list = Array.isArray(value) ? value : [];
+  return [...new Set(list.map(String).filter((id) => CARD_ACHIEVEMENT_ID_PATTERN.test(id)))].slice(0, LIMITS.cardAchievements);
+}
+
+function decorationFundShare(price) {
+  const value = Math.max(0, Math.floor(Number(price) || 0));
+  return Math.floor((value * DECORATION_FUND_BASIS_POINTS) / 10_000);
+}
+
 function normalizeManagerCard(value) {
   const personaName = cleanLine(value?.personaName, LIMITS.personaName);
   const intro = cleanLine(value?.intro, LIMITS.intro);
@@ -318,6 +373,8 @@ function normalizeManagerCard(value) {
       sigil,
       avatar,
       seals: normalizeSeals(value?.seals),
+      ...normalizeDecorations(value),
+      achievements: normalizeCardAchievements(value?.achievements),
       // 財布の貢ぎ報告の画像に、名前とアイコンを出してよいか。決めていないカードは出さない。
       reportConsent: value?.reportConsent === true,
       xHandle: x.xHandle,
@@ -499,6 +556,21 @@ module.exports = {
   SEAL_IDS,
   DEFAULT_SEALS,
   FALLBACK_SEAL,
+  CARD_FRAMES,
+  SEAL_SHAPES,
+  SEAL_INKS,
+  DEFAULT_FRAME,
+  DEFAULT_SEAL_SHAPE,
+  DEFAULT_SEAL_INK,
+  DECORATION_SLOTS,
+  DECORATION_PRODUCT_TYPES,
+  DECORATION_PRODUCT_IDS,
+  DECORATION_FUND_BASIS_POINTS,
+  normalizeDecorations,
+  decorationProductId,
+  requiredDecorationProducts,
+  normalizeCardAchievements,
+  decorationFundShare,
   AVATAR_IDS,
   AVATAR_MAX,
   normalizeAvatar,

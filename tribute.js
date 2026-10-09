@@ -80,13 +80,23 @@ import {
   wordRemainingLabel,
 } from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1";
 import {
-  SEAL_INK,
   SHARE_TEXT,
   canvasToPngBlob,
   renderExcerptImage,
   renderReceiptImage,
+  renderRecruitImage,
+} from "./tribute-share.mjs?v=ranch-deco-v1";
+import {
+  CARD_FRAMES,
+  DECORATION_FUND_PERCENT,
+  SEAL_INKS,
+  SEAL_SHAPES,
+  decorationChoice,
+  frameAttr,
+  normalizeDecorations,
+  requiredDecorationProducts,
   sealSvg,
-} from "./tribute-share.mjs?v=ranch-collar-v1";
+} from "./tribute-deco.mjs?v=ranch-deco-v1";
 
 const appRoot = document.querySelector("#app");
 // 確認シートとレシートは画面の外側に置く。画面要素の入場アニメーションが transform を使うため、
@@ -149,6 +159,8 @@ function createState() {
     ledger: { status: "idle", asPayer: [], asManager: [] },
     ranking: { status: "idle", managers: [], monthKey: "" },
     fund: { status: "idle", data: null },
+    // 管理人カードの編集で使う、持っている飾りと解除済みの実績（編集を開いた時に読む）。
+    decorations: { status: "idle", owned: [], achievements: [] },
     sheet: null,
     receipt: null,
     busy: "",
@@ -440,8 +452,8 @@ function renderInvite(profile) {
     <span class="tribute-eyebrow">招待リンク</span>
     <p>Xのフォロワーを、あなたの管理人カードへ直接案内できます。開いた人は年齢確認のあと、このカードに着きます。</p>
     <div class="tribute-invite-link"><input readonly value="${escapeHtml(url)}" aria-label="招待リンク" data-invite-url /><button class="button button-ghost button-small" type="button" data-t="copy-invite">コピー</button></div>
-    <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="post-invite">Xで告知する</button></div>
-    <small>告知の文には、中の人の札が必ず入ります。${profile.accepting ? "" : "いまは受付を止めているので、受付を始めてから告知してください。"}</small>
+    <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="post-invite">Xで告知する</button><button class="button button-ghost button-small" type="button" data-t="recruit-open">財布募集の画像を作る</button></div>
+    <small>告知の文には、中の人の札が必ず入ります。財布募集の画像は、飾った管理人カードを1枚にして X に貼れます。${profile.accepting ? "" : "いまは受付を止めているので、受付を始めてから告知してください。"}</small>
   </div>`;
 }
 
@@ -496,14 +508,33 @@ function renderAchievementPanel() {
   </section>`;
 }
 
-function renderManagerCard(card, { compact = false } = {}) {
+// 牧場のカードに出す実績（3つまで）。実績の一覧にないものは出さない。
+const CARD_ACHIEVEMENT_LIMIT = 3;
+
+function achievementEntry(id) {
+  const catalog = window.HariaiAchievements?.catalog;
+  return Array.isArray(catalog) ? catalog.find((definition) => definition.id === id) || null : null;
+}
+
+function cardAchievementsMarkup(ids, extra = "") {
+  const entries = (Array.isArray(ids) ? ids : []).map(achievementEntry).filter(Boolean).slice(0, CARD_ACHIEVEMENT_LIMIT);
+  if (!entries.length) return "";
+  return `<span class="tribute-card-achievements${extra}" aria-label="実績">${entries.map((entry) => `<span title="${escapeHtml(entry.description || entry.name)}"><i aria-hidden="true">${escapeHtml(entry.icon)}</i>${escapeHtml(entry.name)}</span>`).join("")}</span>`;
+}
+
+// preview: カード編集の見本（押しても開かない）。
+function renderManagerCard(card, { compact = false, preview = false } = {}) {
+  const face = preview
+    ? `<div class="tribute-card-face"${frameAttr(card.frame)}>`
+    : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame)}>`;
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
-    <button type="button" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}">
+    ${face}
       <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
       <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span>${card.recommendedCount ? `<span>推薦 <b>${Number(card.recommendedCount)}</b></span>` : ""}</span>
-    </button>
+    ${preview ? "</div>" : "</button>"}
   </article>`;
 }
 
@@ -553,8 +584,9 @@ function renderManagerDetail() {
         : `<p class="tribute-note">この管理人は受付を止めています。</p>`;
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
-    <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}">
+    <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame)}>
       <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}</div></div></div>
+      ${cardAchievementsMarkup(card.achievements, " is-large")}
       ${wordBubble(card.word, " is-large")}
       <p class="tribute-profile-intro">${escapeHtml(card.intro || "（紹介文なし）")}</p>
       <dl class="tribute-facts">
@@ -627,13 +659,15 @@ function renderCardEditor() {
   return frame(`<form class="tribute-panel tribute-card-editor" data-form="card">
     <span class="tribute-eyebrow">管理人カード</span>
     <h1>${profile.card ? "カードを編集" : "管理人カードを作る"}</h1>
-    <div class="tribute-card-preview" data-card-preview style="--sigil:${sigilColor(card)}">${renderCardPreview(card)}</div>
+    <div class="tribute-editor-preview"><small>掲示板での見え方</small><div class="tribute-card-grid" data-card-preview>${renderCardPreview(card)}</div></div>
     <label class="tribute-field"><span>ペルソナ名（1〜${LIMITS.personaName}文字）</span><input name="personaName" maxlength="${LIMITS.personaName}" required value="${escapeHtml(card.personaName || "")}" /></label>
     <fieldset><legend>印のアイコン</legend><div class="tribute-avatar-picker" data-avatar-picker style="--sigil:${sigilColor(card)}">${renderAvatarChoices(card)}</div>
       <small>用意した12種から選びます（画像のアップロードはできません）。上の段はゆるめ、下の段は大人びた絵です。</small></fieldset>
     <fieldset><legend>印の色</legend><div class="tribute-swatches">${SIGIL_COLORS.map((color, index) => `<label style="--sigil:${color}"><input type="radio" name="sigil" value="${index}" ${Number(card.sigil || 0) === index ? "checked" : ""} /><span aria-label="色${index + 1}"></span></label>`).join("")}</div>
       <small>アイコンの縁と、掲示板のカードの色になります。</small></fieldset>
     ${renderSealSettings(card)}
+    <div data-deco-section>${renderDecorationSettings(card)}</div>
+    <div data-achievement-section>${renderCardAchievementPicker(card)}</div>
     <fieldset><legend>貢ぎ報告</legend>
       <label class="tribute-check"><input type="checkbox" name="reportConsent" ${(profile.card ? card.reportConsent === true : true) ? "checked" : ""} /><span>財布の貢ぎ報告の画像に、名前とアイコンを出してよい<small>外すと「管理人様」とシルエットになります。画像を作れるのは財布だけで、URLは入りません。</small></span></label>
     </fieldset>
@@ -647,7 +681,7 @@ function renderCardEditor() {
     <label class="tribute-check"><input type="checkbox" name="accepting" ${profile.accepting || !profile.card ? "checked" : ""} /><span>受付する（掲示板に出す）</span></label>
     <p class="tribute-note">連絡先・SNSのID・外部決済・現金・会う約束・住所や本名に関わる言葉は、カードにも会話にも書けません。</p>
     <p class="tribute-form-error" data-form-error role="alert"></p>
-    <div class="tribute-row"><button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>保存する</button>
+    <div class="tribute-row"><button class="button button-primary" type="submit" data-card-save ${state.busy || decorationsTried(normalizeDecorations(card)).length ? "disabled" : ""}>保存する</button>
       <button class="button button-ghost" type="button" data-t="nav" data-screen="hub">戻る</button></div>
   </form>`, { title: "管理人カード" });
 }
@@ -657,20 +691,246 @@ function renderSealSettings(card) {
   const selected = Array.isArray(card.seals) && card.seals.length ? card.seals : DEFAULT_SEALS;
   return `<fieldset><legend>受取印（${MAX_SEALS}つまで）</legend>
     <div class="tribute-seal-choices">${SEALS.map((seal) => `<label><input type="checkbox" name="seals" value="${seal.id}" ${selected.includes(seal.id) ? "checked" : ""} /><span>${escapeHtml(seal.label)}</span></label>`).join("")}</div>
-    <div class="tribute-seal-preview" data-seal-preview>${sealPreview(selected[0], card.personaName)}</div>
+    <div class="tribute-seal-preview" data-seal-preview>${sealPreview(selected[0], card.personaName, normalizeDecorations(card))}</div>
     <small>受け取る時に、この中から1つ選んで押します。財布の「言われたくない言葉」に当たる印は「受領」になります。</small>
   </fieldset>`;
 }
 
-function sealPreview(id, personaName) {
-  return sealSvg({ label: sealLabel(id) || "受領", name: String(personaName || "").trim() || "管理人", at: Date.now(), size: 128, ink: SEAL_INK.dark });
+function sealPreview(id, personaName, look = {}) {
+  return sealSvg({ label: sealLabel(id) || "受領", name: String(personaName || "").trim() || "管理人", at: Date.now(), size: 128, shape: look.sealShape, ink: look.sealInk });
 }
 
 function updateSealPreview(form) {
   const preview = form.querySelector("[data-seal-preview]");
   if (!preview) return;
   const first = form.querySelector('input[name="seals"]:checked')?.value || DEFAULT_SEALS[0];
-  preview.innerHTML = sealPreview(first, form.elements.personaName?.value);
+  preview.innerHTML = sealPreview(first, form.elements.personaName?.value, formDecorations(form));
+}
+
+// ───────────── 牧場の飾り ─────────────
+// 枠・受取印の形・朱肉の色。持っていない飾りも選んで試着でき、買うまで保存はできない。
+
+function ownedDecorations() {
+  return new Set(state.decorations.owned);
+}
+
+// 選んでいるうち、まだ持っていない飾り（試着中）。
+function decorationsTried(decorations) {
+  if (state.decorations.status !== "ready") return [];
+  const owned = ownedDecorations();
+  return requiredDecorationProducts(decorations).filter((productId) => !owned.has(productId));
+}
+
+function decorationByProduct(productId) {
+  return [...CARD_FRAMES, ...SEAL_SHAPES, ...SEAL_INKS].find((entry) => entry.productId === productId) || null;
+}
+
+function formDecorations(form) {
+  const card = state.profile?.card || {};
+  const data = new FormData(form);
+  const pick = (name) => (data.has(name) ? String(data.get(name)) : card[name]);
+  return normalizeDecorations({ frame: pick("frame"), sealShape: pick("sealShape"), sealInk: pick("sealInk") });
+}
+
+function decorationStatus(entry, selected) {
+  if (!entry.productId) return { key: "free", label: "無料" };
+  if (ownedDecorations().has(entry.productId)) return { key: "owned", label: "持っている" };
+  if (selected) return { key: "trying", label: "試着中" };
+  return { key: "locked", label: formatPay(entry.price) };
+}
+
+function decorationTile(slot, entry, selectedId, art) {
+  const selected = entry.id === selectedId;
+  const status = decorationStatus(entry, selected);
+  return `<label class="tribute-deco-tile is-${status.key}${entry.special ? " is-special" : ""}" data-deco-slot="${slot}" data-deco-id="${escapeHtml(entry.id)}">
+    <input type="radio" name="${slot}" value="${escapeHtml(entry.id)}" ${selected ? "checked" : ""} />
+    <span class="tribute-deco-art" data-deco-art>${art}</span><b>${escapeHtml(entry.name)}</b><small data-deco-status>${escapeHtml(status.label)}</small>
+  </label>`;
+}
+
+function shapeArt(shape, look, name) {
+  return sealSvg({ label: "受領", name: String(name || "").trim() || "管理人", at: Date.now(), size: 54, shape, ink: look.sealInk, rough: false });
+}
+
+function renderDecorationSettings(card) {
+  const look = normalizeDecorations(card);
+  const deco = state.decorations;
+  if (deco.status !== "ready") {
+    // 読み込み中も、いまの飾りのまま保存できるようにする。
+    return `<fieldset class="tribute-deco"><legend>牧場の飾り</legend>
+      ${Object.entries(look).map(([name, value]) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}" />`).join("")}
+      <p class="tribute-empty">${deco.status === "error" ? "持っている飾りを読み込めませんでした。いまの飾りのまま保存できます。" : "持っている飾りを確かめています…"}</p>
+    </fieldset>`;
+  }
+  return `<fieldset class="tribute-deco"><legend>牧場の飾り</legend>
+    <div class="tribute-deco-group"><h3>カードの枠 <small>掲示板・詳細・招待・財布募集の画像</small></h3>
+      <div class="tribute-deco-tiles">${CARD_FRAMES.map((frame) => decorationTile("frame", frame, look.frame, `<span class="tribute-deco-swatch"${frameAttr(frame.id)}></span>`)).join("")}</div></div>
+    <div class="tribute-deco-group"><h3>受取印の形 <small>受け取る時の印・レシート・貢ぎ報告の画像</small></h3>
+      <div class="tribute-deco-tiles">${SEAL_SHAPES.map((shape) => decorationTile("sealShape", shape, look.sealShape, shapeArt(shape.id, look, card.personaName))).join("")}</div></div>
+    <div class="tribute-deco-group"><h3>朱肉の色</h3>
+      <div class="tribute-deco-tiles is-inks">${SEAL_INKS.map((ink) => decorationTile("sealInk", ink, look.sealInk, `<i class="tribute-deco-ink" style="--ink:${ink.dark}"></i>`)).join("")}</div></div>
+    <div data-deco-trial>${renderDecorationTrial(look)}</div>
+    <small>飾りが変えるのは見た目だけです。中の人の札・入場料・管理中の人数は、どの飾りでも同じ位置に出ます。AnjuPayストアの「お貢ぎ牧場の飾り」でも買えます。</small>
+  </fieldset>`;
+}
+
+function renderDecorationTrial(look) {
+  const tried = decorationsTried(look).map(decorationByProduct).filter(Boolean);
+  if (!tried.length) return "";
+  const balance = state.walletBalance;
+  const total = tried.reduce((sum, entry) => sum + entry.price, 0);
+  const after = balance === null ? "" : balance >= total ? `財布 ${escapeHtml(formatPay(balance))} → 買ったあと <em>${escapeHtml(formatPay(balance - total))}</em>` : `財布 ${escapeHtml(formatPay(balance))}（あと ${escapeHtml(formatPay(total - balance))} 足りません）`;
+  return `<div class="tribute-deco-trial" role="status">
+    <b>試着中：${tried.map((entry) => escapeHtml(entry.name)).join("・")}</b>
+    ${after ? `<span>${after}</span>` : ""}
+    <div class="tribute-row">${tried.map((entry) => `<button class="button button-primary button-small" type="button" data-t="buy-deco" data-product="${escapeHtml(entry.productId)}" ${state.busy || (balance !== null && balance < entry.price) ? "disabled" : ""}>${escapeHtml(entry.name)}を${escapeHtml(formatPay(entry.price))}で買う</button>`).join("")}
+      <button class="button button-ghost button-small" type="button" data-t="stop-trial">試着をやめる</button></div>
+    <small>試着中は保存できません。買い切りで、売上の${DECORATION_FUND_PERCENT}%は牧場基金に積まれます。</small>
+  </div>`;
+}
+
+// 選び直した時に、札（無料・持っている・試着中・値段）と試着の案内、保存ボタンだけを書き換える。
+function updateDecorations(form) {
+  const look = formDecorations(form);
+  for (const tile of form.querySelectorAll("[data-deco-slot]")) {
+    const slot = tile.dataset.decoSlot;
+    const list = slot === "frame" ? CARD_FRAMES : slot === "sealShape" ? SEAL_SHAPES : SEAL_INKS;
+    const entry = list.find((candidate) => candidate.id === tile.dataset.decoId);
+    if (!entry) continue;
+    const status = decorationStatus(entry, entry.id === look[slot]);
+    tile.classList.remove("is-free", "is-owned", "is-trying", "is-locked");
+    tile.classList.add(`is-${status.key}`);
+    const label = tile.querySelector("[data-deco-status]");
+    if (label) label.textContent = status.label;
+    if (slot === "sealShape") {
+      const art = tile.querySelector("[data-deco-art]");
+      if (art) art.innerHTML = shapeArt(entry.id, look, form.elements.personaName?.value);
+    }
+  }
+  const trial = form.querySelector("[data-deco-trial]");
+  if (trial) trial.innerHTML = renderDecorationTrial(look);
+  const save = form.querySelector("[data-card-save]");
+  if (save) save.disabled = Boolean(state.busy) || decorationsTried(look).length > 0;
+}
+
+// 実績は種類ごとに一番高い段だけを並べる（いま選んでいるものは必ず残す）。
+function cardAchievementChoices(selected) {
+  const best = new Map();
+  for (const id of state.decorations.achievements) {
+    const entry = achievementEntry(id);
+    if (!entry) continue;
+    const current = best.get(entry.family);
+    if (!current || entry.level > current.level) best.set(entry.family, entry);
+  }
+  const list = [...best.values()];
+  for (const id of selected) {
+    const entry = achievementEntry(id);
+    if (entry && !list.includes(entry)) list.push(entry);
+  }
+  return list.sort((left, right) => Number(right.category === "tribute_ranch") - Number(left.category === "tribute_ranch") || right.level - left.level);
+}
+
+function renderCardAchievementPicker(card) {
+  const selected = (Array.isArray(card.achievements) ? card.achievements : []).slice(0, CARD_ACHIEVEMENT_LIMIT);
+  const legend = `<legend>牧場のカードに出す実績（${CARD_ACHIEVEMENT_LIMIT}つまで）</legend>`;
+  if (state.decorations.status !== "ready") {
+    return `<fieldset class="tribute-card-achievement-pick">${legend}${selected.map((id) => `<input type="hidden" name="achievements" value="${escapeHtml(id)}" />`).join("")}<p class="tribute-empty">${state.decorations.status === "error" ? "実績を読み込めませんでした。いまの実績のまま保存できます。" : "解除した実績を確かめています…"}</p></fieldset>`;
+  }
+  const choices = cardAchievementChoices(selected);
+  if (!choices.length) {
+    return `<fieldset class="tribute-card-achievement-pick">${legend}<p class="tribute-note">対戦・トレーニング・牧場などで実績を解除すると、ここから${CARD_ACHIEVEMENT_LIMIT}つまで選んでカードに飾れます。</p></fieldset>`;
+  }
+  return `<fieldset class="tribute-card-achievement-pick">${legend}
+    <div class="tribute-achievement-choices">${choices.map((entry) => `<label><input type="checkbox" name="achievements" value="${escapeHtml(entry.id)}" ${selected.includes(entry.id) ? "checked" : ""} /><span><i aria-hidden="true">${escapeHtml(entry.icon)}</i><b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.familyLabel || "")} Lv.${Number(entry.level) || 1}</small></span></label>`).join("")}</div>
+    <small>牧場のカードにだけ出ます。実績コレクションの展示とは別に選べます。</small>
+  </fieldset>`;
+}
+
+async function loadDecorations() {
+  const generation = lifecycleGeneration;
+  state.decorations = { ...state.decorations, status: "loading" };
+  try {
+    const payload = await call("decorations");
+    if (!isCurrent(generation)) return;
+    state.decorations = {
+      status: "ready",
+      owned: Array.isArray(payload?.owned) ? payload.owned.map(String) : [],
+      achievements: Array.isArray(payload?.achievements) ? payload.achievements.map(String) : [],
+    };
+  } catch (error) {
+    if (!isCurrent(generation)) return;
+    state.decorations = { ...state.decorations, status: "error" };
+  }
+  refreshDecorationSections();
+}
+
+// 読み込みが終わったら、飾りと実績の欄だけを差し替える（ほかの欄の入力は消さない）。
+function refreshDecorationSections() {
+  const form = document.querySelector('form[data-form="card"]');
+  if (!form || state.screen !== "card") return;
+  const card = state.profile?.card || {};
+  const deco = form.querySelector("[data-deco-section]");
+  if (deco) deco.innerHTML = renderDecorationSettings({ ...card, personaName: form.elements.personaName?.value || card.personaName });
+  const achievements = form.querySelector("[data-achievement-section]");
+  if (achievements) achievements.innerHTML = renderCardAchievementPicker(card);
+  updateDecorations(form);
+  updateCardPreview(form);
+  updateSealPreview(form);
+}
+
+async function buyDecoration(productId) {
+  const entry = decorationByProduct(productId);
+  const form = document.querySelector('form[data-form="card"]');
+  if (!entry || state.busy) return;
+  const balance = state.walletBalance;
+  const confirmed = window.confirm(
+    `${entry.name}を${formatPay(entry.price)}で買いますか？\n\n`
+    + (balance === null ? "" : `いまの財布：${formatPay(balance)}\n買ったあと：${formatPay(Math.max(0, balance - entry.price))}\n\n`)
+    + `買い切りで、払い戻しはありません。売上の${DECORATION_FUND_PERCENT}%は牧場基金に積まれます。`,
+  );
+  if (!confirmed) return;
+  state.busy = "buy-deco";
+  if (form) updateDecorations(form);
+  try {
+    let result;
+    if (previewScreen) {
+      // 見本では Pay を動かさず、画面の上でだけ持っていることにする。
+      result = { outcome: (balance ?? 0) >= entry.price ? "purchased" : "short", balance: Math.max(0, (balance ?? 0) - entry.price) };
+      if (result.outcome === "purchased") {
+        state.walletBalance = result.balance;
+        paintWallet();
+      }
+    } else {
+      result = (await economyActionCallable({ action: "purchase", productId })).data || {};
+    }
+    if (result.outcome === "purchased" || result.outcome === "owned") {
+      state.decorations = { ...state.decorations, owned: [...new Set([...state.decorations.owned, productId])] };
+      showToast(`${entry.name}を手に入れました。保存するとカードに付きます。`);
+    } else if (result.outcome === "short") {
+      showToast("AnjuPayが足りません。デイリーミッションや毎日のプレイで貯められます。");
+    }
+  } catch (error) {
+    showToast(friendlyError(error, "飾りを買えませんでした。"));
+  } finally {
+    state.busy = "";
+    if (form?.isConnected) updateDecorations(form);
+  }
+}
+
+// 試着をやめる: 持っていない飾りを、保存してある飾り（なければ標準）に戻す。
+function stopDecorationTrial(form) {
+  const saved = normalizeDecorations(state.profile?.card);
+  const owned = ownedDecorations();
+  const look = formDecorations(form);
+  for (const slot of Object.keys(look)) {
+    const entry = decorationChoice(slot, look[slot]);
+    if (!entry?.productId || owned.has(entry.productId)) continue;
+    const input = form.querySelector(`input[name="${slot}"][value="${CSS.escape(saved[slot])}"]`);
+    if (input) input.checked = true;
+  }
+  updateDecorations(form);
+  updateCardPreview(form);
+  updateSealPreview(form);
 }
 
 function renderAvatarChoices(card) {
@@ -681,9 +941,19 @@ function renderAvatarChoices(card) {
     <label class="tribute-avatar-letter"><input type="radio" name="avatar" value="0" ${selected ? "" : "checked"} /><span class="tribute-avatar-choice is-letter" data-avatar-letter aria-hidden="true">${escapeHtml(letter)}</span><span>アイコンを使わず、ペルソナ名の1文字にする</span></label>`;
 }
 
+// 掲示板のカードと同じ形の見本。今日のひとこと・称号・管理中の人数は、いまのカードのまま。
 function renderCardPreview(card) {
-  const name = String(card.personaName || "").trim();
-  return `${sigil(card, "is-large")}<div><small>掲示板・スレッド・レシートに出る印</small><strong>${escapeHtml(name || "ペルソナ名")}</strong></div>`;
+  const current = state.profile?.card || {};
+  return renderManagerCard({
+    ...current,
+    ...card,
+    personaName: String(card.personaName || "").trim() || "ペルソナ名",
+    activeContracts: current.activeContracts || 0,
+    word: current.word || null,
+    honor: current.honor || null,
+    recommendedCount: 0,
+    mine: false,
+  }, { preview: true });
 }
 
 // 編集中のカードの印を、保存する前に見せる。form.style は「管理の型」の入力（name="style"）を指すので、
@@ -696,9 +966,15 @@ function updateCardPreview(form) {
     personaName: String(data.get("personaName") || ""),
     avatar: Number(data.get("avatar") || 0),
     sigil: Number(data.get("sigil") || 0),
+    intro: String(data.get("intro") || ""),
+    disclosure: String(data.get("disclosure") || state.profile?.card?.disclosure || "undisclosed"),
+    style: String(data.get("style") || "harsh"),
+    entryFee: Number(data.get("entryFee") || 0),
+    xHandle: normalizeXProfile(data.get("xProfile")).xHandle || "",
+    ...formDecorations(form),
+    achievements: data.has("achievements") ? data.getAll("achievements").map(String).slice(0, CARD_ACHIEVEMENT_LIMIT) : state.profile?.card?.achievements || [],
   };
   preview.innerHTML = renderCardPreview(card);
-  preview.style.setProperty("--sigil", sigilColor(card));
   form.querySelector("[data-avatar-picker]")?.style.setProperty("--sigil", sigilColor(card));
   const letter = form.querySelector("[data-avatar-letter]");
   if (letter) letter.textContent = Array.from(card.personaName.trim())[0] || "管";
@@ -743,8 +1019,10 @@ function renderReceiveControls(event, view) {
   const seals = sealsFor(state.profile?.card?.seals, view.ngWords);
   const seq = Number(event.seq);
   const chosen = seals.includes(sealChoices.get(seq)) ? sealChoices.get(seq) : seals[0];
+  // いまのカードの形と朱肉で押す（押した時の見た目が、その献上に残る）。
+  const look = normalizeDecorations(state.profile?.card);
   return `<div class="tribute-receive">
-    <div class="tribute-seal-pick" role="radiogroup" aria-label="押す印">${seals.map((id) => `<label><input type="radio" name="seal-${seq}" value="${id}" ${id === chosen ? "checked" : ""} /><span>${sealSvg({ label: sealLabel(id), name: view.manager.personaName, at: Date.now(), size: 52, ink: SEAL_INK.dark, rough: false })}<small>${escapeHtml(sealLabel(id))}</small></span></label>`).join("")}</div>
+    <div class="tribute-seal-pick" role="radiogroup" aria-label="押す印">${seals.map((id) => `<label><input type="radio" name="seal-${seq}" value="${id}" ${id === chosen ? "checked" : ""} /><span>${sealSvg({ label: sealLabel(id), name: view.manager.personaName, at: Date.now(), size: 52, shape: look.sealShape, ink: look.sealInk, rough: false })}<small>${escapeHtml(sealLabel(id))}</small></span></label>`).join("")}</div>
     <button class="button button-primary button-small" type="button" data-t="receive" data-seq="${seq}">印を押して受け取る</button>
     ${rewards.length ? `<div class="tribute-reward-chips" role="group" aria-label="ご褒美を添えて受け取る">${rewards.map((reward) => `<button type="button" data-t="receive" data-seq="${seq}" data-reward="${escapeHtml(reward.id)}">${escapeHtml(reward.label)}</button>`).join("")}</div>` : ""}
   </div>`;
@@ -808,7 +1086,7 @@ function renderEvent(event, view, statuses) {
         ? `<span class="tribute-received"><i aria-hidden="true">✓</i>受け取り完了 <time>${escapeHtml(formatDateTime(receivedAt))}</time></span>`
         : receivable ? `<span class="tribute-awaiting${seen ? " is-seen" : ""}">${seen ? "<b>既読</b>" : ""}受け取り待ち</span>` : "";
       const seal = receivedAt && sealLabel(event.seal)
-        ? `<span class="tribute-stamp-seal">${sealSvg({ label: sealLabel(event.seal), name: managerName, at: receivedAt, size: 76, ink: SEAL_INK.dark, rough: false })}</span>`
+        ? `<span class="tribute-stamp-seal">${sealSvg({ label: sealLabel(event.seal), name: managerName, at: receivedAt, size: 76, shape: event.sealShape, ink: event.sealInk, rough: false })}</span>`
         : "";
       const controls = !receivedAt && receivable && view.role === "manager" && view.status === "active"
         ? renderReceiveControls(event, view)
@@ -1001,6 +1279,7 @@ function renderSheet() {
   const close = `<button class="tribute-sheet-close" type="button" data-t="sheet-close" aria-label="閉じる">×</button>`;
   const wrap = (title, body) => `<div class="tribute-sheet-backdrop" data-t="sheet-close"></div><div class="tribute-sheet" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}"><header><h2>${escapeHtml(title)}</h2>${close}</header>${body}</div>`;
   if (sheet.type === "share") return renderShareSheet(sheet, wrap);
+  if (sheet.type === "recruit") return renderRecruitSheet(sheet, wrap);
   if (!view) return "";
   const amountChips = (maximum, name = "amount") => {
     const chips = [10, 30, 50, 100, 300, 500, 1_000].filter((value) => value <= maximum);
@@ -1160,7 +1439,7 @@ function openShare({ contractId, receiptId = "", seq = 0 }) {
 }
 
 function closeSharePreview() {
-  if (state.sheet?.type === "share" && state.sheet.previewUrl) URL.revokeObjectURL(state.sheet.previewUrl);
+  if (["share", "recruit"].includes(state.sheet?.type) && state.sheet.previewUrl) URL.revokeObjectURL(state.sheet.previewUrl);
 }
 
 async function loadShareInfo(sheet) {
@@ -1224,6 +1503,9 @@ function shareReceiptData(sheet) {
     createdAt: source.createdAt,
     receivedAt: Number(source.receivedAt || 0),
     sealLabel: sealLabel(source.seal),
+    // 管理人を伏せる時は標準の印にする（飾りから管理人が分からないように）。
+    sealShape: info.consent ? source.sealShape : "",
+    sealInk: info.consent ? source.sealInk : "",
     rewardLabel: rewardLabel(source.reward),
     pairCount: stored?.pairCount || 0,
     collarNo: Number(info.collarNo) || 0,
@@ -1259,6 +1541,8 @@ function shareExcerptData(sheet) {
       amount: tribute.amount,
       receivedAt: Number(tribute.receivedAt || 0),
       sealLabel: sealLabel(tribute.seal),
+      sealShape: info.consent ? tribute.sealShape : "",
+      sealInk: info.consent ? tribute.sealInk : "",
       sealRotation: Number(tribute.seq) % 2 ? -12 : 9,
       at: tribute.createdAt,
     });
@@ -1312,13 +1596,13 @@ async function refreshSharePreview() {
 function sharePreviewMarkup(sheet) {
   if (sheet.error) return `<p class="tribute-form-error" role="alert">${escapeHtml(sheet.error)}</p>`;
   if (!sheet.previewUrl) return `<span class="tribute-share-wait">画像を作っています…</span>`;
-  return `<img src="${escapeHtml(sheet.previewUrl)}" alt="作った貢ぎ報告の画像" width="1080" height="1350" />${sheet.rendering ? '<span class="tribute-share-wait is-over">作り直しています…</span>' : ""}`;
+  return `<img src="${escapeHtml(sheet.previewUrl)}" alt="${sheet.type === "recruit" ? "作った財布募集の画像" : "作った貢ぎ報告の画像"}" width="1080" height="1350" />${sheet.rendering ? '<span class="tribute-share-wait is-over">作り直しています…</span>' : ""}`;
 }
 
 // 見本だけを差し替える（シート全体を描き直すと、選んでいる項目の位置が飛ぶため）。
 function paintSharePreview() {
   const sheet = state.sheet;
-  if (sheet?.type !== "share") return;
+  if (!["share", "recruit"].includes(sheet?.type)) return;
   const preview = layer.querySelector("[data-share-preview]");
   if (preview) preview.innerHTML = sharePreviewMarkup(sheet);
   for (const button of layer.querySelectorAll("[data-share-action]")) button.disabled = !sheet.blob || sheet.rendering;
@@ -1340,6 +1624,107 @@ function renderShareSheet(sheet, wrap) {
     <div class="tribute-row"><button class="button button-primary" type="button" data-t="share-send" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>共有（X など）</button><button class="button button-ghost" type="button" data-t="share-save" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>画像で保存</button></div>
     <small>スマホは共有から画像ごとXへ送れます。PCは保存してから、Xの投稿に添付します。</small>
   </div>`);
+}
+
+function openRecruit() {
+  const card = state.profile?.card;
+  if (!card) return;
+  closeSharePreview();
+  state.sheet = { type: "recruit", status: "loading", error: "", previewUrl: "", blob: null, fileName: "", rendering: false };
+  rerenderSheet();
+  loadRecruit(state.sheet);
+}
+
+function recruitData(card, month) {
+  const disclosureKey = DISCLOSURE_SHORT[card.disclosure] ? card.disclosure : "undisclosed";
+  const look = normalizeDecorations(card);
+  return {
+    manager: {
+      personaName: card.personaName,
+      avatarUrl: avatarUrl(card.avatar),
+      color: sigilColor(card),
+      disclosureKey,
+      disclosureLabel: DISCLOSURE_LABELS[disclosureKey],
+      styleLabel: STYLE_LABELS[card.style] || "",
+    },
+    honorLabel: card.honor?.label || "",
+    ...look,
+    word: card.word?.text || "",
+    intro: card.intro || "",
+    entryFee: Number(card.entryFee) || 0,
+    activeContracts: Number(card.activeContracts) || 0,
+    monthPayers: Number(month?.payers) || 0,
+    achievements: (card.achievements || []).map(achievementEntry).filter(Boolean).slice(0, CARD_ACHIEVEMENT_LIMIT).map((entry) => ({ icon: entry.icon, name: entry.name })),
+    at: Date.now(),
+  };
+}
+
+// 自分の管理人カードを開き直して（今月の財布の人数も）、画像を描く。描くのはこの端末の中だけ。
+async function loadRecruit(sheet) {
+  let card = state.profile?.card;
+  let month = null;
+  try {
+    const publicManagerId = state.profile?.publicManagerId || card?.publicManagerId;
+    if (publicManagerId) {
+      const detail = await call("manager", { publicManagerId });
+      if (detail?.card) card = { ...card, ...detail.card };
+      month = detail?.month || null;
+    }
+  } catch {
+    // 開き直せない時は、手元のカードで描く（今月の財布は 0 人になる）。
+  }
+  if (state.sheet !== sheet || !card) return;
+  sheet.status = "ready";
+  sheet.card = card;
+  renderLayer();
+  sheet.rendering = true;
+  paintSharePreview();
+  try {
+    const canvas = await renderRecruitImage(recruitData(card, month));
+    const blob = await canvasToPngBlob(canvas);
+    if (state.sheet !== sheet) return;
+    sheet.blob = blob;
+    sheet.previewUrl = URL.createObjectURL(blob);
+    const stamp = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll("-", "");
+    sheet.fileName = `omitsugi-wanted-${stamp}.png`;
+  } catch (error) {
+    if (state.sheet !== sheet) return;
+    sheet.error = friendlyError(error, "画像を作れませんでした。");
+  }
+  sheet.rendering = false;
+  paintSharePreview();
+}
+
+function renderRecruitSheet(sheet, wrap) {
+  if (sheet.status === "loading") return wrap("財布募集の画像", `<p class="tribute-empty">あなたの管理人カードを開いています…</p>`);
+  return wrap("財布募集の画像", `<div class="tribute-share">
+    <div class="tribute-share-body">
+      <div class="tribute-share-preview" data-share-preview>${sharePreviewMarkup(sheet)}</div>
+      <div class="tribute-share-options"><p class="tribute-note">あなたの管理人カード（枠・中の人の札・入場料・管理中の人数・今日のひとこと・実績）を1枚の画像にします。受取印の形と朱肉で「募集中」を押します。</p>
+        ${state.profile?.accepting ? "" : '<p class="tribute-note">いまは受付を止めています。受付を始めてから告知してください。</p>'}</div>
+    </div>
+    <p class="tribute-note">画像にURLは入りません。招待リンクは投稿の文に付き、文には中の人の札が必ず入ります。「上限と解約は財布が握る」「AnjuPayだけ・現金なし」の表記も必ず入ります。</p>
+    <div class="tribute-row"><button class="button button-primary" type="button" data-t="recruit-send" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>共有（X など）</button><button class="button button-ghost" type="button" data-t="recruit-save" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>画像で保存</button><button class="button button-ghost" type="button" data-t="post-invite">Xの投稿画面を開く</button></div>
+    <small>スマホは共有から、画像と告知の文をまとめてXへ送れます。PCは画像を保存してから「Xの投稿画面を開く」で文とリンクを入れ、画像を添付します。</small>
+  </div>`);
+}
+
+async function sendRecruitImage(saveOnly) {
+  const sheet = state.sheet;
+  if (sheet?.type !== "recruit" || !sheet.blob || sheet.rendering) return;
+  const card = sheet.card || state.profile?.card;
+  const url = inviteUrlFor(state.profile?.publicManagerId || card?.publicManagerId);
+  const file = new File([sheet.blob], sheet.fileName, { type: "image/png" });
+  if (!saveOnly && card && url && navigator.share && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], text: `${inviteText(card)}\n${url}` });
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+  }
+  downloadShareBlob(sheet.blob, sheet.fileName);
+  showToast(saveOnly ? "画像を保存しました。「Xの投稿画面を開く」から添付できます。" : "この端末では共有が使えないため、画像を保存しました。「Xの投稿画面を開く」から添付できます。");
 }
 
 function downloadShareBlob(blob, fileName) {
@@ -1412,7 +1797,7 @@ function renderReceipts() {
         <strong class="tribute-receipt-amount">${escapeHtml(formatPay(receipt.amount))}</strong>
         ${Number(receipt.receivedAt || 0) ? `<p class="tribute-receipt-received">受け取り済み ${escapeHtml(formatDateTime(receipt.receivedAt))}${rewardLabel(receipt.reward) ? `<b>「${escapeHtml(rewardLabel(receipt.reward))}」</b>` : ""}</p>` : ""}
         ${Number(receipt.collarNo || 0) ? `<p class="tribute-receipt-collar">${escapeHtml(receipt.personaName)}の財布 ${Number(receipt.collarNo)}号</p>` : ""}
-        ${Number(receipt.receivedAt || 0) && sealLabel(receipt.seal) ? `<span class="tribute-receipt-seal">${sealSvg({ label: sealLabel(receipt.seal), name: receipt.personaName, at: receipt.receivedAt, size: 88, ink: SEAL_INK.paper, rough: false })}</span>` : ""}
+        ${Number(receipt.receivedAt || 0) && sealLabel(receipt.seal) ? `<span class="tribute-receipt-seal">${sealSvg({ label: sealLabel(receipt.seal), name: receipt.personaName, at: receipt.receivedAt, size: 88, shape: receipt.sealShape, ink: receipt.sealInk, surface: "paper", rough: false })}</span>` : ""}
         <footer>${escapeHtml(formatDateTime(receipt.createdAt))} ・ ${Number(receipt.pairCount)}回目</footer>
         ${receipt.contractId ? `<button class="tribute-save-image is-paper" type="button" data-t="share-receipt" data-receipt="${escapeHtml(receipt.receiptId)}" data-contract="${escapeHtml(receipt.contractId)}">画像で保存</button>` : ""}
       </article>`).join("")}</div>${receipts.more ? `<button class="button button-ghost" type="button" data-t="receipts-more">もっと見る</button>` : ""}`
@@ -1453,10 +1838,11 @@ function renderFund() {
   return frame(`<div class="tribute-fund">
     <section class="tribute-panel">
       <span class="tribute-eyebrow">${escapeHtml(monthKey.replace("-", "年"))}月</span><h2>牧場基金</h2>
-      <p>管理人が受け取った献上の一部を「上納」すると、80%は消却、20%がその月の基金に積まれます。基金は献上手数料の補填（手数料の半分・最大10 Pay・手数料は最低1 Pay残す）だけに使い、管理人へ直接配りません。</p>
+      <p>管理人が受け取った献上の一部を「上納」すると、80%は消却、20%がその月の基金に積まれます。AnjuPayストアの「お貢ぎ牧場の飾り」の売上も、${DECORATION_FUND_PERCENT}%がその月の基金に積まれます。基金は献上手数料の補填（手数料の半分・最大10 Pay・手数料は最低1 Pay残す）だけに使い、管理人へ直接配りません。</p>
       <dl class="tribute-facts">
         <div><dt>基金残高</dt><dd>${escapeHtml(formatPay(fund.balance))}</dd></div>
         <div><dt>今月の積み立て</dt><dd>${escapeHtml(formatPay(fund.contributed))}</dd></div>
+        <div><dt>飾りの売上から</dt><dd>${escapeHtml(formatPay(fund.shopIncome || 0))}</dd></div>
         <div><dt>今月の消却</dt><dd>${escapeHtml(formatPay(fund.burned))}</dd></div>
         <div><dt>補填</dt><dd>${escapeHtml(formatPay(fund.subsidized))}（${fund.subsidyCount}件）</dd></div>
       </dl>
@@ -1661,6 +2047,7 @@ function navigate(screen, { refresh = true } = {}) {
   else {
     render();
     if (screen === "hub" && refresh) refreshState();
+    if (screen === "card") loadDecorations();
   }
 }
 
@@ -1946,6 +2333,7 @@ async function handleSubmit(form) {
       if (problem) return setFormError(form, problem);
       const x = normalizeXProfile(data.get("xProfile"));
       if (x.error) return setFormError(form, x.error);
+      if (decorationsTried(formDecorations(form)).length) return setFormError(form, "試着中の飾りがあります。買うか、試着をやめてから保存してください。");
       await mutate("save_profile", {
         card: {
           personaName,
@@ -1957,6 +2345,8 @@ async function handleSubmit(form) {
           sigil: Number(data.get("sigil") || 0),
           avatar: avatarId(data.get("avatar")),
           seals: data.getAll("seals").map(String).slice(0, MAX_SEALS),
+          ...formDecorations(form),
+          achievements: data.getAll("achievements").map(String).slice(0, CARD_ACHIEVEMENT_LIMIT),
           reportConsent: data.get("reportConsent") === "on",
         },
         accepting: data.get("accepting") === "on",
@@ -2251,8 +2641,23 @@ async function handleClick(target) {
       }
       return;
     }
+    case "buy-deco":
+      await buyDecoration(target.dataset.product);
+      return;
+    case "stop-trial": {
+      const form = target.closest('form[data-form="card"]');
+      if (form) stopDecorationTrial(form);
+      return;
+    }
+    case "recruit-open":
+      openRecruit();
+      return;
+    case "recruit-send":
+    case "recruit-save":
+      await sendRecruitImage(target.dataset.t === "recruit-save");
+      return;
     case "post-invite": {
-      const card = state.profile?.card;
+      const card = state.sheet?.type === "recruit" && state.sheet.card ? state.sheet.card : state.profile?.card;
       const url = inviteUrlFor(state.profile?.publicManagerId || card?.publicManagerId);
       if (!card || !url) return;
       const intent = new URL("https://x.com/intent/tweet");
@@ -2402,7 +2807,19 @@ function bindRoot(root) {
     const target = event.target.closest?.('input[data-t="toggle-nekama"]');
     if (target) handleClick(target);
     const cardForm = event.target.closest?.('form[data-form="card"]');
-    if (cardForm && ["avatar", "sigil"].includes(event.target.name)) updateCardPreview(cardForm);
+    if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee"].includes(event.target.name)) updateCardPreview(cardForm);
+    if (cardForm && ["frame", "sealShape", "sealInk"].includes(event.target.name)) {
+      updateDecorations(cardForm);
+      updateCardPreview(cardForm);
+      updateSealPreview(cardForm);
+    }
+    if (cardForm && event.target.name === "achievements") {
+      if (cardForm.querySelectorAll('input[name="achievements"]:checked').length > CARD_ACHIEVEMENT_LIMIT) {
+        event.target.checked = false;
+        showToast(`カードに出す実績は${CARD_ACHIEVEMENT_LIMIT}つまでです。`);
+      }
+      updateCardPreview(cardForm);
+    }
     if (cardForm && event.target.name === "seals") {
       if (cardForm.querySelectorAll('input[name="seals"]:checked').length > MAX_SEALS) {
         event.target.checked = false;
@@ -2448,6 +2865,7 @@ function bindRoot(root) {
       updateCardPreview(cardForm);
       updateSealPreview(cardForm);
     }
+    if (cardForm && event.target.name === "intro") updateCardPreview(cardForm);
   });
 
   root.addEventListener("pointerdown", (event) => {
@@ -2730,6 +3148,8 @@ function previewThreadChange(change) {
   return thread.view;
 }
 
+const previewOwnedDecorations = new Set(["ranch_frame_kurokawa", "ranch_seal_heart", "ranch_ink_sakura"]);
+
 const PREVIEW_MANAGER_CARD = Object.freeze({
   publicManagerId: "a1b2c3d4e5f6a1b2c3d4e5f6",
   personaName: "ミオ様",
@@ -2740,6 +3160,10 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   sigil: 0,
   avatar: 7,
   seals: ["yoku", "zako", "kakunin"],
+  frame: "gyokuza",
+  sealShape: "heart",
+  sealInk: "sakura",
+  achievements: ["tribute_manager_10", "battle_total_10", "tribute_wallet_3"],
   reportConsent: true,
   word: { text: "今夜は機嫌がいい。財布は並びな。", at: Date.now() - 2 * 3_600_000 },
   xHandle: "mio_sama_ranch",
@@ -2832,7 +3256,7 @@ function previewCall(action, payload) {
         ageConfirmed: previewScreen !== "age",
         profile: previewSavedProfile || {
           walletName: "ポチ財布",
-          card: { ...PREVIEW_MANAGER_CARD, personaName: "レイ", disclosure: "as_is", style: "cold", sigil: 2, avatar: 5, mine: true },
+          card: { ...PREVIEW_MANAGER_CARD, personaName: "レイ", disclosure: "as_is", style: "cold", sigil: 2, avatar: 5, frame: "kurokawa", sealShape: "heart", sealInk: "sakura", achievements: ["tribute_manager_10"], mine: true },
           accepting: true,
           publicManagerId: "f".repeat(24),
           hidden: false,
@@ -2858,8 +3282,10 @@ function previewCall(action, payload) {
         ok: true,
         managers: [
           PREVIEW_MANAGER_CARD,
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, honor: null, recommendedCount: 0, intro: "事務的に管理します。報告は毎日。" },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, honor: null, recommendedCount: 0, intro: "甘やかし担当。無理はさせない。" },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, honor: null, recommendedCount: 0, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", achievements: ["tribute_manager_3"] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, honor: null, recommendedCount: 0, intro: "甘やかし担当。無理はさせない。", frame: "bara", achievements: [] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, honor: null, recommendedCount: 0, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "kusari", achievements: [] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, honor: null, recommendedCount: 0, intro: "毎日決まった額を、決まった時間に。", frame: "kurokawa", achievements: ["battle_total_1"] },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
         recommended: [PREVIEW_MANAGER_CARD],
       });
@@ -2905,7 +3331,7 @@ function previewCall(action, payload) {
       return Promise.resolve({
         ok: true,
         monthKey,
-        fund: { balance: 58, contributed: 60, burned: 240, subsidized: 2, subsidyCount: 1, policy: "first", votes: { both: 1, first: 2, renewal: 0 } },
+        fund: { balance: 3_058, contributed: 60, burned: 240, shopIncome: 3_000, subsidized: 2, subsidyCount: 1, policy: "first", votes: { both: 1, first: 2, renewal: 0 } },
         me: {
           googleProtected: true,
           tributeCount: 9,
@@ -2949,6 +3375,7 @@ function previewCall(action, payload) {
         if (!target || target.receivedAt) return;
         target.receivedAt = at;
         target.seal = payload.seal || "juryo";
+        Object.assign(target, (({ sealShape, sealInk }) => ({ sealShape, sealInk }))(normalizeDecorations(state.profile?.card)));
         if (payload.reward) target.reward = payload.reward;
         raw.awaitingReceipt = Math.max(0, Number(raw.awaitingReceipt || 0) - 1);
         if (payload.reward) raw.rewardCount = Number(raw.rewardCount || 0) + 1;
@@ -3018,6 +3445,13 @@ function previewCall(action, payload) {
     }
     case "age_confirm":
       return Promise.resolve({ ok: true });
+    case "decorations":
+      // 見本: 黒革・ハート・桜を持っていて、実績は牧場と対戦のものを解除している。
+      return Promise.resolve({
+        ok: true,
+        owned: [...previewOwnedDecorations],
+        achievements: ["tribute_manager_10", "tribute_manager_3", "tribute_manager_1", "tribute_wallet_3", "tribute_wallet_1", "battle_total_1", "battle_total_10", "battle_total_30"],
+      });
     case "save_profile": {
       // 見本では保存せず、画面の上でだけカードを差し替える（印の見え方を確かめるため）。
       const profile = { ...state.profile };
@@ -3039,7 +3473,7 @@ function previewCall(action, payload) {
 }
 
 function startPreview(screen) {
-  state.walletBalance = screen === "newcomer" ? 0 : 1_000;
+  state.walletBalance = screen === "newcomer" ? 0 : screen === "card" ? 18_420 : 1_000;
   const map = {
     hub: () => navigate("hub"),
     newcomer: () => navigate("hub"),
@@ -3051,6 +3485,10 @@ function startPreview(screen) {
       render();
     },
     card: () => navigate("card"),
+    recruit: () => {
+      navigate("hub");
+      openRecruit();
+    },
     "thread-payer": () => openThread("1".repeat(40)),
     "thread-manager": () => openThread("2".repeat(40)),
     "thread-pending": () => openThread("3".repeat(40)),

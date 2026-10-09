@@ -131,6 +131,21 @@ const PRODUCT_ROWS = [
   ["chat_frame_stardust", "chatFrame", 1100],
   ["chat_frame_royal_gold", "chatFrame", 1300],
   ["chat_frame_beyond", "chatFrame", 1500],
+  // お貢ぎ牧場の飾り（tribute-rules.js の DECORATION_SLOTS・tribute-deco.mjs と揃える）。売上の20%は牧場基金へ。
+  ["ranch_frame_kurokawa", "ranchFrame", 5000],
+  ["ranch_frame_kusari", "ranchFrame", 8000],
+  ["ranch_frame_bara", "ranchFrame", 10000],
+  ["ranch_frame_kinbuchi", "ranchFrame", 15000],
+  ["ranch_frame_gyokuza", "ranchFrame", 30000],
+  ["ranch_seal_square", "ranchSealShape", 3000],
+  ["ranch_seal_oval", "ranchSealShape", 4000],
+  ["ranch_seal_heart", "ranchSealShape", 5000],
+  ["ranch_seal_crown", "ranchSealShape", 6000],
+  ["ranch_seal_wax", "ranchSealShape", 8000],
+  ["ranch_ink_ai", "ranchSealInk", 1000],
+  ["ranch_ink_sumi", "ranchSealInk", 1000],
+  ["ranch_ink_sakura", "ranchSealInk", 2000],
+  ["ranch_ink_kin", "ranchSealInk", 3000],
 ];
 
 module.exports = Object.freeze(Object.fromEntries(

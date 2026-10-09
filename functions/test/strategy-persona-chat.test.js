@@ -172,7 +172,7 @@ test("the strategy chat rules accept only known effects and still reject unknown
   assert.equal(message.$other[".validate"], false);
   assert.match(index, /strategy\.js\?v=[^"]*-strategy-persona-chat-v1-retire-free-table-v1"/);
   assert.match(index, /strategy\.css\?v=[^"]*-strategy-persona-chat-v1"/);
-  assert.match(index, /online\.js\?v=[^"]*-chat-persona-v2-retire-free-table-v1"/);
+  assert.match(index, /online\.js\?v=[^"]*-chat-persona-v2-retire-free-table-v1-ranch-deco-v1"/);
   // プレビューでは対戦の開始や承諾の操作を実行しない。
   const blocked = strategy.match(/const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "([^"]+)";/)[1];
   for (const control of ["#strategyAccept", "#strategyWithdraw", "#strategyBattleStart"]) assert.ok(blocked.includes(control), control);

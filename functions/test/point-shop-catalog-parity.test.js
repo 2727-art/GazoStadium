@@ -70,6 +70,7 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
     "player-titles.js",
     "chat-cosmetics.js",
     "ai-text-training-cosmetics.js",
+    "tribute-deco.mjs",
   ]);
   const online = read("online.js");
   const topMessageId = online.match(/const TOP_MESSAGE_PRODUCT_ID = "([^"]+)"/)?.[1];
@@ -92,7 +93,7 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
     .map(({ id, type, price }) => [id, type, price])
     .sort(([firstId], [secondId]) => firstId.localeCompare(secondId));
   assert.deepEqual(browserRows, serverRows);
-  assert.equal(browserRows.length, 130);
+  assert.equal(browserRows.length, 144);
 
   const rules = JSON.parse(read("database.rules.json")).rules;
   const economyRules = rules.online.economy["$uid"];

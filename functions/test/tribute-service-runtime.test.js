@@ -61,7 +61,7 @@ class FakeQuery {
   }
 
   where(field, operator, value) {
-    assert.ok(["==", ">=", "<=", "<", "array-contains"].includes(operator), operator);
+    assert.ok(["==", ">=", "<=", "<", "array-contains", "in"].includes(operator), operator);
     return new FakeQuery(this.firestore, this.path, [...this.filters, { field, operator, value }], this.orderings, this.maximum);
   }
 
@@ -85,6 +85,7 @@ class FakeQuery {
         if (filter.operator === "<=") return candidate <= filter.value;
         if (filter.operator === "<") return candidate < filter.value;
         if (filter.operator === "array-contains") return Array.isArray(candidate) && candidate.includes(filter.value);
+        if (filter.operator === "in") return filter.value.includes(candidate);
         return candidate === filter.value;
       });
     }
@@ -1132,4 +1133,62 @@ test("today's word shows on the board for 24 hours, lifts the card in the board 
   assert.equal(nextDay.profile.wordsToday, 1, "the count resets on the next JST day");
   harness.advance(24 * 60 * 60 * 1_000);
   assert.equal((await harness.act("viewer", "board")).managers.find((card) => card.personaName === "ミオ様").word, null, "a word disappears after 24 hours");
+});
+
+test("ranch decorations and card achievements need a purchase or an unlock, reach the board, and seal looks stay as pressed", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000, viewer: 0 } });
+  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 };
+  const publicManagerId = await openManager(harness, "manager", card);
+  const save = async (extra) => {
+    harness.advance(2_100);
+    return harness.act("manager", "save_profile", { card: { ...card, ...extra }, accepting: true });
+  };
+  await rejects(save({ frame: "gyokuza" }), /持っていない飾りは保存できません/);
+  await rejects(save({ sealShape: "heart", sealInk: "shu" }), /持っていない飾りは保存できません/);
+  assert.deepEqual((await harness.act("manager", "decorations")).owned, []);
+
+  // 一度目の受け取りは、飾りを買う前の標準の印（日付印・朱）で残る。
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 30, clientRequestId: nextRequestId() });
+  const first = harness.events(contractId).at(-1);
+  await harness.act("manager", "receive", { contractId, tributeSeq: first.seq });
+
+  for (const productId of ["ranch_frame_gyokuza", "ranch_seal_heart", "ranch_ink_sakura", "chat_frame_lace"]) {
+    harness.firestore.write(`economyPurchases/manager/items/${productId}`, { productId, price: 1, createdAt: harness.now() });
+  }
+  harness.firestore.write("achievementProfiles/manager", { unlocked: { battle_total_10: START, tribute_manager_1: START }, pendingUnlocks: {} });
+  const decorations = await harness.act("manager", "decorations");
+  assert.deepEqual(decorations.owned, ["ranch_frame_gyokuza", "ranch_ink_sakura", "ranch_seal_heart"], "only ranch items are listed");
+  assert.deepEqual([...decorations.achievements].sort(), ["battle_total_10", "tribute_manager_1"]);
+  assert.deepEqual((await harness.act("payer", "decorations")).owned, [], "each person sees only their own items");
+
+  await rejects(save({ frame: "gyokuza", achievements: ["battle_total_10", "tribute_wallet_3"] }), /まだ解除していない実績/);
+  await rejects(save({ frame: "kusari" }), /持っていない飾りは保存できません/);
+  const saved = await save({ frame: "gyokuza", sealShape: "heart", sealInk: "sakura", achievements: ["battle_total_10", "battle_total_10", "tribute_manager_1"] });
+  assert.equal(saved.profile.card.frame, "gyokuza");
+  assert.deepEqual(saved.profile.card.achievements, ["battle_total_10", "tribute_manager_1"]);
+
+  await confirmAge(harness, "viewer");
+  const boardCard = (await harness.act("viewer", "board")).managers.find((entry) => entry.publicManagerId === publicManagerId);
+  assert.deepEqual(
+    { frame: boardCard.frame, sealShape: boardCard.sealShape, sealInk: boardCard.sealInk, achievements: boardCard.achievements, disclosure: boardCard.disclosure, entryFee: boardCard.entryFee },
+    { frame: "gyokuza", sealShape: "heart", sealInk: "sakura", achievements: ["battle_total_10", "tribute_manager_1"], disclosure: "nekama", entryFee: 0 },
+  );
+  assert.equal((await harness.act("viewer", "manager", { publicManagerId })).card.frame, "gyokuza");
+
+  await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 30, clientRequestId: nextRequestId() });
+  const second = harness.events(contractId).at(-1);
+  await harness.act("manager", "receive", { contractId, tributeSeq: second.seq });
+  const events = harness.events(contractId);
+  const look = (event) => ({ sealShape: event.sealShape, sealInk: event.sealInk });
+  assert.deepEqual(look(events.find((event) => event.seq === first.seq)), { sealShape: "date", sealInk: "shu" }, "an earlier receipt keeps the seal it was pressed with");
+  assert.deepEqual(look(events.find((event) => event.seq === second.seq)), { sealShape: "heart", sealInk: "sakura" });
+  const receipts = (await harness.act("payer", "receipts")).receipts;
+  assert.deepEqual(receipts.map(look), [{ sealShape: "heart", sealInk: "sakura" }, { sealShape: "date", sealInk: "shu" }]);
+  const share = await harness.act("payer", "share_info", { contractId, receiptId: second.receiptId });
+  assert.deepEqual(look(share.receipt), { sealShape: "heart", sealInk: "sakura" });
+
+  // 知らない値は標準に戻り、保存しても持ち物の確認に引っかからない。
+  const reset = await save({ frame: "<script>", sealShape: "star", sealInk: "#000" });
+  assert.deepEqual({ frame: reset.profile.card.frame, sealShape: reset.profile.card.sealShape, sealInk: reset.profile.card.sealInk }, { frame: "", sealShape: "date", sealInk: "shu" });
 });

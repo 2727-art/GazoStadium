@@ -122,6 +122,7 @@ import {
   runOnlineOpponentDestroyedTransition,
 } from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v2";
 import { createSoloHiddenWaitGuard } from "./online-solo-idle-guard.mjs?v=solo-match-cost-guard-v1";
+import { DECORATION_FUND_PERCENT, RANCH_DECORATION_PRODUCTS, sealSvg as ranchSealSvg } from "./tribute-deco.mjs?v=ranch-deco-v1";
 import {
   ONLINE_P2P_RECOVERY_PHASES,
   createOnlineP2pGenerationToken,
@@ -434,7 +435,9 @@ const SHOP_PRODUCTS = [
   ...STAMP_PRODUCTS,
   ...PLAYER_TITLE_PRODUCTS,
   ...CHAT_COSMETIC_PRODUCTS,
+  ...RANCH_DECORATION_PRODUCTS,
 ];
+const RANCH_DECORATION_TYPES = new Set(["ranchFrame", "ranchSealShape", "ranchSealInk"]);
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const SELECTION_TIME_LIMIT_MS = 10_000;
@@ -5448,6 +5451,10 @@ function renderPointShop() {
         ? `<span class="player-title-badge shop-title-preview ${titlePresentation?.className || ""}"><span aria-hidden="true">${escapeHtml(titlePresentation?.icon || "◆")}</span>${escapeHtml(product.title)}</span>`
         : product.type === "chatFrame" || product.type === "chatBackground"
           ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
+          : RANCH_DECORATION_TYPES.has(product.type)
+            ? `<div class="shop-ranch-preview">${product.type === "ranchFrame"
+              ? `<span class="tribute-deco-swatch" data-frame="${escapeHtml(product.deco)}"></span>`
+              : ranchSealSvg({ label: "受領", name: "管理人", at: Date.now(), size: 84, shape: product.type === "ranchSealShape" ? product.deco : "date", ink: product.type === "ranchSealInk" ? product.deco : "shu", rough: false })}</div>`
           : product.type === "aiTextTrainingStyle"
             ? `<div class="shop-ai-training-style-preview" data-att-panel-theme="${escapeHtml(product.id)}" data-att-message-decoration="${escapeHtml(product.id)}"><div class="shop-ai-training-style-window"><span>ROUND 1</span><strong>20</strong><div class="shop-ai-training-style-message is-doodle is-collage" data-att-doodle-layout="diagonal-banner" data-att-doodle-density="medium" data-att-doodle-part-count="2" role="img" aria-label="今日の気分で、一緒に最後までいこう"><span class="att-doodle-copy is-part-1" data-text="今日の気分で、" aria-hidden="true">今日の気分で、</span><span class="att-doodle-copy is-part-2" data-text="一緒に最後までいこう" aria-hidden="true">一緒に最後までいこう</span><i class="att-doodle-ornament is-heart" aria-hidden="true">♡</i><i class="att-doodle-ornament is-spark-a" aria-hidden="true">✦</i><i class="att-doodle-ornament is-ribbon" aria-hidden="true">୨୧</i><i class="att-doodle-meta" aria-hidden="true">R1 · 80 BPM</i></div></div><small>窓とデコ台詞を別々に組み合わせ可能 · 全画面コラージュ</small></div>`
           : `<div class="shop-message-preview"><span>✦ FAVORITE CARD FINISH</span><strong>推しカードを特別な一枚へ</strong></div>`;
@@ -5456,6 +5463,8 @@ function renderPointShop() {
       action = `<button class="button button-wide button-cyan" data-open-creator-card ${state.topMessageBusy ? "disabled" : ""}>プレミアム仕上げを選ぶ</button>`;
     } else if (owned && product.type === "aiTextTrainingStyle") {
       action = '<button class="button button-wide button-cyan" type="button" disabled>購入済み・文字コラ準備で選択</button>';
+    } else if (owned && RANCH_DECORATION_TYPES.has(product.type)) {
+      action = '<button class="button button-wide button-cyan" type="button" disabled>購入済み・牧場のカード編集で選ぶ</button>';
     } else if (owned) {
       action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${equipLimit}/${equipLimit}` : "装備する"}</button>`;
     }
@@ -5465,7 +5474,10 @@ function renderPointShop() {
         : product.type === "chatFrame" ? (product.special ? "SPECIAL CHAT FRAME" : "CHAT FRAME")
         : product.type === "chatBackground" ? "CHAT BACKGROUND"
           : product.type === "aiTextTrainingStyle" ? "AI TRAINING STYLE"
-            : "FAVORITE CARD PREMIUM";
+            : product.type === "ranchFrame" ? (product.special ? "SPECIAL RANCH FRAME" : "RANCH CARD FRAME")
+              : product.type === "ranchSealShape" ? "RANCH SEAL"
+                : product.type === "ranchSealInk" ? "RANCH SEAL INK"
+                  : "FAVORITE CARD PREMIUM";
     return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
       <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : productTypeLabel}</span><strong>${formatAnjuPay(product.price)}</strong></div>
       <h2>${escapeHtml(product.name)}</h2>${preview}
@@ -5507,6 +5519,7 @@ function renderPointShop() {
         <div class="shop-grid">${categoryProducts.map(renderProduct).join("")}</div>
       </details>`;
     }).join("");
+  const ranchShelf = (type) => RANCH_DECORATION_PRODUCTS.filter((product) => product.type === type).map(renderProduct).join("");
   const chatBackgroundProducts = CHAT_BACKGROUND_PRODUCTS.map(renderProduct).join("");
   const chatFrameProducts = CHAT_STANDARD_FRAME_PRODUCTS.map(renderProduct).join("");
   const specialChatFrameProducts = CHAT_SPECIAL_FRAME_PRODUCTS.map(renderProduct).join("");
@@ -5529,6 +5542,11 @@ function renderPointShop() {
         <p class="shop-oshi-market-shared"><strong>通常の商品棚と同じ商品です。</strong> 商品ID・購入状態・装備状態は共通のため、どちらの棚から購入しても二重購入にはなりません。</p>
         <div class="shop-oshi-market-groups">${oshiMarketCollectionGroups}</div>
       </section>
+      <section class="shop-category shop-ranch-category" id="shopRanchCategory" aria-labelledby="shopRanchTitle"><div class="shop-category-head shop-ranch-head"><div><span>OMITSUGI RANCH / ${RANCH_DECORATION_PRODUCTS.length} ITEMS</span><h2 id="shopRanchTitle">お貢ぎ牧場の飾り</h2></div><p>管理人カードの枠と、財布に押す受取印を飾ります。掲示板・招待・財布募集の画像と、財布が保存する貢ぎ報告の画像に出ます。買ったあとは、お貢ぎ牧場の管理人カードの編集で選べます（試着もそこでできます）。</p>
+        <p class="shop-ranch-fund">売上の<b>${DECORATION_FUND_PERCENT}%</b>は牧場基金に積まれ、新しい財布の献上手数料の補填に使われます。飾りは見た目だけで、掲示板の並び順・手数料・番付には影響しません。</p></div>
+        <h3 class="shop-ranch-sub">カードの枠</h3><div class="shop-grid">${ranchShelf("ranchFrame")}</div>
+        <h3 class="shop-ranch-sub">受取印の形</h3><div class="shop-grid">${ranchShelf("ranchSealShape")}</div>
+        <h3 class="shop-ranch-sub">朱肉の色</h3><div class="shop-grid">${ranchShelf("ranchSealInk")}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>FAVORITE CARD</span><h2>推しカードの仕上げ</h2></div><p>推しカードに関する選択と解放は、自分のカードを見ながら行える編集ルームへまとめました。</p></div>
         <div class="shop-free-card-callout"><div><strong>推しカード編集ルームへ移動しました</strong><span>無料テーマもプレミアム仕上げも、自分のカードで試してから選べます。プレミアム3種の500 Pay買い切り解放も編集ルーム内で行います。</span></div><button class="button button-cyan" type="button" data-open-creator-card>推しカード編集へ</button></div></section>
       <section class="shop-category shop-ai-training-category"><div class="shop-category-head"><div><span>AI TEXT TRAINING / ${AI_TEXT_TRAINING_STYLE_PRODUCTS.length} SETS</span><h2>文字コラトレーニング演出セット</h2></div><p>買い切りで、画像ウィンドウとセリフ装飾を1種ずつ解放します。購入済みセット同士は文字コラ準備画面で自由に組み合わせられ、標準を含め最大25通り。BPM・運動結果・安全操作には影響しません。</p></div><div class="shop-grid">${aiTextTrainingStyleProducts}</div></section>
@@ -7925,6 +7943,17 @@ async function purchaseShopProduct(productId) {
     );
     if (!confirmed) return;
   }
+  if (RANCH_DECORATION_TYPES.has(product.type)) {
+    const after = Math.max(0, state.economy.points - product.price);
+    const confirmed = window.confirm(
+      `お貢ぎ牧場の飾り「${product.name}」を購入しますか？\n\n`
+      + `現在残高: ${formatAnjuPay(state.economy.points)}\n`
+      + `商品価格: ${formatAnjuPay(product.price)}\n`
+      + `購入後残高: ${formatAnjuPay(after)}\n\n`
+      + `買い切りで、お貢ぎ牧場の管理人カードの編集で選べます。売上の${DECORATION_FUND_PERCENT}%は牧場基金に積まれます。`,
+    );
+    if (!confirmed) return;
+  }
   const dateKey = currentDailyDateKey();
   const expectedState = state;
   const expectedUid = expectedState.uid;
@@ -7963,6 +7992,7 @@ async function purchaseShopProduct(productId) {
     if (result.outcome === "purchased" && isEquipped && !wasEquipped) showToast(`「${product.reaction || product.title || product.name}」を購入し、装備しました。`);
     else if (result.outcome === "purchased" && product.type === "feature") showToast("推しカードのプレミアム仕上げ3種を解放しました。カードを更新して飾るまでは、公開中のカードはそのままです。");
     else if (result.outcome === "purchased" && product.type === "aiTextTrainingStyle") showToast(`「${product.name}」を解放しました。文字コラトレーニングの準備画面で、窓とセリフを別々に試着・装着できます。`);
+    else if (result.outcome === "purchased" && RANCH_DECORATION_TYPES.has(product.type)) showToast(`「${product.name}」を手に入れました。お貢ぎ牧場の管理人カードの編集で選べます。`);
     else if (result.outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
     else if (result.outcome === "owned") showToast("この商品は購入済みです。");
     else showToast("AnjuPay残高が不足しています。");

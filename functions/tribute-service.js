@@ -23,6 +23,10 @@ const {
   normalizeSeals,
   sealFor,
   SEAL_IDS,
+  DECORATION_PRODUCT_IDS,
+  normalizeDecorations,
+  normalizeCardAchievements,
+  requiredDecorationProducts,
   X_HANDLE_PATTERN,
   normalizeAvatar,
   normalizeWalletName,
@@ -50,6 +54,7 @@ const {
 const {
   ACHIEVEMENT_BY_ID,
   eligibleAchievementIds,
+  normalizeAchievementProfile,
   normalizeTributeStats,
   unlockAchievements,
 } = require("./achievements");
@@ -84,6 +89,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "receive",
   "share_info",
   "set_word",
+  "decorations",
   "mark_read",
   "report_user",
   "receipts",
@@ -213,6 +219,17 @@ function activeWord(profile, now) {
   return word.text && word.at > 0 && now - word.at < LIMITS.todayWordTtlMs ? { text: word.text, at: word.at } : null;
 }
 
+// 牧場のカードに出す実績。いまの実績一覧にあるものだけを返す。
+function cardAchievements(value) {
+  return normalizeCardAchievements(value).filter((id) => ACHIEVEMENT_BY_ID.has(id));
+}
+
+// 受取印は、押した時の形と朱肉で残す。記録のない古い印は日付印・朱になる。
+function sealLook(value) {
+  const { sealShape, sealInk } = normalizeDecorations(value);
+  return { sealShape, sealInk };
+}
+
 function publicCard(profile, monthKey, now) {
   const card = object(profile.card);
   return {
@@ -225,6 +242,8 @@ function publicCard(profile, monthKey, now) {
     sigil: integer(card.sigil, 0, 5, 0),
     avatar: normalizeAvatar(card.avatar),
     seals: normalizeSeals(card.seals),
+    ...normalizeDecorations(card),
+    achievements: cardAchievements(card.achievements),
     reportConsent: card.reportConsent === true,
     word: activeWord(profile, now),
     xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
@@ -407,6 +426,7 @@ function createTributeService(deps) {
   const reportRef = (reportId) => firestore.collection("tributeReports").doc(reportId);
   const achievementStatsRef = (uid) => firestore.collection("tributeAchievementStats").doc(uid);
   const achievementProfileRef = (uid) => firestore.collection("achievementProfiles").doc(uid);
+  const purchaseRef = (uid, productId) => firestore.collection("economyPurchases").doc(uid).collection("items").doc(productId);
 
   function requireContractId(value) {
     const contractId = String(value || "");
@@ -1287,6 +1307,17 @@ function createTributeService(deps) {
         const result = normalizeManagerCard({ ...data.card, accepting: data.accepting === true });
         if (result.error) fail("invalid-argument", result.error);
         const { accepting: _accepting, ...cardValues } = result.card;
+        // 飾りは買ったものだけ、実績は解除したものだけをカードに出せる。
+        const purchases = await Promise.all(requiredDecorationProducts(cardValues).map((productId) => transaction.get(purchaseRef(uid, productId))));
+        if (purchases.some((snapshot) => !snapshot.exists)) {
+          fail("failed-precondition", "持っていない飾りは保存できません。AnjuPayストアで買ってから選んでください。");
+        }
+        if (cardValues.achievements.length) {
+          const unlocked = normalizeAchievementProfile((await transaction.get(achievementProfileRef(uid))).data()).unlocked;
+          if (cardValues.achievements.some((id) => !unlocked[id] || !ACHIEVEMENT_BY_ID.has(id))) {
+            fail("failed-precondition", "まだ解除していない実績は、カードに出せません。");
+          }
+        }
         card = cardValues;
         patch.card = cardValues;
         patch.cardUpdatedAt = now;
@@ -1304,6 +1335,25 @@ function createTributeService(deps) {
     const monthKey = jstMonthKey(now);
     const profile = readProfile({ exists: true, data: () => saved });
     return { ok: true, profile: ownProfileView(profile, monthKey, now) };
+  }
+
+  // 管理人カードの編集で使う、持っている牧場の飾りと解除済みの実績。編集を開いた時だけ読む（書き込まない）。
+  async function decorationsAction(uid) {
+    requireAge(await readOwnProfile(uid));
+    const [purchases, achievementSnapshot] = await Promise.all([
+      firestore.collection("economyPurchases").doc(uid).collection("items")
+        .where("productId", "in", [...DECORATION_PRODUCT_IDS])
+        .get(),
+      achievementProfileRef(uid).get(),
+    ]);
+    const owned = purchases.docs
+      .map((document) => String(object(document.data()).productId || ""))
+      .filter((productId) => DECORATION_PRODUCT_IDS.includes(productId));
+    const unlocked = normalizeAchievementProfile(achievementSnapshot.data()).unlocked;
+    const achievements = Object.keys(unlocked)
+      .filter((id) => ACHIEVEMENT_BY_ID.has(id))
+      .sort((left, right) => unlocked[right] - unlocked[left] || left.localeCompare(right));
+    return { ok: true, owned: [...new Set(owned)].sort(), achievements };
   }
 
   // 今日のひとこと。管理人カードのある人だけ、30文字まで・24時間・日本時間の1日3回まで。
@@ -2012,7 +2062,7 @@ function createTributeService(deps) {
         if (normalized.error) fail("invalid-argument", normalized.error);
         const reward = normalized.reward;
         const seal = sealFor(data?.seal, { seals: ctx.profiles.manager.value.card?.seals, ngWords: ctx.contract.ngWords });
-        const marks = { receivedAt: ctx.now, seal, ...(reward ? { reward } : {}) };
+        const marks = { receivedAt: ctx.now, seal, ...sealLook(ctx.profiles.manager.value.card), ...(reward ? { reward } : {}) };
         ctx.extraWrites.push((transaction) => transaction.update(eventRef(ctx.contractId, extra.seq), marks));
         if (extra.receiptExists) {
           ctx.extraWrites.push((transaction) => transaction.update(receiptRef(ctx.payerUid, extra.receiptId), marks));
@@ -2158,6 +2208,7 @@ function createTributeService(deps) {
         receivedAt: integer(value.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0),
         reward: typeof value.reward === "string" && /^[a-z_]{1,24}$/.test(value.reward) ? value.reward : "",
         seal: SEAL_IDS.includes(value.seal) ? value.seal : "",
+        ...sealLook(value),
         collarNo: integer(value.collarNo, 0, Number.MAX_SAFE_INTEGER, 0),
         pairCount: integer(value.pairCount, 0, Number.MAX_SAFE_INTEGER, 0),
         createdAt: integer(value.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -2197,6 +2248,7 @@ function createTributeService(deps) {
         createdAt: integer(stored.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
         receivedAt: integer(stored.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0),
         seal: SEAL_IDS.includes(stored.seal) ? stored.seal : "",
+        ...sealLook(stored),
         reward: typeof stored.reward === "string" && /^[a-z_]{1,24}$/.test(stored.reward) ? stored.reward : "",
       }
       : null;
@@ -2319,6 +2371,7 @@ function createTributeService(deps) {
         balance: integer(fund.balance, 0, Number.MAX_SAFE_INTEGER, 0),
         contributed: integer(fund.contributed, 0, Number.MAX_SAFE_INTEGER, 0),
         burned: integer(fund.burned, 0, Number.MAX_SAFE_INTEGER, 0),
+        shopIncome: integer(fund.shopIncome, 0, Number.MAX_SAFE_INTEGER, 0),
         subsidized: integer(fund.subsidized, 0, Number.MAX_SAFE_INTEGER, 0),
         subsidyCount: integer(fund.subsidyCount, 0, Number.MAX_SAFE_INTEGER, 0),
         policy: fundPolicy(fund),
@@ -2532,6 +2585,7 @@ function createTributeService(deps) {
       case "state": return stateAction(uid);
       case "age_confirm": return ageConfirmAction(uid, data);
       case "save_profile": return saveProfileAction(uid, data);
+      case "decorations": return decorationsAction(uid);
       case "board": return boardAction(uid, data);
       case "manager": return managerAction(uid, data);
       case "apply": return applyAction(uid, data);

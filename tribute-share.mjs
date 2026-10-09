@@ -1,10 +1,24 @@
 // お貢ぎ牧場の貢ぎ報告の画像と受取印。画像は財布が自分で作る時だけ、この端末の中で描く（サーバーへは送らない）。
 // URL は入れず、「AnjuPay・換金不可・アプリ内ポイント」の表記は必ず入れる。見た目は牧場のもので、実在の決済サービスには似せない。
 
+import {
+  CROWN_JEWELS,
+  CROWN_PATH,
+  HEART_PATH,
+  inkColor,
+  mixColor,
+  normalizeDecorations,
+  sealDate,
+  sealSvg,
+  sealTextLayout,
+  waxPoints,
+} from "./tribute-deco.mjs?v=ranch-deco-v1";
+
 export const SHARE_WIDTH = 1080;
 export const SHARE_HEIGHT = 1350;
 export const SHARE_TEXT = "#貢ぎ報告 #お貢ぎ牧場";
-export const SEAL_INK = Object.freeze({ paper: "#d3261f", dark: "#ff5a4e" });
+export const SEAL_INK = Object.freeze({ paper: inkColor("shu", "paper"), dark: inkColor("shu", "dark") });
+export { sealSvg };
 
 const SANS = '"Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif';
 const MINCHO = '"Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif';
@@ -21,54 +35,8 @@ const INK = "#2a2230";
 const GREEN = "#3ddc97";
 const DISCLOSURE_COLORS = Object.freeze({ nekama: "#3aa0d8", as_is: "#8a8290", undisclosed: "#8a8290" });
 
-// ───────────── 受取印（日付印）─────────────
-// 上段に印の言葉、中段に日付、下段に管理人名。300×300 の座標で描き、SVG と canvas で同じ形にする。
-
-function sealTopFont(label) {
-  const length = Array.from(label).length;
-  return length >= 6 ? 30 : length >= 4 ? 40 : 52;
-}
-
-function sealDate(timestamp) {
-  const parts = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "2-digit", month: "2-digit", day: "2-digit" })
-    .formatToParts(new Date(Number(timestamp) || Date.now()));
-  const get = (type) => parts.find((part) => part.type === type)?.value || "";
-  return `${get("year")}.${get("month")}.${get("day")}`;
-}
-
-function escapeXml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
-}
-
-let sealSerial = 0;
-
-// rough: インクのかすれ（SVG フィルター）を付けるか。スレッドの小さな印は、描く負担を軽くするため付けない。
-export function sealSvg({ label, name, at, size = 120, ink = SEAL_INK.dark, rough = true }) {
-  const id = `tribute-seal-ink-${(sealSerial += 1)}`;
-  const top = Array.from(String(label || "受領")).slice(0, 8).join("");
-  const length = Array.from(top).length;
-  const fit = length >= 6 ? ' textLength="226" lengthAdjust="spacingAndGlyphs"' : "";
-  const owner = Array.from(String(name || "管理人様")).slice(0, 6).join("");
-  const ownerFit = Array.from(owner).length >= 5 ? ' textLength="200" lengthAdjust="spacingAndGlyphs"' : "";
-  return `<svg class="tribute-seal" width="${size}" height="${size}" viewBox="0 0 300 300" aria-hidden="true" focusable="false">
-    ${rough ? `<defs><filter id="${id}" x="-5%" y="-5%" width="110%" height="110%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" result="noise"/>
-      <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G" result="rough"/>
-      <feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="3" seed="2" result="blotch"/>
-      <feColorMatrix in="blotch" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.2 1.45" result="mask"/>
-      <feComposite in="rough" in2="mask" operator="in"/>
-    </filter></defs>` : ""}
-    <g ${rough ? `filter="url(#${id})" ` : ""}fill="none" stroke="${ink}">
-      <circle cx="150" cy="150" r="138" stroke-width="10"/>
-      <line x1="18" y1="112" x2="282" y2="112" stroke-width="6"/><line x1="18" y1="188" x2="282" y2="188" stroke-width="6"/>
-      <g fill="${ink}" stroke="none" text-anchor="middle">
-        <text x="150" y="${length >= 6 ? 92 : 98}" font-family='${MINCHO}' font-weight="800" font-size="${sealTopFont(top)}"${fit}>${escapeXml(top)}</text>
-        <text x="150" y="171" font-family='${NUM}' font-weight="600" font-size="54" letter-spacing="2">${escapeXml(sealDate(at))}</text>
-        <text x="150" y="246" font-family='${MINCHO}' font-weight="800" font-size="44"${ownerFit}>${escapeXml(owner)}</text>
-      </g>
-    </g>
-  </svg>`;
-}
+// ───────────── 受取印 ─────────────
+// 形と文字の位置は tribute-deco.mjs と同じ（画面の SVG と、画像の canvas で同じ印にする）。
 
 // canvas 用。インクのかすれは、小さな点を抜いて表す（毎回同じ形になるよう、決まった種から作る）。
 function seededRandom(seed) {
@@ -81,56 +49,164 @@ function seededRandom(seed) {
   };
 }
 
-function drawSeal(ctx, { x, y, size, rotation = 0, label, name, at, ink, multiply = false, seed = 7 }) {
+function sealTexts(seal, layout, at) {
+  seal.textAlign = "center";
+  seal.font = `800 ${layout.label.size}px ${MINCHO}`;
+  seal.fillText(layout.label.text, 150, layout.label.y, layout.label.width);
+  seal.font = `600 ${layout.date.size}px ${NUM}`;
+  seal.fillText(sealDate(at), 150, layout.date.y, 250);
+  seal.font = `800 ${layout.name.size}px ${MINCHO}`;
+  seal.fillText(layout.name.text, 150, layout.name.y, layout.name.width);
+}
+
+function strokeLine(seal, x1, y1, x2, y2, width) {
+  seal.lineWidth = width;
+  seal.beginPath();
+  seal.moveTo(x1, y1);
+  seal.lineTo(x2, y2);
+  seal.stroke();
+}
+
+function sealOutline(seal, shape) {
+  seal.lineJoin = "round";
+  if (shape === "square") {
+    seal.lineWidth = 12;
+    roundRectPath(seal, 20, 20, 260, 260, 12);
+    seal.stroke();
+    seal.lineWidth = 3;
+    roundRectPath(seal, 38, 38, 224, 224, 4);
+    seal.stroke();
+    strokeLine(seal, 38, 94, 262, 94, 3);
+    strokeLine(seal, 38, 210, 262, 210, 3);
+  } else if (shape === "oval") {
+    seal.lineWidth = 10;
+    seal.beginPath();
+    seal.ellipse(150, 150, 138, 104, 0, 0, Math.PI * 2);
+    seal.stroke();
+    seal.lineWidth = 2.5;
+    seal.beginPath();
+    seal.ellipse(150, 150, 122, 88, 0, 0, Math.PI * 2);
+    seal.stroke();
+    strokeLine(seal, 40, 154, 260, 154, 3);
+  } else if (shape === "heart") {
+    const heart = new Path2D(HEART_PATH);
+    seal.lineWidth = 10;
+    seal.stroke(heart);
+    seal.save();
+    seal.translate(150, 150);
+    seal.scale(0.87, 0.87);
+    seal.translate(-150, -150);
+    seal.lineWidth = 3 / 0.87;
+    seal.stroke(heart);
+    seal.restore();
+  } else if (shape === "crown") {
+    seal.lineWidth = 10;
+    seal.beginPath();
+    seal.arc(150, 172, 118, 0, Math.PI * 2);
+    seal.stroke();
+    seal.lineWidth = 2.5;
+    seal.beginPath();
+    seal.arc(150, 172, 104, 0, Math.PI * 2);
+    seal.stroke();
+    strokeLine(seal, 52, 186, 248, 186, 3);
+    const crown = new Path2D(CROWN_PATH);
+    seal.lineWidth = 2;
+    seal.fill(crown);
+    seal.stroke(crown);
+    for (const [x, y] of CROWN_JEWELS) {
+      seal.beginPath();
+      seal.arc(x, y, 7, 0, Math.PI * 2);
+      seal.fill();
+    }
+  } else {
+    seal.lineWidth = 10;
+    seal.beginPath();
+    seal.arc(150, 150, 138, 0, Math.PI * 2);
+    seal.stroke();
+    strokeLine(seal, 18, 112, 282, 112, 6);
+    strokeLine(seal, 18, 188, 282, 188, 6);
+  }
+}
+
+// 蝋封。朱肉の色を蝋の色にして、文字は浮き彫りにする（かすれは付けない）。
+function drawWax(seal, { ink, layout, at }) {
+  const base = inkColor(ink, "paper");
+  const points = waxPoints();
+  const fill = seal.createRadialGradient(108, 90, 0, 108, 90, 240);
+  fill.addColorStop(0, mixColor(base, "#ffffff", 0.32));
+  fill.addColorStop(0.55, base);
+  fill.addColorStop(1, mixColor(base, "#000000", 0.45));
+  seal.beginPath();
+  points.forEach(([x, y], index) => (index ? seal.lineTo(x, y) : seal.moveTo(x, y)));
+  seal.closePath();
+  seal.fillStyle = fill;
+  seal.fill();
+  seal.lineWidth = 3;
+  seal.strokeStyle = ink === "sumi" ? "rgba(255, 255, 255, 0.28)" : mixColor(base, "#000000", 0.3);
+  seal.stroke();
+  seal.lineWidth = 7;
+  seal.strokeStyle = mixColor(base, "#000000", 0.38);
+  seal.beginPath();
+  seal.arc(150, 150, 98, 0, Math.PI * 2);
+  seal.stroke();
+  seal.globalAlpha = 0.6;
+  seal.lineWidth = 2;
+  seal.strokeStyle = mixColor(base, "#ffffff", 0.3);
+  seal.beginPath();
+  seal.arc(148.4, 148.4, 98, 0, Math.PI * 2);
+  seal.stroke();
+  seal.globalAlpha = 1;
+  seal.fillStyle = mixColor(base, "#000000", 0.42);
+  sealTexts(seal, layout, at);
+  seal.save();
+  seal.globalAlpha = 0.55;
+  seal.translate(-1.6, -1.6);
+  seal.fillStyle = mixColor(base, "#ffffff", 0.35);
+  sealTexts(seal, layout, at);
+  seal.restore();
+}
+
+// rough: かすれを付けるか（財布募集の画像では、読みやすさを優先して付けない）。
+function drawSeal(ctx, { x, y, size, rotation = 0, label, name, at, shape, ink, surface = "dark", multiply = false, seed = 7, rough = true }) {
+  const look = normalizeDecorations({ sealShape: shape, sealInk: ink });
+  const layout = sealTextLayout(look.sealShape, label, name);
   const scale = 2;
   const sealCanvas = document.createElement("canvas");
   sealCanvas.width = 300 * scale;
   sealCanvas.height = 300 * scale;
   const seal = sealCanvas.getContext("2d");
   seal.scale(scale, scale);
-  seal.strokeStyle = ink;
-  seal.fillStyle = ink;
-  seal.lineWidth = 10;
-  seal.beginPath();
-  seal.arc(150, 150, 138, 0, Math.PI * 2);
-  seal.stroke();
-  seal.lineWidth = 6;
-  for (const lineY of [112, 188]) {
-    seal.beginPath();
-    seal.moveTo(18, lineY);
-    seal.lineTo(282, lineY);
-    seal.stroke();
+  if (look.sealShape === "wax") {
+    drawWax(seal, { ink: look.sealInk, layout, at });
+  } else {
+    const color = inkColor(look.sealInk, surface);
+    seal.strokeStyle = color;
+    seal.fillStyle = color;
+    sealOutline(seal, look.sealShape);
+    sealTexts(seal, layout, at);
   }
-  seal.textAlign = "center";
-  const top = Array.from(String(label || "受領")).slice(0, 8).join("");
-  const length = Array.from(top).length;
-  seal.font = `800 ${sealTopFont(top)}px ${MINCHO}`;
-  seal.fillText(top, 150, length >= 6 ? 92 : 98, 226);
-  seal.font = `600 54px ${NUM}`;
-  seal.fillText(sealDate(at), 150, 171, 250);
-  const owner = Array.from(String(name || "管理人様")).slice(0, 6).join("");
-  seal.font = `800 44px ${MINCHO}`;
-  seal.fillText(owner, 150, 246, 200);
-  // かすれ: 大きめのむらと細かい点を抜く。
-  const random = seededRandom(seed);
-  seal.globalCompositeOperation = "destination-out";
-  for (let index = 0; index < 26; index += 1) {
-    seal.globalAlpha = 0.25 + random() * 0.45;
-    seal.beginPath();
-    seal.arc(random() * 300, random() * 300, 6 + random() * 22, 0, Math.PI * 2);
-    seal.fill();
-  }
-  seal.globalAlpha = 1;
-  for (let index = 0; index < 900; index += 1) {
-    seal.beginPath();
-    seal.arc(random() * 300, random() * 300, 0.6 + random() * 1.6, 0, Math.PI * 2);
-    seal.fill();
+  if (look.sealShape !== "wax" && rough) {
+    // かすれ: 大きめのむらと細かい点を抜く。
+    const random = seededRandom(seed);
+    seal.globalCompositeOperation = "destination-out";
+    for (let index = 0; index < 26; index += 1) {
+      seal.globalAlpha = 0.25 + random() * 0.45;
+      seal.beginPath();
+      seal.arc(random() * 300, random() * 300, 6 + random() * 22, 0, Math.PI * 2);
+      seal.fill();
+    }
+    seal.globalAlpha = 1;
+    for (let index = 0; index < 900; index += 1) {
+      seal.beginPath();
+      seal.arc(random() * 300, random() * 300, 0.6 + random() * 1.6, 0, Math.PI * 2);
+      seal.fill();
+    }
   }
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate((rotation * Math.PI) / 180);
-  if (multiply) ctx.globalCompositeOperation = "multiply";
-  ctx.globalAlpha = 0.94;
+  if (multiply && look.sealShape !== "wax") ctx.globalCompositeOperation = "multiply";
+  ctx.globalAlpha = look.sealShape === "wax" ? 1 : 0.94;
   ctx.drawImage(sealCanvas, -size / 2, -size / 2, size, size);
   ctx.restore();
 }
@@ -617,7 +693,9 @@ export async function renderReceiptImage(data, options = {}) {
       label: data.sealLabel,
       name: manager.personaName,
       at: data.receivedAt,
-      ink: SEAL_INK.paper,
+      shape: data.sealShape,
+      ink: data.sealInk,
+      surface: "paper",
       multiply: true,
       seed: Number(data.receiptNo) || 7,
     });
@@ -837,7 +915,8 @@ export async function renderExcerptImage(data, options = {}) {
           label: item.sealLabel,
           name: manager.personaName,
           at: item.receivedAt,
-          ink: SEAL_INK.dark,
+          shape: item.sealShape,
+          ink: item.sealInk,
           seed: Number(item.seq) || 3,
         });
       }
@@ -867,6 +946,520 @@ export async function renderExcerptImage(data, options = {}) {
     }
     y += height + gap;
   }
+  paintFooter(ctx);
+  return canvas;
+}
+
+// ───────────── 財布募集の画像 ─────────────
+// 管理人が自分のカードを X に貼るための画像。管理人の端末の中で描き、サーバーへは送らない。
+// URL は入れない（招待リンクは投稿の文に付ける）。中の人の札は略さず全文で入れ、上限と解約は財布が握ることを必ず書く。
+// 枠は SVG の画像を使わず canvas で描く（端末によっては、画像を重ねた canvas を書き出せなくなるため）。
+
+const RECRUIT_CARD = Object.freeze({ x: 64, y: 206, width: 952, height: 880 });
+const PANEL = "#17121c";
+
+// 辺ごとの飾り。ローカルの x が辺に沿い、y が内側へ向くように回して描く。
+function eachEdge(ctx, box, draw) {
+  const edges = [
+    { x: box.x, y: box.y, angle: 0, length: box.width },
+    { x: box.x + box.width, y: box.y, angle: Math.PI / 2, length: box.height },
+    { x: box.x + box.width, y: box.y + box.height, angle: Math.PI, length: box.width },
+    { x: box.x, y: box.y + box.height, angle: -Math.PI / 2, length: box.height },
+  ];
+  for (const edge of edges) {
+    ctx.save();
+    ctx.translate(edge.x, edge.y);
+    ctx.rotate(edge.angle);
+    draw(edge.length);
+    ctx.restore();
+  }
+}
+
+function eachCorner(ctx, box, inset, draw) {
+  const corners = [
+    { x: box.x + inset, y: box.y + inset, angle: 0 },
+    { x: box.x + box.width - inset, y: box.y + inset, angle: Math.PI / 2 },
+    { x: box.x + box.width - inset, y: box.y + box.height - inset, angle: Math.PI },
+    { x: box.x + inset, y: box.y + box.height - inset, angle: -Math.PI / 2 },
+  ];
+  corners.forEach((corner, index) => {
+    ctx.save();
+    ctx.translate(corner.x, corner.y);
+    ctx.rotate(corner.angle);
+    draw(index);
+    ctx.restore();
+  });
+}
+
+function goldGradient(ctx, box) {
+  const gold = ctx.createLinearGradient(box.x, box.y, box.x + box.width, box.y + box.height);
+  gold.addColorStop(0, "#7d5d1c");
+  gold.addColorStop(0.22, "#f7e4a6");
+  gold.addColorStop(0.45, "#b8892b");
+  gold.addColorStop(0.62, "#fff2c4");
+  gold.addColorStop(0.82, "#9a7224");
+  gold.addColorStop(1, "#f0d48a");
+  return gold;
+}
+
+function strokeMetal(ctx, path) {
+  for (const [width, color, alpha] of [[9, "#3e424b", 1], [5, "#cfd4dd", 1], [1.6, "#ffffff", 0.7]]) {
+    ctx.lineWidth = width;
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = alpha;
+    path();
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function paintRose(ctx) {
+  ctx.save();
+  ctx.scale(1.7, 1.7);
+  ctx.translate(-20, -20);
+  ctx.fillStyle = "#3f7d4e";
+  ctx.fill(new Path2D("M6 30 Q1 21 11 20 Q12 29 6 30Z"));
+  ctx.fill(new Path2D("M30 35 Q39 31 35 23 Q28 27 30 35Z"));
+  ctx.fillStyle = "#b0153f";
+  ctx.beginPath();
+  ctx.arc(20, 20, 11.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = "#e2557b";
+  ctx.stroke(new Path2D("M11 15 Q20 5 29 15"));
+  ctx.lineWidth = 1.7;
+  ctx.strokeStyle = "#6e0a26";
+  ctx.stroke(new Path2D("M20 11.5 a8.5 8.5 0 1 1 -7.4 12.4 M20 15.5 a4.8 4.8 0 1 1 -4.2 7 M20 19.5 a1.6 1.6 0 1 1 1.1 1.3"));
+  ctx.restore();
+}
+
+function paintCrown(ctx, centerX, top, width) {
+  const scale = width / 58;
+  ctx.save();
+  ctx.translate(centerX - width / 2, top);
+  ctx.scale(scale, scale);
+  ctx.shadowColor = "rgba(0, 0, 0, 0.6)";
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 2;
+  const fill = ctx.createLinearGradient(0, 0, 0, 36);
+  fill.addColorStop(0, "#fff4c9");
+  fill.addColorStop(0.55, "#e2b04f");
+  fill.addColorStop(1, "#8a6a24");
+  const crown = new Path2D("M8 32 L4 8 L17 19 L29 3 L41 19 L54 8 L50 32 Z");
+  ctx.fillStyle = fill;
+  ctx.fill(crown);
+  ctx.shadowColor = "transparent";
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = "#5c4210";
+  ctx.stroke(crown);
+  ctx.fillStyle = "#c99a3c";
+  roundRectPath(ctx, 8, 29, 42, 5, 1.5);
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  for (const [x, y, radius, color] of [[29, 22, 3.4, "#d3264f"], [17, 24, 2.4, "#3a7bd5"], [41, 24, 2.4, "#3a7bd5"], [4, 8, 2.4, "#fff4c9"], [29, 3, 2.6, "#fff4c9"], [54, 8, 2.4, "#fff4c9"]]) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// カードの枠と背景。中の文字の色と位置は、どの枠でも同じ。
+function paintFrame(ctx, frame, box, color) {
+  const { x, y, width, height } = box;
+  ctx.save();
+  if (frame === "kurokawa") {
+    const leather = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
+    leather.addColorStop(0, "#2c201c");
+    leather.addColorStop(0.58, "#171112");
+    leather.addColorStop(1, "#120d0f");
+    roundRectPath(ctx, x, y, width, height, 30);
+    ctx.fillStyle = leather;
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    const random = seededRandom(11);
+    for (let index = 0; index < 2_400; index += 1) {
+      ctx.fillStyle = random() < 0.5 ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.4)";
+      ctx.fillRect(x + random() * width, y + random() * height, 1.5, 1.5);
+    }
+    ctx.restore();
+    roundRectPath(ctx, x, y, width, height, 30);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#000";
+    ctx.stroke();
+    ctx.setLineDash([12, 8]);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(232, 194, 122, 0.62)";
+    roundRectPath(ctx, x + 14, y + 14, width - 28, height - 28, 22);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else if (frame === "kusari") {
+    const steel = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
+    steel.addColorStop(0, "#23262e");
+    steel.addColorStop(0.6, "#15161b");
+    steel.addColorStop(1, "#15161b");
+    roundRectPath(ctx, x, y, width, height, 8);
+    ctx.fillStyle = steel;
+    ctx.fill();
+    const band = 30;
+    eachEdge(ctx, box, (length) => {
+      const usable = length - band * 2;
+      const pairs = Math.max(1, Math.round(usable / 50));
+      const pitch = usable / pairs;
+      for (let index = 0; index < pairs; index += 1) {
+        const start = band + index * pitch;
+        strokeMetal(ctx, () => {
+          ctx.beginPath();
+          ctx.moveTo(start - 4, band / 2);
+          ctx.lineTo(start + pitch * 0.3, band / 2);
+        });
+        strokeMetal(ctx, () => {
+          ctx.beginPath();
+          ctx.ellipse(start + pitch * 0.64, band / 2, pitch * 0.34, 10, 0, 0, Math.PI * 2);
+        });
+      }
+    });
+    eachCorner(ctx, box, band / 2, () => strokeMetal(ctx, () => {
+      ctx.beginPath();
+      ctx.arc(0, 0, 11, 0, Math.PI * 2);
+    }));
+  } else if (frame === "bara") {
+    const wine = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
+    wine.addColorStop(0, "#3a0f1f");
+    wine.addColorStop(0.62, "#1c0a12");
+    wine.addColorStop(1, "#1c0a12");
+    roundRectPath(ctx, x, y, width, height, 8);
+    ctx.fillStyle = wine;
+    ctx.fill();
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, width * 0.7);
+    glow.addColorStop(0, "rgba(176, 21, 63, 0.4)");
+    glow.addColorStop(1, "rgba(176, 21, 63, 0)");
+    ctx.fillStyle = glow;
+    ctx.fill();
+    eachEdge(ctx, box, (length) => {
+      ctx.strokeStyle = "rgba(245, 228, 234, 0.85)";
+      ctx.fillStyle = "rgba(245, 228, 234, 0.85)";
+      const count = Math.round(length / 22);
+      const pitch = length / count;
+      ctx.lineWidth = 3;
+      for (let index = 0; index < count; index += 1) {
+        const center = index * pitch + pitch / 2;
+        ctx.beginPath();
+        ctx.arc(center, 13, pitch / 2 - 1, Math.PI, 0);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(center, 14, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, 24);
+      ctx.lineTo(length, 24);
+      ctx.stroke();
+      ctx.setLineDash([3, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, 30);
+      ctx.lineTo(length, 30);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+    eachCorner(ctx, box, 4, (index) => {
+      if (index === 0 || index === 2) paintRose(ctx);
+    });
+  } else if (frame === "kinbuchi") {
+    roundRectPath(ctx, x, y, width, height, 4);
+    const inside = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
+    inside.addColorStop(0, "#221a14");
+    inside.addColorStop(0.6, "#141016");
+    inside.addColorStop(1, "#141016");
+    ctx.fillStyle = inside;
+    ctx.fill();
+    const tint = ctx.createRadialGradient(x + width / 2, y, 0, x + width / 2, y, width * 0.7);
+    tint.addColorStop(0, "rgba(232, 194, 122, 0.16)");
+    tint.addColorStop(1, "rgba(232, 194, 122, 0)");
+    ctx.fillStyle = tint;
+    ctx.fill();
+    ctx.lineWidth = 22;
+    ctx.strokeStyle = goldGradient(ctx, box);
+    ctx.strokeRect(x + 11, y + 11, width - 22, height - 22);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.strokeRect(x + 24, y + 24, width - 48, height - 48);
+    ctx.strokeStyle = "rgba(232, 194, 122, 0.55)";
+    ctx.strokeRect(x + 28, y + 28, width - 56, height - 56);
+    const flourish = new Path2D("M3 3 H24 Q30 3 30 9 Q30 14 25 14 Q21 14 21 10 M3 3 V24 Q3 30 9 30 Q14 30 14 25 Q14 21 10 21");
+    eachCorner(ctx, box, 34, () => {
+      ctx.scale(2, 2);
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "#e9c46f";
+      ctx.stroke(flourish);
+      ctx.fillStyle = "#f6dfa6";
+      ctx.beginPath();
+      ctx.arc(9, 9, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  } else if (frame === "gyokuza") {
+    roundRectPath(ctx, x, y, width, height, 30);
+    const velvet = ctx.createRadialGradient(x + width / 2, y, 0, x + width / 2, y, width * 1.05);
+    velvet.addColorStop(0, "#6a1326");
+    velvet.addColorStop(0.58, "#2c0812");
+    velvet.addColorStop(1, "#190409");
+    ctx.fillStyle = velvet;
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.022)";
+    for (let stripe = x; stripe < x + width; stripe += 5) ctx.fillRect(stripe, y, 2, height);
+    const shine = ctx.createLinearGradient(x, y, x + width, y + height * 0.55);
+    shine.addColorStop(0, "rgba(255, 228, 160, 0)");
+    shine.addColorStop(0.38, "rgba(255, 228, 160, 0)");
+    shine.addColorStop(0.5, "rgba(255, 228, 160, 0.14)");
+    shine.addColorStop(0.62, "rgba(255, 228, 160, 0)");
+    shine.addColorStop(1, "rgba(255, 228, 160, 0)");
+    ctx.fillStyle = shine;
+    ctx.fillRect(x, y, width, height);
+    ctx.restore();
+    ctx.save();
+    ctx.shadowColor = "rgba(255, 196, 92, 0.32)";
+    ctx.shadowBlur = 60;
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = goldGradient(ctx, box);
+    roundRectPath(ctx, x, y, width, height, 30);
+    ctx.stroke();
+    ctx.restore();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255, 215, 130, 0.35)";
+    roundRectPath(ctx, x + 6, y + 6, width - 12, height - 12, 25);
+    ctx.stroke();
+    paintCrown(ctx, x + width / 2, y - 58, 140);
+  } else {
+    const panel = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
+    panel.addColorStop(0, mixColor(PANEL, color, 0.14));
+    panel.addColorStop(0.55, PANEL);
+    panel.addColorStop(1, PANEL);
+    roundRectPath(ctx, x, y, width, height, 30);
+    ctx.fillStyle = panel;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 文字を幅で折り返す（日本語は1文字ずつ）。入りきらない時は最後の行を「…」で切る。
+function wrapLines(ctx, text, maxWidth, maxLines) {
+  const lines = [];
+  let line = "";
+  for (const char of Array.from(String(text || ""))) {
+    if (ctx.measureText(line + char).width > maxWidth && line) {
+      lines.push(line);
+      line = char;
+    } else {
+      line += char;
+    }
+  }
+  if (line) lines.push(line);
+  if (lines.length > maxLines) {
+    const kept = lines.slice(0, maxLines);
+    let last = kept[maxLines - 1];
+    while (last && ctx.measureText(`${last}…`).width > maxWidth) last = Array.from(last).slice(0, -1).join("");
+    kept[maxLines - 1] = `${last}…`;
+    return kept;
+  }
+  return lines;
+}
+
+export async function renderRecruitImage(data) {
+  const manager = managerPresentation(data.manager);
+  const frame = normalizeDecorations({ frame: data.frame }).frame;
+  const word = String(data.word || "");
+  const intro = String(data.intro || "");
+  const achievements = (Array.isArray(data.achievements) ? data.achievements : []).slice(0, 3);
+  const honorLabel = String(data.honorLabel || "");
+  const tags = [manager.disclosureLabel, manager.styleLabel, honorLabel].filter(Boolean);
+  await loadFonts([manager.personaName, word, intro, tags.join(""), achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布募集中入場料管理中今月の財布人上限と解約は財布が握るだけ現金なし#WALLET WANTED"].join(""));
+  const image = await loadImage(manager.avatarUrl);
+  const canvas = canvasFor();
+  const ctx = canvas.getContext("2d");
+  paintBackdrop(ctx);
+  paintHeader(ctx, "WALLET WANTED", "");
+  // 右上の「財布募集」
+  ctx.save();
+  ctx.font = `400 44px ${DISPLAY}`;
+  spacing(ctx, 4);
+  const pillWidth = ctx.measureText("財布募集").width + 64;
+  ctx.shadowColor = "rgba(255, 79, 163, 0.5)";
+  ctx.shadowBlur = 34;
+  const pill = ctx.createLinearGradient(SHARE_WIDTH - 64 - pillWidth, 56, SHARE_WIDTH - 64, 140);
+  pill.addColorStop(0, PINK);
+  pill.addColorStop(1, "#c13dff");
+  ctx.fillStyle = pill;
+  roundRectPath(ctx, SHARE_WIDTH - 64 - pillWidth, 56, pillWidth, 84, 42);
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.fillStyle = "#fff";
+  ctx.textBaseline = "middle";
+  ctx.fillText("財布募集", SHARE_WIDTH - 64 - pillWidth + 34, 100);
+  ctx.textBaseline = "alphabetic";
+  spacing(ctx, 0);
+  ctx.restore();
+
+  const box = RECRUIT_CARD;
+  paintFrame(ctx, frame, box, manager.color);
+  const left = box.x + 64;
+  const right = box.x + box.width - 64;
+  const innerWidth = right - left;
+
+  // 印（アイコン）・名前・札
+  paintAvatar(ctx, { image, manager, x: left + 92, y: box.y + 64 + 92, radius: 92, ring: manager.color, ringWidth: 8 });
+  const nameX = left + 220;
+  ctx.fillStyle = TEXT;
+  fitFont(ctx, manager.personaName, right - nameX, 88, MINCHO, 800, 40);
+  ctx.fillText(manager.personaName, nameX, box.y + 64 + 92);
+  let tagX = nameX;
+  const tagY = box.y + 64 + 120;
+  tags.forEach((label, index) => {
+    const font = `700 27px ${SANS}`;
+    ctx.font = font;
+    const width = ctx.measureText(label).width + 40;
+    // 中の人の札（最初の札）は必ず入れる。ほかの札は入りきる時だけ。
+    if (index > 0 && tagX + width > right) return;
+    const isDisclosure = index === 0;
+    const isHonor = !isDisclosure && label === honorLabel;
+    const nekama = manager.disclosureKey === "nekama";
+    const color = isDisclosure ? (nekama ? "#9fe6ff" : TEXT) : isHonor ? "#f6dfa6" : TEXT;
+    const border = isDisclosure ? (nekama ? "#5fd4ff" : "rgba(255, 255, 255, 0.45)") : isHonor ? GOLD : "rgba(255, 255, 255, 0.3)";
+    tagX += paintPill(ctx, { x: tagX, y: tagY, text: label, height: 50, font, color, border, padding: 20, lineWidth: 3 }) + 12;
+  });
+  let cursor = box.y + 64 + 190;
+
+  // 今日のひとこと
+  if (word) {
+    ctx.font = `900 36px ${SANS}`;
+    const lines = wrapLines(ctx, word, innerWidth - 60, 2);
+    const bubbleWidth = Math.min(innerWidth, Math.max(...lines.map((line) => ctx.measureText(line).width)) + 60);
+    const bubbleHeight = 28 + lines.length * 48;
+    cursor += 20;
+    const fill = ctx.createLinearGradient(left, cursor, left + bubbleWidth, cursor + bubbleHeight);
+    fill.addColorStop(0, "rgba(255, 79, 163, 0.3)");
+    fill.addColorStop(1, "rgba(138, 43, 226, 0.26)");
+    roundRectPath(ctx, left, cursor, bubbleWidth, bubbleHeight, [32, 32, 32, 10]);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255, 79, 163, 0.55)";
+    ctx.stroke();
+    ctx.fillStyle = TEXT;
+    lines.forEach((line, index) => ctx.fillText(line, left + 30, cursor + 14 + 36 + index * 48));
+    cursor += bubbleHeight;
+  }
+
+  // 紹介
+  if (intro) {
+    ctx.font = `400 30px ${SANS}`;
+    ctx.fillStyle = "rgba(244, 236, 246, 0.86)";
+    const lines = wrapLines(ctx, intro, innerWidth, 3);
+    cursor += 22;
+    lines.forEach((line, index) => ctx.fillText(line, left, cursor + 34 + index * 46));
+    cursor += lines.length * 46 + 8;
+  }
+
+  // 入場料・管理中・今月の財布
+  cursor += 24;
+  const facts = [["入場料", formatPayNumber(data.entryFee), "Pay"], ["管理中", formatPayNumber(data.activeContracts), "人"], ["今月の財布", formatPayNumber(data.monthPayers), "人"]];
+  const factWidth = (innerWidth - 32) / 3;
+  facts.forEach(([label, value, unit], index) => {
+    const factX = left + index * (factWidth + 16);
+    roundRectPath(ctx, factX, cursor, factWidth, 104, 18);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+    ctx.stroke();
+    ctx.fillStyle = MIST;
+    ctx.font = `400 23px ${SANS}`;
+    ctx.fillText(label, factX + 22, cursor + 34);
+    ctx.fillStyle = TEXT;
+    ctx.font = `600 50px ${NUM}`;
+    ctx.fillText(value, factX + 22, cursor + 88);
+    const valueWidth = ctx.measureText(value).width;
+    ctx.font = `700 24px ${SANS}`;
+    ctx.fillText(unit, factX + 30 + valueWidth, cursor + 88);
+  });
+  cursor += 104;
+
+  // 牧場用の実績（3つまで）
+  if (achievements.length) {
+    cursor += 22;
+    let chipX = left;
+    for (const entry of achievements) {
+      ctx.font = `700 26px ${SANS}`;
+      const name = String(entry.name || "");
+      const width = Math.min(innerWidth, ctx.measureText(name).width + 82);
+      if (chipX + width > right && chipX > left) {
+        chipX = left;
+        cursor += 62;
+      }
+      roundRectPath(ctx, chipX, cursor, width, 54, 27);
+      ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(232, 194, 122, 0.5)";
+      ctx.stroke();
+      const badge = ctx.createLinearGradient(chipX + 6, cursor + 6, chipX + 48, cursor + 48);
+      badge.addColorStop(0, "#f6e3a3");
+      badge.addColorStop(1, "#c79a3a");
+      ctx.fillStyle = badge;
+      ctx.beginPath();
+      ctx.arc(chipX + 27, cursor + 27, 21, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#2a1a00";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `900 23px ${SANS}`;
+      ctx.fillText(Array.from(String(entry.icon || "")).slice(0, 2).join(""), chipX + 27, cursor + 28);
+      ctx.textAlign = "left";
+      ctx.fillStyle = TEXT;
+      fitFont(ctx, name, width - 76, 26, SANS, 700, 16);
+      ctx.fillText(name, chipX + 60, cursor + 28);
+      ctx.textBaseline = "alphabetic";
+      chipX += width + 12;
+    }
+  }
+
+  // 管理人の受取印で「募集中」を押す。枠や文字に重ねず、カードの右下の外に押す。
+  drawSeal(ctx, {
+    x: SHARE_WIDTH - 64 - 80,
+    y: box.y + box.height + 82,
+    size: 156,
+    rotation: -10,
+    rough: false,
+    label: "募集中",
+    name: manager.personaName,
+    at: data.at,
+    shape: data.sealShape,
+    ink: data.sealInk,
+    seed: 5,
+  });
+
+  // 守ること（左に寄せ、右下の印と重ねない）
+  const rulesY = box.y + box.height + 64;
+  let ruleX = 64;
+  for (const [text, strong] of [["上限と解約は", false], ["財布が握る", true], ["　AnjuPay だけ・", false], ["現金なし", true]]) {
+    ctx.fillStyle = strong ? GREEN : MIST;
+    ctx.font = `${strong ? 700 : 400} 24px ${SANS}`;
+    ctx.fillText(text, ruleX, rulesY);
+    ruleX += ctx.measureText(text).width;
+  }
+  ctx.fillStyle = GOLD;
+  ctx.font = `700 24px ${SANS}`;
+  ctx.fillText("#お貢ぎ牧場 #財布募集", 64, rulesY + 40);
   paintFooter(ctx);
   return canvas;
 }
