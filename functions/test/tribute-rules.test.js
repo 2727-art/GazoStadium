@@ -230,3 +230,19 @@ test("receipt seals come from a fixed list, three per card, and fall back to 受
   assert.equal(rules.normalizeManagerCard({ ...base, reportConsent: "true" }).card.reportConsent, false);
   assert.equal(rules.normalizeManagerCard({ ...base, reportConsent: true, seals: ["zako"] }).card.reportConsent, true);
 });
+
+test("today's word is 30 characters, keeps the forbidden lines, and keeps sexual words off the board", () => {
+  assert.equal(rules.LIMITS.todayWord, 30);
+  assert.equal(rules.LIMITS.todayWordTtlMs, 24 * 60 * 60 * 1_000);
+  assert.equal(rules.LIMITS.todayWordsPerDay, 3);
+  assert.deepEqual(rules.normalizeTodayWord("  今夜は機嫌がいい。財布は並びな。 "), { text: "今夜は機嫌がいい。財布は並びな。" });
+  assert.equal(rules.normalizeTodayWord("あ".repeat(40)).text.length, 30);
+  assert.deepEqual(rules.normalizeTodayWord("イケメン好き"), { text: "イケメン好き" }, "ordinary katakana words pass");
+  assert.match(rules.normalizeTodayWord("").error, /入力してください/);
+  assert.match(rules.normalizeTodayWord("LINE交換しよ").error, /外部の連絡先/);
+  assert.match(rules.normalizeTodayWord("PayPayで払って").error, /外部の決済/);
+  assert.match(rules.normalizeTodayWord("会おうよ").error, /会う約束/);
+  for (const text of ["寸止め料デー", "射精管理します", "お漏らし罰金", "イかせてあげる", "ｾｯｸｽ", "エロい財布"]) {
+    assert.equal(rules.normalizeTodayWord(text).error, rules.BOARD_SEXUAL_MESSAGE, text);
+  }
+});

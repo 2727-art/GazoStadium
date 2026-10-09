@@ -101,6 +101,9 @@ const LIMITS = Object.freeze({
   eventsPage: 100,
   receiptsPage: 50,
   severeReportHide: 3,
+  todayWord: 30,
+  todayWordTtlMs: 24 * 60 * 60 * 1_000,
+  todayWordsPerDay: 3,
 });
 
 const HONOR_TIERS = Object.freeze([
@@ -178,6 +181,24 @@ const FORBIDDEN_MESSAGES = Object.freeze({
   exposure_threat: "晒し・特定の脅しは送れません。",
   ng_word: "相手が登録した「言われたくない言葉」を含むため送れません。",
 });
+
+// 掲示板は、性的な名目に同意する前の人も見る。今日のひとことには性的な言葉を書けない。
+const BOARD_SEXUAL_PATTERN = /(?:寸止め|射精|お漏らし|おもらし|イかせ|イきた|イかな|イっ|絶頂|オナ|シコ|しこしこ|勃起|精液|性器|ちんこ|ちんぽ|まんこ|セックス|中出し|フェラ|手コキ|足コキ|乳首|おっぱい|エロ)/u;
+const BOARD_SEXUAL_MESSAGE = "掲示板は同意前の人も見るため、性的な言葉は今日のひとことに書けません。";
+
+function boardSexualWord(text) {
+  return BOARD_SEXUAL_PATTERN.test(String(text ?? "").normalize("NFKC"));
+}
+
+// 今日のひとこと。30文字まで、連絡先などの禁止表現と性的な言葉は通さない。
+function normalizeTodayWord(value) {
+  const text = cleanLine(value, LIMITS.todayWord);
+  if (!text) return { error: "今日のひとことを入力してください。" };
+  const reason = forbiddenReason(text);
+  if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+  if (boardSexualWord(text)) return { error: BOARD_SEXUAL_MESSAGE };
+  return { text };
+}
 
 function normalizeNgWords(value) {
   const list = Array.isArray(value) ? value : String(value ?? "").split(/[\n,、]/u);
@@ -496,6 +517,9 @@ module.exports = {
   normalizeCaps,
   capsAreLowerOrEqual,
   normalizeManagerCard,
+  normalizeTodayWord,
+  boardSexualWord,
+  BOARD_SEXUAL_MESSAGE,
   normalizeSeals,
   sealFor,
   normalizeXProfile,

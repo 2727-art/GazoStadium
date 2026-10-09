@@ -557,6 +557,34 @@ export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords =
     .filter((situation) => situation.lines.length);
 }
 
+// 今日のひとこと。サーバーの normalizeTodayWord と同じ判定を、送る前に画面で行う。
+export const TODAY_WORD = Object.freeze({ length: 30, ttlMs: 24 * 60 * 60 * 1_000, perDay: 3 });
+export const BOARD_SEXUAL_PATTERN = /(?:寸止め|射精|お漏らし|おもらし|イかせ|イきた|イかな|イっ|絶頂|オナ|シコ|しこしこ|勃起|精液|性器|ちんこ|ちんぽ|まんこ|セックス|中出し|フェラ|手コキ|足コキ|乳首|おっぱい|エロ)/u;
+export const BOARD_SEXUAL_MESSAGE = "掲示板は同意前の人も見るため、性的な言葉は今日のひとことに書けません。";
+
+export function todayWordProblem(value) {
+  const text = String(value ?? "").normalize("NFKC").trim();
+  if (!text) return "今日のひとことを入力してください。";
+  if (textLength(text) > TODAY_WORD.length) return `今日のひとことは${TODAY_WORD.length}文字までです。`;
+  const reason = forbiddenReason(text);
+  if (reason) return FORBIDDEN_MESSAGES[reason];
+  if (BOARD_SEXUAL_PATTERN.test(text)) return BOARD_SEXUAL_MESSAGE;
+  return "";
+}
+
+export function wordAgeLabel(at, now = Date.now()) {
+  const minutes = Math.max(0, Math.floor((now - Number(at || 0)) / 60_000));
+  if (minutes < 1) return "たった今";
+  if (minutes < 60) return `${minutes}分前`;
+  return `${Math.floor(minutes / 60)}時間前`;
+}
+
+export function wordRemainingLabel(at, now = Date.now()) {
+  const remaining = Math.max(0, Number(at || 0) + TODAY_WORD.ttlMs - now);
+  const hours = Math.floor(remaining / 3_600_000);
+  return hours >= 1 ? `あと${hours}時間で消えます` : `あと${Math.max(1, Math.ceil(remaining / 60_000))}分で消えます`;
+}
+
 export function formatPay(value) {
   return `${Math.max(0, Math.floor(Number(value) || 0)).toLocaleString("ja-JP")} Pay`;
 }

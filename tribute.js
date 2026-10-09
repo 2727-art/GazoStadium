@@ -45,6 +45,7 @@ import {
   SIGIL_COLORS,
   STYLE_LABELS,
   TONE_LABELS,
+  TODAY_WORD,
   TOTAL_OPTIONS,
   TRIBUTE_AGE_VERSION,
   capViolation,
@@ -65,9 +66,12 @@ import {
   sealsFor,
   templatesFor,
   textLength,
+  todayWordProblem,
   tributeFee,
   viewContract,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1";
+  wordAgeLabel,
+  wordRemainingLabel,
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1";
 import {
   SEAL_INK,
   SHARE_TEXT,
@@ -362,7 +366,8 @@ function renderHub() {
           <div class="tribute-row">
             <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
             <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
-          </div>`
+          </div>
+          ${renderWordForm(profile)}`
     : `<p>管理する側になるには、管理人カードを作ります。印は12種のアイコンか、ペルソナ名の1文字から選べます。</p>
           <button class="button button-ghost" type="button" data-t="nav" data-screen="card">管理人カードを作る</button>`}
       </div>
@@ -386,6 +391,25 @@ function renderHub() {
       </div>
     </section>
   </div>`, { title: "契約" });
+}
+
+// 今日のひとこと（管理人だけ）。掲示板のカードに24時間出て、出すとカードが上に並ぶ。
+function renderWordForm(profile) {
+  const word = profile.card?.word;
+  const left = Math.max(0, TODAY_WORD.perDay - Number(profile.wordsToday || 0));
+  return `<form class="tribute-word-form" data-form="word">
+    <span class="tribute-eyebrow">今日のひとこと</span>
+    ${word ? `<p class="tribute-word-current"><span class="tribute-word-bubble">${escapeHtml(word.text)}</span><small>${escapeHtml(wordRemainingLabel(word.at))}</small><button class="tribute-link" type="button" data-t="clear-word">消す</button></p>` : ""}
+    <div class="tribute-word-input"><input name="word" maxlength="${TODAY_WORD.length}" autocomplete="off" placeholder="例：今夜は機嫌がいい。財布は並びな。" aria-label="今日のひとこと（${TODAY_WORD.length}文字まで）" ${left ? "" : "disabled"} /><button class="button button-ghost button-small" type="submit" ${left && !state.busy ? "" : "disabled"}>出す</button></div>
+    <small>掲示板のカードに24時間出て、出すとカードが上に並びます。今日あと${left}回（日本時間の0時に戻ります）。連絡先・外部決済・性的な言葉は書けません。</small>
+    <p class="tribute-form-error" data-form-error role="alert"></p>
+  </form>`;
+}
+
+function wordBubble(word, extra = "") {
+  return word?.text
+    ? `<span class="tribute-card-word${extra}"><span>${escapeHtml(word.text)}</span><small>今日のひとこと ・ ${escapeHtml(wordAgeLabel(word.at))}</small></span>`
+    : "";
 }
 
 const ACHIEVEMENT_SIDES = Object.freeze([
@@ -424,6 +448,7 @@ function renderManagerCard(card, { compact = false } = {}) {
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
     <button type="button" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}">
       <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
       <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span>${card.recommendedCount ? `<span>推薦 <b>${Number(card.recommendedCount)}</b></span>` : ""}</span>
     </button>
@@ -473,6 +498,7 @@ function renderManagerDetail() {
   return frame(`<div class="tribute-manager-detail">
     <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}">
       <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}</div></div></div>
+      ${wordBubble(card.word, " is-large")}
       <p class="tribute-profile-intro">${escapeHtml(card.intro || "（紹介文なし）")}</p>
       <dl class="tribute-facts">
         <div><dt>中の人の札</dt><dd>${escapeHtml(DISCLOSURE_LABELS[card.disclosure] || "非開示")}</dd></div>
@@ -1865,6 +1891,20 @@ async function handleSubmit(form) {
       });
       return;
     }
+    case "word": {
+      const text = String(form.elements.word.value || "");
+      const problem = todayWordProblem(text);
+      if (problem) return setFormError(form, problem);
+      await mutate("set_word", { text }, {
+        form,
+        success: "今日のひとことを出しました。掲示板で上に並びます。",
+        after: (result) => {
+          state.profile = result.profile;
+          render();
+        },
+      });
+      return;
+    }
     case "apply": {
       const target = state.applyTarget;
       const data = new FormData(form);
@@ -2094,6 +2134,15 @@ async function handleClick(target) {
       openShare({ contractId: view.contractId, receiptId: event.receiptId || "", seq: event.seq });
       return;
     }
+    case "clear-word":
+      await mutate("set_word", { clear: true }, {
+        success: "今日のひとことを消しました。",
+        after: (result) => {
+          state.profile = result.profile;
+          render();
+        },
+      });
+      return;
     case "share-receipt":
       openShare({ contractId: target.dataset.contract, receiptId: target.dataset.receipt });
       return;
@@ -2479,6 +2528,7 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   avatar: 7,
   seals: ["yoku", "zako", "kakunin"],
   reportConsent: true,
+  word: { text: "今夜は機嫌がいい。財布は並びな。", at: Date.now() - 2 * 3_600_000 },
   xHandle: "mio_sama_ranch",
   accepting: true,
   honor: { tierId: "offerer", label: "上納者" },
@@ -2576,6 +2626,7 @@ function previewCall(action, payload) {
           honor: null,
           counts: { payerOpen: 1, managerActive: 1, managerPending: 1 },
           receiptCount: 3,
+          wordsToday: 1,
         },
         achievements: {
           stats: { managerPairDays: 12, walletPairDays: 4 },
@@ -2593,8 +2644,8 @@ function previewCall(action, payload) {
         ok: true,
         managers: [
           PREVIEW_MANAGER_CARD,
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, honor: null, recommendedCount: 0, intro: "事務的に管理します。報告は毎日。" },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, honor: null, recommendedCount: 0, intro: "甘やかし担当。無理はさせない。" },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, honor: null, recommendedCount: 0, intro: "事務的に管理します。報告は毎日。" },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, honor: null, recommendedCount: 0, intro: "甘やかし担当。無理はさせない。" },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
         recommended: [PREVIEW_MANAGER_CARD],
       });
@@ -2689,6 +2740,20 @@ function previewCall(action, payload) {
         push({ type: "received", actor: "manager", tributeSeq: target.seq, amount: target.amount, seal: target.seal, ...(payload.reward ? { reward: payload.reward } : {}) });
       });
       return Promise.resolve({ ok: true, contract: view });
+    }
+    case "set_word": {
+      const profile = { ...state.profile, card: { ...state.profile?.card } };
+      if (payload.clear === true) {
+        profile.card.word = null;
+      } else {
+        if (Number(profile.wordsToday || 0) >= TODAY_WORD.perDay) {
+          return Promise.reject(Object.assign(new Error(`今日のひとことは1日${TODAY_WORD.perDay}回までです。日本時間の0時に戻ります。`), { code: "resource-exhausted" }));
+        }
+        profile.card.word = { text: String(payload.text || "").trim(), at: now };
+        profile.wordsToday = Number(profile.wordsToday || 0) + 1;
+      }
+      previewSavedProfile = profile;
+      return Promise.resolve({ ok: true, profile });
     }
     case "share_info": {
       const listed = state.receipts.items.find((receipt) => receipt.receiptId === payload.receiptId);

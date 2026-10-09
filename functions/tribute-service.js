@@ -19,6 +19,7 @@ const {
   normalizeCaps,
   capsAreLowerOrEqual,
   normalizeManagerCard,
+  normalizeTodayWord,
   normalizeSeals,
   sealFor,
   SEAL_IDS,
@@ -82,6 +83,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "set_purposes",
   "receive",
   "share_info",
+  "set_word",
   "mark_read",
   "report_user",
   "receipts",
@@ -178,6 +180,12 @@ function readProfile(snapshot) {
     },
     receiptCount: integer(data.receiptCount, 0, Number.MAX_SAFE_INTEGER, 0),
     collarCount: integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    word: {
+      text: cleanLine(object(data.word).text, LIMITS.todayWord),
+      at: integer(object(data.word).at, 0, Number.MAX_SAFE_INTEGER, 0),
+      dayKey: String(object(data.word).dayKey || ""),
+      dayCount: integer(object(data.word).dayCount, 0, 1_000, 0),
+    },
     receiveDayKey: String(data.receiveDayKey || ""),
     receiveDayTotal: integer(data.receiveDayTotal, 0, Number.MAX_SAFE_INTEGER, 0),
     recommendedMonthKey: String(data.recommendedMonthKey || ""),
@@ -199,7 +207,13 @@ function honorFor(profile, monthKey) {
   return tier ? { tierId: tier.id, label: tier.label } : null;
 }
 
-function publicCard(profile, monthKey) {
+// 今日のひとことは24時間だけ出す。期限の切れた言葉は返さない。
+function activeWord(profile, now) {
+  const word = profile.word || {};
+  return word.text && word.at > 0 && now - word.at < LIMITS.todayWordTtlMs ? { text: word.text, at: word.at } : null;
+}
+
+function publicCard(profile, monthKey, now) {
   const card = object(profile.card);
   return {
     publicManagerId: profile.publicManagerId,
@@ -212,12 +226,28 @@ function publicCard(profile, monthKey) {
     avatar: normalizeAvatar(card.avatar),
     seals: normalizeSeals(card.seals),
     reportConsent: card.reportConsent === true,
+    word: activeWord(profile, now),
     xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
     accepting: profile.accepting,
     honor: honorFor(profile, monthKey),
     recommendedCount: profile.recommendedMonthKey === monthKey ? profile.recommendedCount : 0,
     activeContracts: profile.counts.managerActive,
     lastActiveAt: profile.lastActiveAt,
+  };
+}
+
+// 自分のプロフィール（state・save_profile・set_word で同じ形を返す）。
+function ownProfileView(profile, monthKey, now) {
+  return {
+    walletName: profile.walletName,
+    card: profile.card ? publicCard(profile, monthKey, now) : null,
+    accepting: profile.accepting,
+    publicManagerId: profile.publicManagerId,
+    hidden: profileIsHidden(profile, monthKey),
+    honor: honorFor(profile, monthKey),
+    counts: profile.counts,
+    receiptCount: profile.receiptCount,
+    wordsToday: profile.word?.dayKey === jstDateKey(now) ? profile.word.dayCount : 0,
   };
 }
 
@@ -1203,16 +1233,7 @@ function createTributeService(deps) {
     return {
       ...base,
       achievements,
-      profile: {
-        walletName: profile.walletName,
-        card: profile.card ? publicCard(profile, monthKey) : null,
-        accepting: profile.accepting,
-        publicManagerId: profile.publicManagerId,
-        hidden: profileIsHidden(profile, monthKey),
-        honor: honorFor(profile, monthKey),
-        counts: profile.counts,
-        receiptCount: profile.receiptCount,
-      },
+      profile: ownProfileView(profile, monthKey, now),
       contracts,
     };
   }
@@ -1282,19 +1303,42 @@ function createTributeService(deps) {
     });
     const monthKey = jstMonthKey(now);
     const profile = readProfile({ exists: true, data: () => saved });
-    return {
-      ok: true,
-      profile: {
-        walletName: profile.walletName,
-        card: profile.card ? publicCard(profile, monthKey) : null,
-        accepting: profile.accepting,
-        publicManagerId: profile.publicManagerId,
-        hidden: profileIsHidden(profile, monthKey),
-        honor: honorFor(profile, monthKey),
-        counts: profile.counts,
-        receiptCount: profile.receiptCount,
-      },
-    };
+    return { ok: true, profile: ownProfileView(profile, monthKey, now) };
+  }
+
+  // 今日のひとこと。管理人カードのある人だけ、30文字まで・24時間・日本時間の1日3回まで。
+  // 出すと掲示板の並び（最近の活動順）で上に来る。消しても、その日の回数は戻らない。
+  async function setWordAction(uid, data) {
+    let saved = null;
+    let now = 0;
+    await firestore.runTransaction(async (transaction) => {
+      saved = null;
+      now = currentTime();
+      const snapshot = await transaction.get(profileRef(uid));
+      const profile = readProfile(snapshot);
+      requireAge(profile);
+      if (!profile.card) fail("failed-precondition", "今日のひとことは、管理人カードを作ってから出せます。");
+      const dateKey = jstDateKey(now);
+      const usedToday = profile.word.dayKey === dateKey ? profile.word.dayCount : 0;
+      let word;
+      const patch = { updatedAt: now };
+      if (data?.clear === true) {
+        word = { ...profile.word, text: "", at: 0 };
+      } else {
+        const normalized = normalizeTodayWord(data?.text);
+        if (normalized.error) fail("invalid-argument", normalized.error);
+        if (usedToday >= LIMITS.todayWordsPerDay) {
+          fail("resource-exhausted", `今日のひとことは1日${LIMITS.todayWordsPerDay}回までです。日本時間の0時に戻ります。`);
+        }
+        word = { text: normalized.text, at: now, dayKey: dateKey, dayCount: usedToday + 1 };
+        patch.lastActiveAt = now;
+      }
+      patch.word = word;
+      transaction.set(profileRef(uid), patch, { merge: true });
+      saved = { ...object(snapshot.data()), ...patch };
+    });
+    const profile = readProfile({ exists: true, data: () => saved });
+    return { ok: true, profile: ownProfileView(profile, jstMonthKey(now), now) };
   }
 
   async function visibleRows(uid, rows) {
@@ -1329,11 +1373,11 @@ function createTributeService(deps) {
     const board = (await visibleRows(uid, toRows(boardSnapshot)))
       .filter((row) => !nekamaOnly || row.profile.card?.disclosure === "nekama")
       .slice(0, LIMITS.boardLimit)
-      .map((row) => ({ ...publicCard(row.profile, monthKey), mine: row.uid === uid }));
+      .map((row) => ({ ...publicCard(row.profile, monthKey, now), mine: row.uid === uid }));
     const recommended = (await visibleRows(uid, toRows(recommendedSnapshot)))
       .filter((row) => row.profile.recommendedCount > 0)
       .slice(0, LIMITS.recommendedLimit)
-      .map((row) => ({ ...publicCard(row.profile, monthKey), mine: row.uid === uid }));
+      .map((row) => ({ ...publicCard(row.profile, monthKey, now), mine: row.uid === uid }));
     return { ok: true, nekamaOnly, managers: board, recommended };
   }
 
@@ -1385,7 +1429,7 @@ function createTributeService(deps) {
     const pair = pairSnapshot?.exists ? object(pairSnapshot.data()) : {};
     return {
       ok: true,
-      card: { ...publicCard(profile, monthKey), mine: managerUid === uid },
+      card: { ...publicCard(profile, monthKey, now), mine: managerUid === uid },
       month: {
         payers: integer(month.payers, 0, Number.MAX_SAFE_INTEGER, 0),
         tributeCount: integer(month.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -2493,6 +2537,7 @@ function createTributeService(deps) {
       case "apply": return applyAction(uid, data);
       case "receipts": return receiptsAction(uid, data);
       case "share_info": return shareInfoAction(uid, data);
+      case "set_word": return setWordAction(uid, data);
       case "ledger": return ledgerAction(uid);
       case "rankings": return rankingsAction(uid, data);
       case "fund": return fundAction(uid, data, context);

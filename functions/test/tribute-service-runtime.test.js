@@ -1094,3 +1094,42 @@ test("each side sees how far the other has read, so a payer can see a tribute th
   await harness.act("manager", "mark_read", { contractId, seq: tribute.seq });
   assert.equal((await payerView()).peerReadSeq, tribute.seq);
 });
+
+test("today's word shows on the board for 24 hours, lifts the card in the board order, and is limited to 3 a day", async () => {
+  const harness = createHarness();
+  await confirmAge(harness, "viewer");
+  await rejects(harness.act("viewer", "set_word", { text: "こんばんは" }), /管理人カードを作ってから/);
+  await rejects(harness.act("stranger", "set_word", { text: "こんばんは" }), /18歳以上/);
+  const first = await openManager(harness, "m1", { personaName: "ミオ様", entryFee: 0 });
+  harness.advance(60_000);
+  await openManager(harness, "m2", { personaName: "サキ", entryFee: 0 });
+  const order = async () => (await harness.act("viewer", "board")).managers.map((card) => card.personaName);
+  assert.deepEqual(await order(), ["サキ", "ミオ様"]);
+
+  await rejects(harness.act("m1", "set_word", { text: "今夜は寸止めデー" }), /性的な言葉は今日のひとことに書けません/);
+  await rejects(harness.act("m1", "set_word", { text: "LINE交換しよ" }), /外部の連絡先/);
+  harness.advance(60_000);
+  const posted = await harness.act("m1", "set_word", { text: "今夜は機嫌がいい。財布は並びな。" });
+  assert.equal(posted.profile.card.word.text, "今夜は機嫌がいい。財布は並びな。");
+  assert.equal(posted.profile.wordsToday, 1);
+  assert.deepEqual(await order(), ["ミオ様", "サキ"], "posting a word lifts the card");
+  const board = await harness.act("viewer", "board");
+  assert.equal(board.managers[0].word.text, "今夜は機嫌がいい。財布は並びな。");
+  assert.equal(board.managers[1].word, null);
+  assert.equal((await harness.act("viewer", "manager", { publicManagerId: first })).card.word.text, "今夜は機嫌がいい。財布は並びな。");
+  assert.equal((await harness.act("m1", "state")).profile.wordsToday, 1);
+
+  await harness.act("m1", "set_word", { text: "二回目" });
+  await harness.act("m1", "set_word", { text: "三回目" });
+  await rejects(harness.act("m1", "set_word", { text: "四回目" }), /1日3回まで/);
+  const cleared = await harness.act("m1", "set_word", { clear: true });
+  assert.equal(cleared.profile.card.word, null);
+  assert.equal(cleared.profile.wordsToday, 3, "clearing does not give a post back");
+  await rejects(harness.act("m1", "set_word", { text: "四回目" }), /1日3回まで/);
+
+  harness.advance(24 * 60 * 60 * 1_000);
+  const nextDay = await harness.act("m1", "set_word", { text: "新しい日" });
+  assert.equal(nextDay.profile.wordsToday, 1, "the count resets on the next JST day");
+  harness.advance(24 * 60 * 60 * 1_000);
+  assert.equal((await harness.act("viewer", "board")).managers.find((card) => card.personaName === "ミオ様").word, null, "a word disappears after 24 hours");
+});

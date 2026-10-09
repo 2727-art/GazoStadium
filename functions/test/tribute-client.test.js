@@ -30,9 +30,9 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1"/);
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-collar-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
@@ -445,4 +445,29 @@ test("report images are made on the payer's device only, carry the non-cash noti
   const ignored = JSON.parse(read("firebase.json")).hosting.ignore;
   assert.ok(!ignored.includes("tribute-share.mjs"));
   assert.doesNotMatch(read(".assetsignore"), /^tribute-share\.mjs$/m);
+});
+
+test("today's word mirrors the server check, sits only in the manager's own hub, and shows as a bubble on the board", async () => {
+  const core = await loadCore();
+  assert.deepEqual({ ...core.TODAY_WORD }, { length: rules.LIMITS.todayWord, ttlMs: rules.LIMITS.todayWordTtlMs, perDay: rules.LIMITS.todayWordsPerDay });
+  assert.equal(core.BOARD_SEXUAL_MESSAGE, rules.BOARD_SEXUAL_MESSAGE);
+  const corpus = ["今夜は機嫌がいい", "イケメン好き", "寸止め料デー", "ｾｯｸｽ", "エロい", "LINE交換", "@mio_sama", "500円", "", "あ".repeat(30), "会おうよ", "オナ禁中", "お漏らし"];
+  for (const text of corpus) {
+    const server = rules.normalizeTodayWord(text);
+    assert.equal(core.todayWordProblem(text), server.error || "", JSON.stringify(text));
+  }
+  assert.match(core.todayWordProblem("あ".repeat(31)), /30文字まで/);
+  assert.equal(core.wordAgeLabel(Date.now() - 3 * 3_600_000), "3時間前");
+  assert.equal(core.wordRemainingLabel(Date.now() - 3 * 3_600_000), "あと21時間で消えます");
+
+  const hub = sourceBlock(client, "function renderHub", "function renderWordForm");
+  assert.match(hub, /data-screen="card">カードを編集<\/button>\s*<\/div>\s*\$\{renderWordForm\(profile\)\}/, "the form appears only once a manager card exists");
+  const form = sourceBlock(client, "function renderWordForm", "const ACHIEVEMENT_SIDES");
+  assert.match(form, /maxlength="\$\{TODAY_WORD\.length\}"/);
+  assert.match(form, /性的な言葉は書けません/);
+  assert.match(sourceBlock(client, "function renderManagerCard", "function renderBoard"), /\$\{wordBubble\(card\.word\)\}/);
+  assert.match(sourceBlock(client, 'case "word": {', 'case "apply": {'), /const problem = todayWordProblem\(text\);[\s\S]*?mutate\("set_word", \{ text \}/);
+  assert.match(client, /mutate\("set_word", \{ clear: true \}/);
+  assert.match(styles, /\.tribute-card-word \{/);
+  assert.match(design, /今日のひとこと/);
 });
