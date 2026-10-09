@@ -1,0 +1,325 @@
+{
+  "checkedAt": "2026-10-09T13:44:33.215Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "74d7c33",
+  "releaseHead": "8bb277d",
+  "baseCommit": "9f97342",
+  "scope": {
+    "functions": [
+      "economyAction",
+      "tributeAction"
+    ],
+    "realtimeDatabaseRules": true,
+    "hosting": true,
+    "hostingFiles": 107,
+    "newPublicFiles": [
+      "tribute-deco.mjs"
+    ],
+    "changedPublicFiles": [
+      "index.html",
+      "online.js",
+      "tribute.js",
+      "tribute.css",
+      "tribute-share.mjs"
+    ],
+    "serverCodeChanged": true,
+    "firestoreRules": false,
+    "firestoreIndexes": false
+  },
+  "tests": {
+    "total": 1994,
+    "passed": 1963,
+    "failed": 0,
+    "skipped": 31
+  },
+  "functions": {
+    "listed": 36,
+    "allActive": true,
+    "runtimes": [
+      "nodejs22"
+    ],
+    "changedSincePreviousRelease": [
+      {
+        "id": "economyAction",
+        "previousSourceHash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "sourceHash": "81a2b70c15c8271140837122632b6aeb0395b372",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      },
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "c32541bec7e090a02493b415805e41fab441ea94",
+        "sourceHash": "81a2b70c15c8271140837122632b6aeb0395b372",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      }
+    ]
+  },
+  "realtimeDatabaseRules": {
+    "method": "firebase database:get /.settings/rules (read-only)",
+    "identicalToRepository": true,
+    "ranchItemPrefixesPresent": [
+      "ranch_frame_",
+      "ranch_seal_",
+      "ranch_ink_"
+    ],
+    "previousDeployedChange": "92edadf (free table retirement, confirmed identical in production at 2026-10-09 11:10 JST)"
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-09T13:43:59Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-deco-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/product-catalog.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-deco-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/ranch-deco.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/product-catalog.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-deco-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/ranch-deco.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/product-catalog.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-deco-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/ranch-deco.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.anjugames.workers.dev",
+    "moduleInitialized": true,
+    "loadedReleaseModules": [
+      "tribute-deco.mjs?v=ranch-deco-v1",
+      "tribute-share.mjs?v=ranch-deco-v1"
+    ],
+    "failedSameOriginLoads": 0,
+    "appCheckExchange": 200,
+    "consoleErrors": "One 403 without a URL on the first load only; none after a reload.",
+    "ranchActionsInProduction": "none (no sign-in, purchase or card save in production)"
+  },
+  "caveats": [
+    "HTML is cached up to one hour; an old screen has no shelf, frames or recruit image until reload.",
+    "No purchase was made in production or the emulator; the fund share is covered by source tests and the service runtime test.",
+    "No two-player run; no iPhone/Android/Safari check of sharing the recruit image."
+  ]
+}
