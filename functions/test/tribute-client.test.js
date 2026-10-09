@@ -30,9 +30,9 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1"/);
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
   assert.doesNotMatch(app, /id="valueMarketButton"/);
@@ -102,7 +102,7 @@ test("client filters and contract views mirror the server", async () => {
     managerUid: "m",
     payerUid: "p",
     status: "active",
-    managerCard: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", sigil: 2 },
+    managerCard: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", sigil: 2, avatar: 7 },
     payerWalletName: "ポチ財布",
     entryFee: 10,
     caps: { perTribute: 100, perDay: 300, total: 1_000 },
@@ -113,6 +113,10 @@ test("client filters and contract views mirror the server", async () => {
     ngWords: ["ブス"],
     allowReportRequests: true,
     rankOptIn: true,
+    allowSexualPurposes: true,
+    purposeCounts: { edging: 3, management: 1, bogus: 4, release: 0 },
+    rewardCount: 2,
+    awaitingReceipt: 1,
     createdAt: now - 1_000,
     acceptedAt: now - 900,
     expiresAt: now + 86_400_000,
@@ -122,7 +126,7 @@ test("client filters and contract views mirror the server", async () => {
     todayTributed: 110,
     escrowBalance: 200,
     escrowWithdrawRequest: { amount: 50, requestedAt: now - 10 },
-    pendingRequests: { abcdef0123456789: { amount: 100, note: "今日の分", createdAt: now - 5 } },
+    pendingRequests: { abcdef0123456789: { amount: 100, note: "今日の分", purpose: "release", createdAt: now - 5 } },
     reportRequestedAt: now - 1,
     eventSeq: 9,
     readSeq: { manager: 4, payer: 9 },
@@ -137,6 +141,62 @@ test("client filters and contract views mirror the server", async () => {
       }
     }
   }
+  assert.equal(core.viewContract(contract, "p", now).manager.avatar, 7);
+  assert.deepEqual(core.viewContract(contract, "p", now).purposeCounts, { management: 1, edging: 3 });
+  assert.equal(core.viewContract(contract, "p", now).pendingRequests[0].purpose, "release");
+  const withdrawn = { ...contract, allowSexualPurposes: false };
+  for (const uid of ["m", "p"]) {
+    const expected = serverView(withdrawn, uid, now);
+    const actual = core.viewContract(withdrawn, uid, now);
+    for (const key of Object.keys(expected)) assert.deepEqual(actual[key], expected[key], `withdrawn ${uid} ${key}`);
+  }
+  assert.deepEqual(core.viewContract(withdrawn, "p", now).purposeCounts, { management: 1 }, "sexual counts hide once consent is withdrawn");
+  assert.equal(core.viewContract(withdrawn, "p", now).pendingRequests[0].purpose, "");
+  assert.equal(core.viewContract({ ...contract, status: "ended" }, "m", now).awaitingReceipt, 0);
+  for (const avatar of [undefined, 13, -2, "x"]) {
+    const odd = { ...contract, managerCard: { ...contract.managerCard, avatar } };
+    assert.equal(core.viewContract(odd, "p", now).manager.avatar, serverView(odd, "p", now).manager.avatar, String(avatar));
+    assert.equal(core.viewContract(odd, "p", now).manager.avatar, 0, String(avatar));
+  }
+});
+
+test("manager icons are twelve prepared WebP files chosen in the card editor, never uploads", async () => {
+  const core = await loadCore();
+  assert.deepEqual(core.AVATARS.map((avatar) => avatar.id), rules.AVATAR_IDS.filter((id) => id > 0));
+  assert.equal(core.AVATAR_MAX, rules.AVATAR_MAX);
+  assert.equal(new Set(core.AVATARS.map((avatar) => avatar.label)).size, core.AVATARS.length, "labels are distinct for screen readers");
+  for (const { id } of core.AVATARS) {
+    const name = `avatar-${String(id).padStart(2, "0")}.webp`;
+    assert.ok(core.avatarUrl(id).endsWith(`/assets/tribute-avatars/${name}`), `avatar ${id}`);
+    const file = fs.readFileSync(path.join(root, "assets", "tribute-avatars", name));
+    assert.equal(file.subarray(0, 4).toString("latin1"), "RIFF", `avatar ${id}`);
+    assert.equal(file.subarray(8, 12).toString("latin1"), "WEBP", `avatar ${id}`);
+    assert.ok(file.length < 20_000, `avatar ${id} stays small`);
+  }
+  for (const value of [0, 13, -1, "1; background:url(x)", null]) {
+    assert.equal(core.avatarId(value), 0, String(value));
+    assert.equal(core.avatarUrl(value), "", String(value));
+  }
+  const ignored = JSON.parse(read("firebase.json")).hosting.ignore;
+  assert.ok(!ignored.some((pattern) => pattern.startsWith("assets")), "the icons are public assets");
+  assert.doesNotMatch(read(".assetsignore"), /^assets/m);
+
+  const sigilSource = sourceBlock(client, "function sigil(card", "function disclosureTag");
+  assert.match(sigilSource, /avatarId\(card\?\.avatar\)/);
+  assert.match(sigilSource, /class="tribute-sigil has-avatar \$\{size\}"[^>]*aria-hidden="true"><img src="\$\{escapeHtml\(avatarUrl\(avatar\)\)\}" alt=""/);
+  const editor = sourceBlock(client, "function renderCardEditor", "// ───────────── スレッド ─────────────");
+  assert.match(editor, /<legend>印のアイコン<\/legend>/);
+  assert.match(editor, /name="avatar" value="\$\{avatar\.id\}"/);
+  assert.match(editor, /name="avatar" value="0"/, "the letter sigil stays available");
+  assert.match(editor, /画像のアップロードはできません/);
+  assert.doesNotMatch(editor, /type="file"/);
+  assert.match(editor, /preview\.style\.setProperty\("--sigil"/);
+  assert.doesNotMatch(editor, /form\.style\./, "form.style is the 管理の型 radio list, not CSS");
+  assert.match(sourceBlock(client, 'case "card": {', 'case "apply": {'), /avatar: avatarId\(data\.get\("avatar"\)\),/);
+  assert.match(client, /印は12種のアイコンか、ペルソナ名の1文字から選べます。/);
+  assert.match(styles, /\.tribute-sigil\.has-avatar img \{/);
+  assert.match(styles, /\.tribute-avatar-grid \{ display: grid; grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
+  assert.match(design, /管理人の印は、用意した12種のアイコン/);
 });
 
 test("templates are harsh but never cross the stated lines, and lowering or leaving is never blamed", async () => {
@@ -260,4 +320,48 @@ test("Firebase Hosting never uploads the local .claude folder or worktrees insid
   const ignore = JSON.parse(read("firebase.json")).hosting.ignore;
   assert.ok(ignore.includes(".claude"), ".claude itself");
   assert.ok(ignore.includes(".claude/**"), "everything under .claude, including git worktrees");
+});
+
+test("named fees, receiving and rewards mirror the server and stay in the hands the design gives them", async () => {
+  const core = await loadCore();
+  assert.deepEqual(core.PURPOSES.map((purpose) => ({ ...purpose })), rules.PURPOSES.map((purpose) => ({ ...purpose })));
+  assert.deepEqual(core.REWARDS.map((reward) => ({ ...reward, tones: [...reward.tones] })), rules.REWARDS.map((reward) => ({ ...reward, tones: [...reward.tones] })));
+  assert.deepEqual([...core.RECEIVABLE_KINDS], [...rules.RECEIVABLE_KINDS]);
+  for (const tone of ["sweet", "normal", "harsh", "x"]) {
+    for (const ngWords of [[], ["ざこ"], ["ご褒美"]]) {
+      assert.deepEqual(core.rewardsFor(tone, ngWords).map((reward) => reward.id), rules.rewardsFor(tone, ngWords).map((reward) => reward.id), `${tone} ${ngWords}`);
+    }
+  }
+  for (const purpose of ["", "management", "edging", "release", "leak_penalty", "bogus"]) {
+    for (const allowSexual of [true, false]) {
+      assert.equal(core.visiblePurpose(purpose, { allowSexual }), rules.visiblePurpose(purpose, { allowSexual }), `${purpose} ${allowSexual}`);
+    }
+  }
+  assert.equal(core.SEXUAL_PURPOSE_SUMMARY, "寸止め料・射精料・お漏らし罰金");
+
+  const apply = sourceBlock(client, "function renderApply", "function renderCardEditor");
+  assert.match(apply, /<input type="checkbox" name="allowSexualPurposes" \/>/, "consent starts unticked");
+  assert.match(sourceBlock(client, 'case "apply": {', 'case "message": {'), /allowSexualPurposes: data\.get\("allowSexualPurposes"\) === "on",/);
+  const sheet = sourceBlock(client, "function renderSheet", "function renderReceiptOverlay");
+  assert.match(sheet, /case "purposes": \{\s*if \(view\.role !== "payer"\) return "";/, "only the payer decides on sexual names");
+  assert.match(sheet, /purposeChoices\(\{ allowSexual: view\.allowSexualPurposes, role: "manager" \}\)/);
+  const actions = sourceBlock(client, "function renderThreadActions", "function renderTemplates");
+  const managerStart = actions.indexOf('data-sheet="request"');
+  assert.match(actions.slice(0, managerStart), /data-sheet="purposes"/);
+  assert.doesNotMatch(actions.slice(managerStart), /data-sheet="purposes"|set-purposes/);
+  const choices = sourceBlock(client, "function purposeChoices", "function renderReceiveControls");
+  assert.match(choices, /purposesFor\(\{ allowSexual \}\)/);
+  const events = sourceBlock(client, "function renderEvent", "function renderThreadHead");
+  assert.match(events, /receivable && view\.role === "manager" && view\.status === "active"\s*\? renderReceiveControls\(event, view\)/, "only the manager receives, only while active");
+  assert.match(sourceBlock(client, "function renderReceiveControls", "function renderTally"), /rewardsFor\(view\.tone, view\.ngWords\)/);
+  assert.match(events, /case "received": \{[\s\S]*?rewardLabel\(event\.reward\)/);
+  const overlay = sourceBlock(client, "function renderReceiptOverlay", "function renderReceipts");
+  assert.match(overlay, /献上完了/);
+  assert.match(overlay, /非譲渡・換金不可 ・ AnjuPay only/);
+  assert.doesNotMatch(`${overlay}${styles}`, /PayPay|paypay/i, "the completion screen is the ranch's own, not a real payment app's");
+  assert.doesNotMatch(`${client}${styles}`, /tribute-wallet-anim/);
+  assert.match(styles, /\.tribute-done-check circle/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.tribute-done-check path \{ animation: none; stroke-dashoffset: 0; \}/);
+  assert.match(design, /性的な名目は、預ける側が契約で許した時だけ/);
+  assert.match(design, /受け取りは「相手が確かに見た」という記録/);
 });

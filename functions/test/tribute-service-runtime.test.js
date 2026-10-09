@@ -867,3 +867,123 @@ test("a manager can add, show and remove an optional X profile; payers see it on
   });
   assert.equal((await harness.act("viewer", "board")).managers[0].xHandle, "", "a malformed stored value is never returned");
 });
+
+test("a manager's chosen icon reaches the board, the card, contracts, receipts and the ranking", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager", { avatar: 7 });
+  assert.equal(harness.firestore.read("tributeProfiles/manager").card.avatar, 7);
+  await confirmAge(harness, "payer");
+  assert.equal((await harness.act("payer", "board")).managers[0].avatar, 7);
+  assert.equal((await harness.act("payer", "manager", { publicManagerId })).card.avatar, 7);
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId);
+  assert.equal(harness.contract(contractId).managerCard.avatar, 7, "the contract keeps the icon it was signed with");
+  const receipts = await harness.act("payer", "receipts");
+  assert.equal(receipts.receipts[0].avatar, 7);
+  const rankings = await harness.act("payer", "rankings");
+  assert.equal(rankings.managers[0].avatar, 7);
+  const state = await harness.act("payer", "state");
+  assert.equal(state.contracts.find((contract) => contract.contractId === contractId).manager.avatar, 7);
+
+  harness.advance(2_100);
+  const changed = await harness.act("manager", "save_profile", {
+    card: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 10, avatar: 99 },
+    accepting: true,
+  });
+  assert.equal(changed.profile.card.avatar, 0, "an unknown icon falls back to the letter sigil");
+  harness.firestore.write("tributeProfiles/manager", {
+    ...harness.firestore.read("tributeProfiles/manager"),
+    card: { ...harness.firestore.read("tributeProfiles/manager").card, avatar: "../../evil" },
+  });
+  assert.equal((await harness.act("payer", "board")).managers[0].avatar, 0, "a malformed stored value is never returned");
+});
+
+test("named fees need the payer's consent for sexual names, are counted per contract, and void when consent is withdrawn", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  assert.equal(harness.contract(contractId).allowSexualPurposes, false, "consent is off by default");
+  await rejects(harness.act("manager", "request", { contractId, amount: 50, purpose: "edging" }), /性的な名目を許していません/);
+  await rejects(harness.act("manager", "request", { contractId, amount: 50, purpose: "bogus" }), /名目を選び直して/);
+  const managed = await harness.act("manager", "request", { contractId, amount: 50, purpose: "management" });
+  await harness.act("payer", "tribute", { contractId, kind: "request", requestId: managed.requestId, amount: 50, clientRequestId: nextRequestId() });
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, purpose: "release", clientRequestId: nextRequestId() }), /性的な名目を許していません/);
+  await rejects(harness.act("manager", "set_purposes", { contractId, allowSexualPurposes: true }), /この操作はできません/, "the manager cannot grant it");
+
+  await harness.act("payer", "set_purposes", { contractId, allowSexualPurposes: true });
+  harness.advance(2_100);
+  const edging = await harness.act("manager", "request", { contractId, amount: 30, purpose: "edging", note: "まだダメ" });
+  const paid = await harness.act("payer", "tribute", { contractId, kind: "request", requestId: edging.requestId, amount: 30, clientRequestId: nextRequestId() });
+  assert.equal(paid.receipt.purpose, "edging", "the request's name travels to the receipt");
+  await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, purpose: "edging", clientRequestId: nextRequestId() });
+  assert.deepEqual(harness.contract(contractId).purposeCounts, { management: 1, edging: 2 });
+  assert.deepEqual(paid.contract.purposeCounts, { management: 1, edging: 1 });
+  harness.advance(2_100);
+  const release = await harness.act("manager", "request", { contractId, amount: 30, purpose: "release" });
+  assert.equal((await harness.act("payer", "state")).contracts[0].pendingRequests[0].purpose, "release");
+
+  const withdrawn = await harness.act("payer", "set_purposes", { contractId, allowSexualPurposes: false });
+  assert.equal(withdrawn.contract.allowSexualPurposes, false);
+  assert.deepEqual(withdrawn.contract.pendingRequests, [], "pending sexual-name requests are voided at once");
+  assert.deepEqual(withdrawn.contract.purposeCounts, { management: 1 }, "sexual counts are no longer shown");
+  const tail = harness.events(contractId).slice(-2);
+  assert.deepEqual(tail.map((event) => [event.type, event.reason ?? event.allowSexualPurposes]), [["purposes_changed", false], ["request_cancelled", "purpose"]]);
+  assert.equal(tail[1].requestId, release.requestId);
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "request", requestId: release.requestId, amount: 30, clientRequestId: nextRequestId() }), /残っていません/);
+  const unchanged = await harness.act("payer", "set_purposes", { contractId, allowSexualPurposes: false });
+  assert.equal(unchanged.unchanged, true);
+  const applied = harness.events(contractId)[0];
+  assert.equal(applied.allowSexualPurposes, false, "the manager sees the consent in the application");
+});
+
+test("the manager receives each payer tribute once, may add a reward, and the payer's receipt records it", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000, p2: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId);
+  const entryEvent = harness.events(contractId).find((event) => event.type === "tribute" && event.kind === "entry");
+  assert.ok(entryEvent.receivedAt > 0, "the entry fee counts as received when the manager accepts");
+  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: entryEvent.seq }), /受け取れる献上が見つかりません/);
+
+  const given = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 50, clientRequestId: nextRequestId() });
+  assert.equal(given.contract.awaitingReceipt, 1, "both sides can see that the tribute waits to be received");
+  const managerView = (await harness.act("manager", "state")).contracts.find((contract) => contract.contractId === contractId);
+  assert.equal(managerView.awaitingReceipt, 1);
+  const tribute = harness.events(contractId).at(-1);
+  assert.equal(tribute.type, "tribute");
+  assert.equal(tribute.receiptId, given.receipt.receiptId);
+  assert.equal(tribute.receivedAt, undefined);
+
+  await rejects(harness.act("payer", "receive", { contractId, tributeSeq: tribute.seq, reward: "gohoubi" }), /この操作はできません/);
+  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "arigato" }), /選べません/, "a sweet-only reward is not offered under harsh words");
+  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: 999 }), /受け取れる献上が見つかりません/);
+  const balanceBefore = harness.balance("manager");
+  harness.advance(60_000);
+  const received = await harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "gohoubi" });
+  assert.equal(harness.balance("manager"), balanceBefore, "receiving moves no Pay");
+  assert.equal(received.contract.rewardCount, 1);
+  assert.equal(received.contract.awaitingReceipt, 0);
+  const marked = harness.events(contractId).find((event) => event.seq === tribute.seq);
+  assert.equal(marked.reward, "gohoubi");
+  assert.ok(marked.receivedAt > tribute.createdAt);
+  const last = harness.events(contractId).at(-1);
+  assert.deepEqual([last.type, last.actor, last.tributeSeq, last.reward, last.amount], ["received", "manager", tribute.seq, "gohoubi", 50]);
+  const receipt = (await harness.act("payer", "receipts")).receipts.find((row) => row.receiptId === given.receipt.receiptId);
+  assert.equal(receipt.reward, "gohoubi");
+  assert.equal(receipt.receivedAt, marked.receivedAt);
+  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq }), /もう受け取っています/);
+  const payerState = (await harness.act("payer", "state")).contracts.find((contract) => contract.contractId === contractId);
+  assert.equal(payerState.unread > 0, true, "the payer sees the reward as unread");
+
+  const plain = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  const plainEvent = harness.events(contractId).at(-1);
+  await harness.act("manager", "receive", { contractId, tributeSeq: plainEvent.seq });
+  assert.equal(harness.events(contractId).at(-1).reward, undefined);
+  assert.equal(harness.contract(contractId).rewardCount, 1, "receiving without a reward is not counted as one");
+  assert.ok(plain.receipt.receiptId);
+
+  const ngContract = await startContract(harness, "manager", "p2", publicManagerId, { ngWords: ["ざこ"] });
+  await harness.act("p2", "tribute", { contractId: ngContract, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  const ngTribute = harness.events(ngContract).at(-1);
+  await rejects(harness.act("manager", "receive", { contractId: ngContract, tributeSeq: ngTribute.seq, reward: "zako" }), /選べません/, "a reward that contains the payer's NG word is refused");
+  await harness.act("p2", "terminate", { contractId: ngContract });
+  await rejects(harness.act("manager", "receive", { contractId: ngContract, tributeSeq: ngTribute.seq }), /終了しています/, "nothing is sent after the payer leaves");
+});

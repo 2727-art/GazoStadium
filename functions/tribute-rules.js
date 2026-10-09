@@ -15,6 +15,38 @@ const TONES = Object.freeze(["sweet", "normal", "harsh"]);
 const DISCLOSURES = Object.freeze(["nekama", "as_is", "undisclosed"]);
 const MANAGER_STYLES = Object.freeze(["harsh", "cold", "sweet"]);
 const SIGIL_COLORS = Object.freeze([0, 1, 2, 3, 4, 5]);
+// 管理人の印のアイコン。0 はペルソナ名の1文字、1〜12 は用意したアイコン（画像のアップロードはない）。
+const AVATAR_IDS = Object.freeze([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+const AVATAR_MAX = 12;
+
+// 保存済みの値を読む時も、範囲外は端のアイコンに寄せず文字の印に戻す（クライアントの avatarId と同じ）。
+function normalizeAvatar(value) {
+  return pickOption(value, AVATAR_IDS, 0);
+}
+// 請求と献上の名目。sexual の名目は、預ける側が契約で許した時だけ使え、許可を外すと表示もしない。
+const PURPOSES = Object.freeze([
+  Object.freeze({ id: "management", label: "管理費", sexual: false }),
+  Object.freeze({ id: "reward_fee", label: "ご褒美代", sexual: false }),
+  Object.freeze({ id: "penalty", label: "罰金", sexual: false }),
+  Object.freeze({ id: "edging", label: "寸止め料", sexual: true }),
+  Object.freeze({ id: "release", label: "射精料", sexual: true }),
+  Object.freeze({ id: "leak_penalty", label: "お漏らし罰金", sexual: true }),
+]);
+const PURPOSE_IDS = Object.freeze(PURPOSES.map((purpose) => purpose.id));
+const SEXUAL_PURPOSE_IDS = Object.freeze(PURPOSES.filter((purpose) => purpose.sexual).map((purpose) => purpose.id));
+// 受け取った時に添える短い承認。押すのは毎回管理人で、システムからは出さない。言葉の強さごとに選べるものが変わる。
+const REWARDS = Object.freeze([
+  Object.freeze({ id: "gohoubi", label: "ご褒美♡", tones: Object.freeze(["sweet", "normal", "harsh"]) }),
+  Object.freeze({ id: "fufu", label: "ふふ♡ご褒美♡", tones: Object.freeze(["sweet", "normal", "harsh"]) }),
+  Object.freeze({ id: "iiko", label: "いい子♡", tones: Object.freeze(["sweet", "normal"]) }),
+  Object.freeze({ id: "erai", label: "えらいね", tones: Object.freeze(["sweet", "normal"]) }),
+  Object.freeze({ id: "arigato", label: "ありがと♡", tones: Object.freeze(["sweet"]) }),
+  Object.freeze({ id: "yoku", label: "よくできました", tones: Object.freeze(["normal"]) }),
+  Object.freeze({ id: "zako", label: "ざこ♡", tones: Object.freeze(["harsh"]) }),
+  Object.freeze({ id: "soreppocchi", label: "それっぽっち？", tones: Object.freeze(["harsh"]) }),
+  Object.freeze({ id: "tsugi", label: "次も持ってきな", tones: Object.freeze(["harsh"]) }),
+]);
+const RECEIVABLE_KINDS = Object.freeze(["request", "silent"]);
 const REPORT_REASONS = Object.freeze([
   "external_trade",
   "personal_info",
@@ -214,6 +246,7 @@ function normalizeManagerCard(value) {
   const style = pickEnum(value?.style, MANAGER_STYLES);
   const entryFee = pickOption(value?.entryFee, ENTRY_FEE_OPTIONS);
   const sigil = pickOption(value?.sigil, SIGIL_COLORS, 0);
+  const avatar = normalizeAvatar(value?.avatar);
   if (!personaName) return { error: "ペルソナ名を1〜16文字で入力してください。" };
   if (!disclosure) return { error: "中の人の札を選んでください。" };
   if (!style) return { error: "管理の型を選んでください。" };
@@ -232,6 +265,7 @@ function normalizeManagerCard(value) {
       style,
       entryFee,
       sigil,
+      avatar,
       xHandle: x.xHandle,
       accepting: value?.accepting === true,
     },
@@ -263,9 +297,42 @@ function normalizeApplication(value, { entryFee = 0 } = {}) {
       ngWords,
       allowReportRequests: value?.allowReportRequests === true,
       rankOptIn: value?.rankOptIn === true,
+      allowSexualPurposes: value?.allowSexualPurposes === true,
       walletName: normalizeWalletName(value?.walletName),
     },
   };
+}
+
+// 名目なしは空文字。性的な名目は、契約で預ける側が許している時だけ通す。
+function normalizePurpose(value, { allowSexual = false } = {}) {
+  const purpose = String(value ?? "");
+  if (!purpose) return { purpose: "" };
+  if (!PURPOSE_IDS.includes(purpose)) return { error: "名目を選び直してください。" };
+  if (SEXUAL_PURPOSE_IDS.includes(purpose) && allowSexual !== true) {
+    return { error: "この契約では、預ける側が性的な名目を許していません。" };
+  }
+  return { purpose };
+}
+
+// 保存済みの名目を表示用に読む。許可が外れた契約では、性的な名目を出さない。
+function visiblePurpose(value, { allowSexual = false } = {}) {
+  const purpose = String(value ?? "");
+  if (!PURPOSE_IDS.includes(purpose)) return "";
+  return SEXUAL_PURPOSE_IDS.includes(purpose) && allowSexual !== true ? "" : purpose;
+}
+
+function rewardsFor(tone, ngWords = []) {
+  const key = TONES.includes(tone) ? tone : "normal";
+  return REWARDS.filter((reward) => reward.tones.includes(key) && !containsNgWord(reward.label, ngWords));
+}
+
+function normalizeReward(value, { tone = "normal", ngWords = [] } = {}) {
+  const reward = String(value ?? "");
+  if (!reward) return { reward: "" };
+  if (!rewardsFor(tone, ngWords).some((entry) => entry.id === reward)) {
+    return { error: "このご褒美は、この契約では選べません。" };
+  }
+  return { reward };
 }
 
 function normalizeMessage(value) {
@@ -369,6 +436,14 @@ module.exports = {
   DISCLOSURES,
   MANAGER_STYLES,
   SIGIL_COLORS,
+  PURPOSES,
+  PURPOSE_IDS,
+  SEXUAL_PURPOSE_IDS,
+  REWARDS,
+  RECEIVABLE_KINDS,
+  AVATAR_IDS,
+  AVATAR_MAX,
+  normalizeAvatar,
   REPORT_REASONS,
   SEVERE_REPORT_REASONS,
   POLICIES,
@@ -388,6 +463,10 @@ module.exports = {
   X_HANDLE_PATTERN,
   normalizeWalletName,
   normalizeApplication,
+  normalizePurpose,
+  visiblePurpose,
+  rewardsFor,
+  normalizeReward,
   normalizeMessage,
   tributeFee,
   subsidyFor,

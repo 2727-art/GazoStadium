@@ -41,6 +41,84 @@ export const DISCLOSURE_LABELS = Object.freeze({
 export const DISCLOSURE_SHORT = Object.freeze({ nekama: "ネカマ", as_is: "素", undisclosed: "非開示" });
 export const STYLE_LABELS = Object.freeze({ harsh: "罵倒", cold: "事務的", sweet: "甘やかし" });
 export const SIGIL_COLORS = Object.freeze(["#ff4fa3", "#b48cff", "#5fd4ff", "#ffd166", "#7ee08a", "#ff7a59"]);
+// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある12種から選ぶ。
+// 1〜6 はゆるめの絵、7〜12 は同じ6人の大人びた絵。
+export const AVATARS = Object.freeze([
+  Object.freeze({ id: 1, label: "地雷" }),
+  Object.freeze({ id: 2, label: "量産" }),
+  Object.freeze({ id: 3, label: "ギャル" }),
+  Object.freeze({ id: 4, label: "ゆめかわ" }),
+  Object.freeze({ id: 5, label: "サブカル" }),
+  Object.freeze({ id: 6, label: "あざと" }),
+  Object.freeze({ id: 7, label: "地雷（艶）" }),
+  Object.freeze({ id: 8, label: "量産（艶）" }),
+  Object.freeze({ id: 9, label: "ギャル（艶）" }),
+  Object.freeze({ id: 10, label: "ゆめかわ（艶）" }),
+  Object.freeze({ id: 11, label: "サブカル（艶）" }),
+  Object.freeze({ id: 12, label: "あざと（艶）" }),
+]);
+export const AVATAR_MAX = AVATARS.length;
+
+export function avatarId(value) {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id >= 1 && id <= AVATAR_MAX ? id : 0;
+}
+
+export function avatarUrl(value) {
+  const id = avatarId(value);
+  return id ? new URL(`./assets/tribute-avatars/avatar-${String(id).padStart(2, "0")}.webp`, import.meta.url).href : "";
+}
+// 請求と献上の名目。サーバーの PURPOSES と同じ。sexual の名目は、預ける側が契約で許した時だけ使え、表示もする。
+export const PURPOSES = Object.freeze([
+  Object.freeze({ id: "management", label: "管理費", sexual: false }),
+  Object.freeze({ id: "reward_fee", label: "ご褒美代", sexual: false }),
+  Object.freeze({ id: "penalty", label: "罰金", sexual: false }),
+  Object.freeze({ id: "edging", label: "寸止め料", sexual: true }),
+  Object.freeze({ id: "release", label: "射精料", sexual: true }),
+  Object.freeze({ id: "leak_penalty", label: "お漏らし罰金", sexual: true }),
+]);
+const PURPOSE_IDS = Object.freeze(PURPOSES.map((purpose) => purpose.id));
+const SEXUAL_PURPOSE_IDS = Object.freeze(PURPOSES.filter((purpose) => purpose.sexual).map((purpose) => purpose.id));
+export const SEXUAL_PURPOSE_SUMMARY = PURPOSES.filter((purpose) => purpose.sexual).map((purpose) => purpose.label).join("・");
+
+// 受け取った時に添える短い承認。サーバーの REWARDS と同じ。押すのは毎回管理人。
+export const REWARDS = Object.freeze([
+  Object.freeze({ id: "gohoubi", label: "ご褒美♡", tones: Object.freeze(["sweet", "normal", "harsh"]) }),
+  Object.freeze({ id: "fufu", label: "ふふ♡ご褒美♡", tones: Object.freeze(["sweet", "normal", "harsh"]) }),
+  Object.freeze({ id: "iiko", label: "いい子♡", tones: Object.freeze(["sweet", "normal"]) }),
+  Object.freeze({ id: "erai", label: "えらいね", tones: Object.freeze(["sweet", "normal"]) }),
+  Object.freeze({ id: "arigato", label: "ありがと♡", tones: Object.freeze(["sweet"]) }),
+  Object.freeze({ id: "yoku", label: "よくできました", tones: Object.freeze(["normal"]) }),
+  Object.freeze({ id: "zako", label: "ざこ♡", tones: Object.freeze(["harsh"]) }),
+  Object.freeze({ id: "soreppocchi", label: "それっぽっち？", tones: Object.freeze(["harsh"]) }),
+  Object.freeze({ id: "tsugi", label: "次も持ってきな", tones: Object.freeze(["harsh"]) }),
+]);
+export const RECEIVABLE_KINDS = Object.freeze(["request", "silent"]);
+
+export function visiblePurpose(value, { allowSexual = false } = {}) {
+  const purpose = String(value ?? "");
+  if (!PURPOSE_IDS.includes(purpose)) return "";
+  return SEXUAL_PURPOSE_IDS.includes(purpose) && allowSexual !== true ? "" : purpose;
+}
+
+export function purposeLabel(value, options) {
+  const purpose = visiblePurpose(value, options);
+  return PURPOSES.find((entry) => entry.id === purpose)?.label || "";
+}
+
+export function purposesFor({ allowSexual = false } = {}) {
+  return PURPOSES.filter((purpose) => !purpose.sexual || allowSexual === true);
+}
+
+export function rewardsFor(tone, ngWords = []) {
+  const key = ["sweet", "normal", "harsh"].includes(tone) ? tone : "normal";
+  return REWARDS.filter((reward) => reward.tones.includes(key) && !containsNgWord(reward.label, ngWords));
+}
+
+export function rewardLabel(value) {
+  return REWARDS.find((reward) => reward.id === value)?.label || "";
+}
+
 export const KIND_LABELS = Object.freeze({
   entry: "入場料",
   request: "請求に応えて",
@@ -186,6 +264,17 @@ function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+function purposeCountsView(raw) {
+  const counts = object(raw.purposeCounts);
+  const allowSexual = raw.allowSexualPurposes === true;
+  const view = {};
+  for (const purpose of PURPOSE_IDS) {
+    const count = integer(counts[purpose]);
+    if (count > 0 && visiblePurpose(purpose, { allowSexual })) view[purpose] = count;
+  }
+  return view;
+}
+
 function cardSnapshot(card) {
   const source = object(card);
   return {
@@ -193,6 +282,7 @@ function cardSnapshot(card) {
     disclosure: String(source.disclosure || "undisclosed"),
     style: String(source.style || "cold"),
     sigil: integer(source.sigil, 0, 5),
+    avatar: avatarId(source.avatar),
   };
 }
 
@@ -229,6 +319,7 @@ export function viewContract(contract, uid, now = Date.now()) {
     ngWords: Array.isArray(raw.ngWords) ? raw.ngWords.slice(0, LIMITS.ngWordCount).map(String) : [],
     allowReportRequests: raw.allowReportRequests === true,
     rankOptIn: raw.rankOptIn === true,
+    allowSexualPurposes: raw.allowSexualPurposes === true,
     entryFee: integer(raw.entryFee, 0, 1_000),
     renewal: raw.renewal === true,
     createdAt: integer(raw.createdAt),
@@ -238,6 +329,9 @@ export function viewContract(contract, uid, now = Date.now()) {
     updatedAt: integer(raw.updatedAt),
     totalTributed,
     tributeCount: integer(raw.tributeCount),
+    purposeCounts: purposeCountsView(raw),
+    rewardCount: integer(raw.rewardCount),
+    awaitingReceipt: status === "active" ? integer(raw.awaitingReceipt) : 0,
     todayTributed: todayUsed(raw, now),
     allowance: status === "active" ? tributeAllowance(raw, caps, now) : 0,
     escrowBalance,
@@ -248,6 +342,7 @@ export function viewContract(contract, uid, now = Date.now()) {
         requestId,
         amount: integer(entry?.amount),
         note: String(entry?.note || "").slice(0, LIMITS.requestNote),
+        purpose: visiblePurpose(entry?.purpose, { allowSexual: raw.allowSexualPurposes === true }),
         createdAt: integer(entry?.createdAt),
       }))
       .filter((entry) => /^[a-f0-9]{16}$/.test(entry.requestId) && entry.amount > 0)

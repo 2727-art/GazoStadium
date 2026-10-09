@@ -84,6 +84,18 @@ test("manager cards need a persona, a disclosure tag and a style but never a gen
   assert.match(rules.normalizeManagerCard({ personaName: "ミオ", disclosure: "female", style: "harsh", entryFee: 0 }).error, /中の人の札/);
 });
 
+test("manager cards take one of the twelve prepared icons or fall back to the letter sigil", () => {
+  const base = { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 };
+  assert.deepEqual([...rules.AVATAR_IDS], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  assert.equal(rules.AVATAR_MAX, 12);
+  assert.equal(rules.normalizeManagerCard(base).card.avatar, 0, "no icon keeps the letter sigil");
+  for (const avatar of [1, 7, 12, "5"]) assert.equal(rules.normalizeManagerCard({ ...base, avatar }).card.avatar, Number(avatar));
+  for (const avatar of [13, -1, 2.5, "https://example.com/a.png", "../avatar-01.webp", null, { id: 3 }]) {
+    assert.equal(rules.normalizeManagerCard({ ...base, avatar }).card.avatar, 0, String(avatar));
+    assert.equal(rules.normalizeAvatar(avatar), 0, `stored ${String(avatar)}`);
+  }
+});
+
 test("fees, subsidies, offering splits and honor tiers", () => {
   assert.equal(rules.tributeFee(1), 1);
   assert.equal(rules.tributeFee(10), 1);
@@ -154,4 +166,46 @@ test("the optional X profile accepts only an x.com profile and stores just the u
   assert.equal(rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 }).card.xHandle, "");
   assert.match(rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio/status/1" }).error, /x\.com/);
   assert.match(rules.normalizeManagerCard({ personaName: "ミオ様", intro: "@mio_sama で探して", disclosure: "nekama", style: "harsh", entryFee: 0 }).error, /SNSのID/, "the intro still cannot carry an SNS ID");
+});
+
+test("named fees: sexual names only with the payer's consent, and hidden again when it is withdrawn", () => {
+  assert.deepEqual(rules.PURPOSES.map((purpose) => [purpose.id, purpose.label, purpose.sexual]), [
+    ["management", "管理費", false],
+    ["reward_fee", "ご褒美代", false],
+    ["penalty", "罰金", false],
+    ["edging", "寸止め料", true],
+    ["release", "射精料", true],
+    ["leak_penalty", "お漏らし罰金", true],
+  ]);
+  assert.deepEqual(rules.normalizePurpose(""), { purpose: "" });
+  assert.deepEqual(rules.normalizePurpose("penalty"), { purpose: "penalty" });
+  assert.match(rules.normalizePurpose("bogus").error, /名目を選び直して/);
+  for (const purpose of rules.SEXUAL_PURPOSE_IDS) {
+    assert.match(rules.normalizePurpose(purpose).error, /性的な名目を許していません/, purpose);
+    assert.deepEqual(rules.normalizePurpose(purpose, { allowSexual: true }), { purpose });
+    assert.equal(rules.visiblePurpose(purpose), "", `${purpose} is hidden without consent`);
+    assert.equal(rules.visiblePurpose(purpose, { allowSexual: true }), purpose);
+  }
+  assert.equal(rules.visiblePurpose("<script>"), "");
+  const base = { caps: { perTribute: 100, perDay: 300, total: 1_000 }, durationDays: 3, tone: "harsh" };
+  assert.equal(rules.normalizeApplication(base).application.allowSexualPurposes, false, "consent is off unless the payer ticks it");
+  assert.equal(rules.normalizeApplication({ ...base, allowSexualPurposes: "true" }).application.allowSexualPurposes, false);
+  assert.equal(rules.normalizeApplication({ ...base, allowSexualPurposes: true }).application.allowSexualPurposes, true);
+});
+
+test("rewards are short fixed praises chosen per tone and filtered by the payer's NG words", () => {
+  assert.deepEqual(rules.rewardsFor("sweet").map((reward) => reward.id), ["gohoubi", "fufu", "iiko", "erai", "arigato"]);
+  assert.deepEqual(rules.rewardsFor("normal").map((reward) => reward.id), ["gohoubi", "fufu", "iiko", "erai", "yoku"]);
+  assert.deepEqual(rules.rewardsFor("harsh").map((reward) => reward.id), ["gohoubi", "fufu", "zako", "soreppocchi", "tsugi"]);
+  assert.deepEqual(rules.rewardsFor("unknown"), rules.rewardsFor("normal"));
+  assert.ok(!rules.rewardsFor("harsh", ["ざこ"]).some((reward) => reward.id === "zako"));
+  assert.deepEqual(rules.normalizeReward(""), { reward: "" });
+  assert.deepEqual(rules.normalizeReward("zako", { tone: "harsh" }), { reward: "zako" });
+  assert.match(rules.normalizeReward("zako", { tone: "sweet" }).error, /選べません/);
+  assert.match(rules.normalizeReward("zako", { tone: "harsh", ngWords: ["ざこ"] }).error, /選べません/);
+  for (const reward of rules.REWARDS) {
+    assert.equal(rules.forbiddenReason(reward.label), "", reward.label);
+    assert.ok(Array.from(reward.label).length <= 12, reward.label);
+  }
+  assert.deepEqual([...rules.RECEIVABLE_KINDS], ["request", "silent"]);
 });

@@ -186,6 +186,21 @@
 
 .tribute-sigil.is-large { width: 64px; height: 64px; font-size: 1.6rem; }
 
+.tribute-sigil.is-card { width: 50px; height: 50px; font-size: 1.25rem; }
+
+/* アイコンの印。印の色を縁にして、絵を丸く収める。 */
+.tribute-sigil.has-avatar { padding: 2px; background: var(--sigil, #ff4fa3); overflow: hidden; }
+.tribute-sigil.has-avatar.is-large { width: 76px; height: 76px; padding: 3px; }
+.tribute-sigil.has-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--tr-panel-2);
+  user-select: none;
+}
+
 .tribute-tag {
   display: inline-block;
   margin: 2px 4px 2px 0;
@@ -396,6 +411,66 @@
 .tribute-swatches input { position: absolute; opacity: 0; }
 .tribute-swatches span { display: block; width: 30px; height: 30px; border-radius: 50%; background: var(--sigil); border: 2px solid transparent; }
 .tribute-swatches input:checked + span { border-color: #fff; box-shadow: 0 0 0 2px var(--sigil); }
+
+/* 管理人カードの印の選択 */
+.tribute-card-preview {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--tr-line);
+  border-radius: 14px;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--sigil, #ff4fa3) 18%, var(--tr-panel-2)), var(--tr-panel-2) 70%);
+}
+.tribute-card-preview > div { min-width: 0; }
+.tribute-card-preview small { display: block; font-size: 0.7rem; }
+.tribute-card-preview strong { display: block; font-size: 1.1rem; overflow-wrap: anywhere; }
+/* 6列×2段（ゆるめの絵 / 大人びた絵）。狭い画面でも段を崩さない。 */
+.tribute-avatar-picker { display: grid; gap: 10px; }
+.tribute-avatar-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px 8px; max-width: 460px; padding: 4px; }
+.tribute-avatar-picker label { position: relative; display: grid; place-items: center; cursor: pointer; }
+.tribute-avatar-picker .tribute-avatar-letter { display: flex; gap: 10px; align-items: center; justify-content: flex-start; font-size: 0.82rem; color: var(--tr-mist); }
+.tribute-avatar-letter .tribute-avatar-choice { flex: 0 0 auto; width: 44px; }
+.tribute-avatar-picker input { position: absolute; opacity: 0; pointer-events: none; }
+.tribute-avatar-choice {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 64px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.tribute-avatar-choice img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  opacity: 0.82;
+  transition: opacity 0.15s ease;
+  user-select: none;
+}
+.tribute-avatar-choice.is-letter {
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--sigil, #ff4fa3) 85%, #fff), var(--sigil, #ff4fa3));
+  color: #160b14;
+  font-size: 1.2rem;
+  font-weight: 900;
+}
+.tribute-avatar-picker label:hover img { opacity: 1; }
+/* 選んだ印は、印の色の輪で囲む（輪は外側に描き、絵の大きさを削らない）。 */
+.tribute-avatar-picker input:checked + .tribute-avatar-choice {
+  box-shadow: 0 0 0 2px var(--tr-panel), 0 0 0 4px var(--sigil, #ff4fa3), 0 0 16px color-mix(in srgb, var(--sigil, #ff4fa3) 60%, transparent);
+  transform: scale(1.04);
+}
+.tribute-avatar-picker input:checked + .tribute-avatar-choice img { opacity: 1; }
+.tribute-avatar-picker input:focus-visible + .tribute-avatar-choice { outline: 2px solid var(--tr-accent); outline-offset: 5px; }
+@media (prefers-reduced-motion: reduce) {
+  .tribute-avatar-choice,
+  .tribute-avatar-choice img { transition: none; }
+  .tribute-avatar-picker input:checked + .tribute-avatar-choice { transform: none; }
+}
 .tribute-form-error { color: var(--tr-danger); font-size: 0.82rem; min-height: 1em; }
 
 /* スレッド */
@@ -475,6 +550,65 @@
 .tribute-stamp span { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.12em; }
 .tribute-stamp strong { font-size: 1.3rem; }
 .tribute-stamp small { font-size: 0.66rem; }
+.tribute-stamp .tribute-received,
+.tribute-stamp .tribute-awaiting { margin-top: 4px; padding: 2px 10px; border-radius: 999px; font-size: 0.68rem; letter-spacing: 0.04em; }
+.tribute-stamp .tribute-received { background: #3ddc97; color: #08261a; }
+.tribute-stamp .tribute-received i { margin-right: 4px; font-style: normal; }
+.tribute-stamp .tribute-received time { color: inherit; font-size: inherit; font-weight: 700; }
+.tribute-stamp .tribute-awaiting { border: 1px dashed rgba(232, 194, 122, 0.6); color: var(--tr-gold); }
+.tribute-event.is-received .tribute-stamp { border-color: #3ddc97; }
+
+/* 名目 */
+.tribute-purpose-tag {
+  justify-self: start;
+  padding: 1px 10px;
+  border: 1px solid rgba(232, 194, 122, 0.55);
+  border-radius: 999px;
+  color: var(--tr-gold);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.tribute-stamp .tribute-purpose-tag { justify-self: center; letter-spacing: 0.04em; }
+.tribute-purpose-tag.is-sexual { border-color: rgba(255, 79, 163, 0.65); color: #ffb3d6; background: rgba(255, 79, 163, 0.12); }
+.tribute-purposes label.is-sexual span { border-color: rgba(255, 79, 163, 0.4); color: #ffb3d6; }
+.tribute-confirm-purpose { text-align: center; color: var(--tr-mist); font-size: 0.82rem; }
+.tribute-confirm-purpose .tribute-purpose-tag { margin-right: 4px; }
+.tribute-check.is-sexual small { display: block; margin-top: 2px; font-size: 0.74rem; }
+.tribute-tally { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.tribute-tally span { padding: 2px 10px; border: 1px solid var(--tr-line); border-radius: 999px; color: var(--tr-mist); font-size: 0.72rem; }
+.tribute-tally b { color: var(--tr-text); }
+.tribute-tally .is-sexual { border-color: rgba(255, 79, 163, 0.4); color: #ffb3d6; }
+.tribute-tally .is-reward { border-color: rgba(255, 79, 163, 0.6); background: rgba(255, 79, 163, 0.12); color: #ffd1e6; }
+.tribute-tally .is-awaiting { border-color: rgba(232, 194, 122, 0.5); color: var(--tr-gold); }
+.tribute-chip.is-awaiting { background: rgba(232, 194, 122, 0.16); color: var(--tr-gold); }
+
+/* 受け取る・ご褒美（押すのは管理人） */
+.tribute-receive { display: grid; justify-items: center; gap: 6px; max-width: min(100%, 420px); margin-top: 6px; }
+.tribute-reward-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.tribute-reward-chips button {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 79, 163, 0.55);
+  border-radius: 999px;
+  background: rgba(255, 79, 163, 0.12);
+  color: #ffd1e6;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tribute-reward-chips button:hover { background: rgba(255, 79, 163, 0.24); }
+.tribute-event.is-reward .tribute-bubble {
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 79, 163, 0.7);
+  background: linear-gradient(135deg, rgba(255, 79, 163, 0.55), rgba(193, 61, 255, 0.45));
+  color: #fff;
+  font-weight: 900;
+  font-size: 1.02rem;
+  box-shadow: 0 0 18px rgba(255, 79, 163, 0.35);
+}
+.tribute-event.is-received p { color: #9ff0c9; }
+.tribute-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 .tribute-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .tribute-give-button { min-width: 140px; }
@@ -568,12 +702,39 @@
   background: rgba(5, 2, 8, 0.82);
   animation: tribute-fade 200ms ease-out;
 }
-.tribute-wallet-anim { position: relative; width: 120px; height: 78px; }
-.tribute-wallet-body { position: absolute; inset: 18px 0 0; border-radius: 12px; background: linear-gradient(160deg, #6a2246, #2a0d1e); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08); }
-.tribute-wallet-flap { position: absolute; left: 0; right: 0; top: 18px; height: 34px; border-radius: 12px 12px 6px 6px; background: linear-gradient(160deg, #8a2d5c, #4a1533); transform-origin: top; animation: tribute-flap 700ms ease-out forwards; }
-.tribute-wallet-anim i { position: absolute; left: 50%; top: 20px; width: 18px; height: 18px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff3c9, var(--tr-gold)); opacity: 0; animation: tribute-coin 900ms ease-out forwards; }
-.tribute-wallet-anim i:nth-of-type(2) { animation-delay: 120ms; --dx: -34px; }
-.tribute-wallet-anim i:nth-of-type(3) { animation-delay: 240ms; --dx: 30px; }
+/* 献上完了の画面。牧場の色で作り、実在の決済サービスの見た目には似せない。 */
+.tribute-done {
+  --tr-done: #3ddc97;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: min(100%, 360px);
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
+  padding: 22px 20px 16px;
+  border: 1px solid var(--tr-line);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(61, 220, 151, 0.1), transparent 34%), var(--tr-panel);
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  animation: tribute-done-in 260ms ease-out both;
+}
+.tribute-done-check { width: 64px; height: 64px; }
+.tribute-done-check svg { display: block; width: 100%; height: 100%; fill: none; stroke: var(--tr-done); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.tribute-done-check circle { fill: rgba(61, 220, 151, 0.14); stroke-dasharray: 145; stroke-dashoffset: 145; animation: tribute-draw 520ms ease-out forwards; }
+.tribute-done-check path { stroke-width: 4; stroke-dasharray: 36; stroke-dashoffset: 36; animation: tribute-draw 320ms 420ms ease-out forwards; }
+.tribute-done-title { color: var(--tr-done); font-weight: 900; font-size: 1rem; letter-spacing: 0.12em; }
+.tribute-done-amount { font-size: 2.4rem; line-height: 1.1; letter-spacing: 0.02em; color: var(--tr-text); font-variant-numeric: tabular-nums; }
+.tribute-done-to { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 8px; font-size: 0.9rem; }
+.tribute-done-to .tribute-sigil { width: 30px; height: 30px; font-size: 0.85rem; }
+.tribute-done-purpose { padding: 3px 14px; border: 1px solid rgba(255, 79, 163, 0.5); border-radius: 999px; color: #ffb3d6; font-weight: 800; font-size: 0.86rem; }
+.tribute-done-facts { display: grid; gap: 4px; width: 100%; margin: 4px 0 0; padding: 10px 0 0; border-top: 1px solid var(--tr-line); font-size: 0.78rem; }
+.tribute-done-facts div { display: flex; justify-content: space-between; gap: 10px; }
+.tribute-done-facts dt { color: var(--tr-mist); }
+.tribute-done-facts dd { margin: 0; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tribute-done-status { width: 100%; padding: 8px 10px; border-radius: 10px; background: rgba(232, 194, 122, 0.08); color: var(--tr-gold); font-size: 0.76rem; }
+.tribute-done-status.is-received { background: rgba(61, 220, 151, 0.1); color: var(--tr-done); }
+.tribute-done footer { color: var(--tr-mist); font-size: 0.66rem; letter-spacing: 0.06em; }
 .tribute-receipt {
   display: grid;
   gap: 8px;
@@ -587,7 +748,6 @@
   mask: linear-gradient(#000 calc(100% - 8px), transparent 0) top / 100% 100% no-repeat, conic-gradient(from 135deg at top, #000 90deg, transparent 0) bottom / 12px 8px repeat-x;
   -webkit-mask: linear-gradient(#000 calc(100% - 8px), transparent 0) top / 100% 100% no-repeat, conic-gradient(from 135deg at top, #000 90deg, transparent 0) bottom / 12px 8px repeat-x;
 }
-.tribute-receipt-overlay .tribute-receipt { animation: tribute-print 900ms 450ms ease-out both; }
 .tribute-receipt header { display: flex; justify-content: space-between; border-bottom: 1px dashed rgba(42, 34, 48, 0.4); padding-bottom: 6px; font-size: 0.8rem; font-weight: 800; }
 .tribute-receipt-to { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.86rem; font-weight: 800; }
 .tribute-receipt .tribute-sigil { width: 26px; height: 26px; font-size: 0.8rem; }
@@ -597,6 +757,9 @@
 .tribute-receipt dl div { display: flex; justify-content: space-between; gap: 8px; }
 .tribute-receipt dd { margin: 0; font-weight: 800; }
 .tribute-receipt footer { border-top: 1px dashed rgba(42, 34, 48, 0.4); padding-top: 6px; font-size: 0.66rem; text-align: center; color: rgba(42, 34, 48, 0.7); }
+.tribute-receipt-purpose { justify-self: center; padding: 0 10px; border: 1px solid rgba(42, 34, 48, 0.45); border-radius: 999px; font-size: 0.74rem; font-weight: 800; }
+.tribute-receipt-received { text-align: center; font-size: 0.7rem; font-weight: 800; color: #12704a; }
+.tribute-receipt-received b { margin-left: 4px; color: #b0306e; }
 .tribute-receipt-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px; }
 .tribute-receipt.is-small { width: 100%; }
 
@@ -619,13 +782,8 @@
 
 @keyframes tribute-sheet-in { from { transform: translate(-50%, 30px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
 @keyframes tribute-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes tribute-flap { 0% { transform: rotateX(0); } 100% { transform: rotateX(-160deg); } }
-@keyframes tribute-coin {
-  0% { opacity: 0; transform: translate(-50%, 0) scale(0.6); }
-  30% { opacity: 1; }
-  100% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -70px) scale(1); }
-}
-@keyframes tribute-print { from { clip-path: inset(0 0 100% 0); transform: translateY(-16px); } to { clip-path: inset(0 0 0 0); transform: translateY(0); } }
+@keyframes tribute-done-in { from { opacity: 0; transform: translateY(12px) scale(0.97); } to { opacity: 1; transform: none; } }
+@keyframes tribute-draw { to { stroke-dashoffset: 0; } }
 
 @media (max-width: 520px) {
   .tribute-screen { padding: 10px 12px 32px; border-radius: 0; }
@@ -637,10 +795,9 @@
 @media (prefers-reduced-motion: reduce) {
   .tribute-sheet,
   .tribute-receipt-overlay,
-  .tribute-receipt-overlay .tribute-receipt,
-  .tribute-wallet-flap,
-  .tribute-wallet-anim i { animation: none; }
-  .tribute-wallet-anim i { display: none; }
+  .tribute-done { animation: none; }
+  .tribute-done-check circle,
+  .tribute-done-check path { animation: none; stroke-dashoffset: 0; }
   .tribute-hold.is-holding .tribute-hold-fill { transition-duration: 1ms; }
 }
 

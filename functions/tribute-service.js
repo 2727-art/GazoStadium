@@ -20,8 +20,15 @@ const {
   capsAreLowerOrEqual,
   normalizeManagerCard,
   X_HANDLE_PATTERN,
+  normalizeAvatar,
   normalizeWalletName,
   normalizeApplication,
+  normalizePurpose,
+  visiblePurpose,
+  normalizeReward,
+  PURPOSE_IDS,
+  SEXUAL_PURPOSE_IDS,
+  RECEIVABLE_KINDS,
   normalizeMessage,
   tributeFee,
   subsidyFor,
@@ -69,6 +76,8 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "escrow_take",
   "report_balance",
   "request_report",
+  "set_purposes",
+  "receive",
   "mark_read",
   "report_user",
   "receipts",
@@ -100,6 +109,7 @@ const REQUIRED_DEPENDENCIES = Object.freeze([
 const CONTRACT_ID_PATTERN = /^[a-f0-9]{40}$/;
 const PUBLIC_MANAGER_ID_PATTERN = /^[a-f0-9]{24}$/;
 const REQUEST_ID_PATTERN = /^[a-f0-9]{16}$/;
+const RECEIPT_ID_PATTERN = /^[a-f0-9]{40}$/;
 const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const OPEN_STATUSES = Object.freeze(["pending", "active"]);
@@ -194,6 +204,7 @@ function publicCard(profile, monthKey) {
     style: String(card.style || "cold"),
     entryFee: integer(card.entryFee, 0, 1_000, 0),
     sigil: integer(card.sigil, 0, 5, 0),
+    avatar: normalizeAvatar(card.avatar),
     xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
     accepting: profile.accepting,
     honor: honorFor(profile, monthKey),
@@ -210,6 +221,7 @@ function cardSnapshot(card) {
     disclosure: String(source.disclosure || "undisclosed"),
     style: String(source.style || "cold"),
     sigil: integer(source.sigil, 0, 5, 0),
+    avatar: normalizeAvatar(source.avatar),
   };
 }
 
@@ -219,10 +231,23 @@ function pendingRequestList(contract) {
       requestId,
       amount: integer(entry?.amount, 0, 1_000_000, 0),
       note: cleanLine(entry?.note, LIMITS.requestNote),
+      purpose: visiblePurpose(entry?.purpose, { allowSexual: contract.allowSexualPurposes === true }),
       createdAt: integer(entry?.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
     }))
     .filter((entry) => REQUEST_ID_PATTERN.test(entry.requestId) && entry.amount > 0)
     .sort((left, right) => left.createdAt - right.createdAt);
+}
+
+// 名目ごとの回数。許可が外れた契約では、性的な名目の回数を出さない。
+function purposeCountsView(contract) {
+  const counts = object(contract.purposeCounts);
+  const allowSexual = contract.allowSexualPurposes === true;
+  const view = {};
+  for (const purpose of PURPOSE_IDS) {
+    const count = integer(counts[purpose], 0, Number.MAX_SAFE_INTEGER, 0);
+    if (count > 0 && visiblePurpose(purpose, { allowSexual })) view[purpose] = count;
+  }
+  return view;
 }
 
 function viewContract(contract, uid, now) {
@@ -257,6 +282,7 @@ function viewContract(contract, uid, now) {
     ngWords: Array.isArray(contract.ngWords) ? contract.ngWords.slice(0, LIMITS.ngWordCount) : [],
     allowReportRequests: contract.allowReportRequests === true,
     rankOptIn: contract.rankOptIn === true,
+    allowSexualPurposes: contract.allowSexualPurposes === true,
     entryFee: integer(contract.entryFee, 0, 1_000, 0),
     renewal: contract.renewal === true,
     createdAt: integer(contract.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -266,6 +292,9 @@ function viewContract(contract, uid, now) {
     updatedAt: integer(contract.updatedAt, 0, Number.MAX_SAFE_INTEGER, 0),
     totalTributed: integer(contract.totalTributed, 0, Number.MAX_SAFE_INTEGER, 0),
     tributeCount: integer(contract.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    purposeCounts: purposeCountsView(contract),
+    rewardCount: integer(contract.rewardCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    awaitingReceipt: status === "active" ? integer(contract.awaitingReceipt, 0, Number.MAX_SAFE_INTEGER, 0) : 0,
     todayTributed: todayUsed(contract, now),
     allowance: status === "active" ? tributeAllowance(contract, caps, now) : 0,
     escrowBalance: integer(contract.escrowBalance, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -621,6 +650,7 @@ function createTributeService(deps) {
       reportRequestedAt: 0,
       pendingCaps: null,
       pendingCapsEffectiveDateKey: "",
+      awaitingReceipt: 0,
     });
     adjustCounts(ctx, "payer", { payerOpen: -1 });
     adjustCounts(ctx, "manager", wasActive ? { managerActive: -1 } : { managerPending: -1 });
@@ -837,7 +867,7 @@ function createTributeService(deps) {
     return Math.max(0, Math.min(subsidyFor(fee), balance, LIMITS.subsidyManagerMonthly - usedThisMonth));
   }
 
-  function stageTribute(ctx, extra, { kind, amount, requestId = "", note = "", opKey }) {
+  function stageTribute(ctx, extra, { kind, amount, requestId = "", note = "", purpose = "", opKey }) {
     const contract = ctx.contract;
     const caps = ctx.caps || effectiveCaps(contract, ctx.now).caps;
     const violation = capViolation(amount, contract, caps, ctx.now);
@@ -909,7 +939,13 @@ function createTributeService(deps) {
     const usedToday = todayUsed(contract, ctx.now);
     const nextEscrow = fromEscrow ? escrow - amount : escrow;
     const withdrawRequest = contract.escrowWithdrawRequest;
+    // 財布から差し出した献上（請求・無言）は、管理人が「受け取る」まで受け取り待ちになる。
+    // 入場料と管理口座からの徴収は管理人が自分で動かしたので、その場で受け取り済み。
+    const receivable = RECEIVABLE_KINDS.includes(kind);
+    const purposeCounts = object(contract.purposeCounts);
     setContract(ctx, {
+      ...(purpose ? { purposeCounts: { ...purposeCounts, [purpose]: integer(purposeCounts[purpose], 0, Number.MAX_SAFE_INTEGER, 0) + 1 } } : {}),
+      ...(receivable ? { awaitingReceipt: integer(contract.awaitingReceipt, 0, Number.MAX_SAFE_INTEGER, 0) + 1 } : {}),
       totalTributed: integer(contract.totalTributed, 0, Number.MAX_SAFE_INTEGER, 0) + amount,
       tributeCount: integer(contract.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
       todayKey: ctx.dateKey,
@@ -939,10 +975,13 @@ function createTributeService(deps) {
       contractId: ctx.contractId,
       kind,
       amount,
+      ...(purpose ? { purpose } : {}),
       personaName: card.personaName,
       disclosure: card.disclosure,
       sigil: card.sigil,
+      avatar: card.avatar,
       pairCount: pairCountBefore + 1,
+      ...(receivable ? {} : { receivedAt: ctx.now }),
       createdAt: ctx.now,
     };
     const receiptId = extra.receiptId || hashId("receipt", ctx.contractId, opKey);
@@ -973,6 +1012,7 @@ function createTributeService(deps) {
       personaName: cleanLine(managerProfileValue.card?.personaName, LIMITS.personaName) || card.personaName,
       disclosure: String(managerProfileValue.card?.disclosure || card.disclosure),
       sigil: integer(managerProfileValue.card?.sigil, 0, 5, card.sigil),
+      avatar: managerProfileValue.card ? normalizeAvatar(managerProfileValue.card.avatar) : card.avatar,
       payers: integer(month.payers, 0, Number.MAX_SAFE_INTEGER, 0) + (pairMonthIsCurrent ? 0 : 1),
       rankScore: integer(month.rankScore, 0, Number.MAX_SAFE_INTEGER, 0) + rankAdd,
       receivedGross: integer(month.receivedGross, 0, Number.MAX_SAFE_INTEGER, 0) + amount,
@@ -998,8 +1038,11 @@ function createTributeService(deps) {
       actor: fromEscrow ? "manager" : "payer",
       kind,
       amount,
+      receiptId,
       ...(requestId ? { requestId } : {}),
       ...(note ? { note } : {}),
+      ...(purpose ? { purpose } : {}),
+      ...(receivable ? {} : { receivedAt: ctx.now }),
     });
     stageTributeAchievements(ctx, extra, firstForPairToday);
     return { receipt: { receiptId, ...receipt }, fee, subsidy, net };
@@ -1392,6 +1435,10 @@ function createTributeService(deps) {
         ngWords: application.ngWords,
         allowReportRequests: application.allowReportRequests,
         rankOptIn: application.rankOptIn,
+        allowSexualPurposes: application.allowSexualPurposes,
+        purposeCounts: {},
+        rewardCount: 0,
+        awaitingReceipt: 0,
         renewal,
         createdAt: now,
         expiresAt: now + LIMITS.applicationTtlMs,
@@ -1423,6 +1470,7 @@ function createTributeService(deps) {
         durationDays: application.durationDays,
         tone: application.tone,
         entryFee,
+        allowSexualPurposes: application.allowSexualPurposes,
         createdAt: now,
       });
       transaction.set(profileRef(uid), {
@@ -1558,15 +1606,18 @@ function createTributeService(deps) {
         if (pending.length >= LIMITS.pendingRequests) fail("failed-precondition", "未払いの請求は3件までです。");
         const note = cleanLine(data?.note, LIMITS.requestNote);
         if (note) checkManagerText(ctx, note);
+        const named = normalizePurpose(data?.purpose, { allowSexual: ctx.contract.allowSexualPurposes === true });
+        if (named.error) fail("failed-precondition", named.error);
+        const purpose = named.purpose;
         messageRate(ctx);
         const requestId = randomHex(8);
         setContract(ctx, {
           pendingRequests: {
             ...object(ctx.contract.pendingRequests),
-            [requestId]: { amount, note, createdAt: ctx.now },
+            [requestId]: { amount, note, ...(purpose ? { purpose } : {}), createdAt: ctx.now },
           },
         });
-        pushEvent(ctx, { type: "request", actor: "manager", requestId, amount, ...(note ? { note } : {}) });
+        pushEvent(ctx, { type: "request", actor: "manager", requestId, amount, ...(note ? { note } : {}), ...(purpose ? { purpose } : {}) });
         markManagerActive(ctx);
         return { ok: true, requestId };
       },
@@ -1613,9 +1664,11 @@ function createTributeService(deps) {
           return { ok: true, replayed: true, receipt: { receiptId: extra.receiptId, ...extra.receipt } };
         }
         const kind = data?.kind === "request" ? "request" : "silent";
+        const allowSexual = ctx.contract.allowSexualPurposes === true;
         let amount;
         let requestId = "";
         let note = "";
+        let purpose = "";
         if (kind === "request") {
           requestId = String(data?.requestId || "");
           const requests = { ...object(ctx.contract.pendingRequests) };
@@ -1624,12 +1677,16 @@ function createTributeService(deps) {
           amount = integer(request.amount, 0, 1_000_000, 0);
           if (Number(data?.amount) !== amount) fail("failed-precondition", "請求の金額が変わりました。開き直してください。");
           note = cleanLine(request.note, LIMITS.requestNote);
+          purpose = visiblePurpose(request.purpose, { allowSexual });
           delete requests[requestId];
           setContract(ctx, { pendingRequests: requests });
         } else {
           amount = requireAmount(data?.amount);
+          const named = normalizePurpose(data?.purpose, { allowSexual });
+          if (named.error) fail("failed-precondition", named.error);
+          purpose = named.purpose;
         }
-        const outcome = stageTribute(ctx, extra, { kind, amount, requestId, opKey: `client:${clientRequestId}` });
+        const outcome = stageTribute(ctx, extra, { kind, amount, requestId, purpose, opKey: `client:${clientRequestId}` });
         return {
           ok: true,
           receipt: outcome.receipt,
@@ -1837,6 +1894,71 @@ function createTributeService(deps) {
         return { ok: true };
       },
     },
+    // 性的な名目の許可。決めるのは預ける側だけ。外すと、性的な名目の未払いの請求はその場で無効になる。
+    set_purposes: {
+      roles: ["payer"],
+      statuses: ["pending", "active"],
+      write(ctx, _extra, data) {
+        const allow = data?.allowSexualPurposes === true;
+        if ((ctx.contract.allowSexualPurposes === true) === allow) return { ok: true, contract: view(ctx), unchanged: true };
+        setContract(ctx, { allowSexualPurposes: allow });
+        pushEvent(ctx, { type: "purposes_changed", actor: "payer", allowSexualPurposes: allow });
+        if (!allow) {
+          const requests = { ...object(ctx.contract.pendingRequests) };
+          for (const [requestId, request] of Object.entries(requests)) {
+            if (SEXUAL_PURPOSE_IDS.includes(String(request?.purpose || ""))) {
+              delete requests[requestId];
+              pushEvent(ctx, { type: "request_cancelled", actor: "system", requestId, reason: "purpose" });
+            }
+          }
+          setContract(ctx, { pendingRequests: requests });
+        }
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 財布から差し出された献上を、管理人が受け取る。1つの献上につき1回だけで、ご褒美の一言を添えられる。
+    // Payは差し出した時点で移っている。受け取りは「相手が確かに見た」という記録で、お金は動かさない。
+    receive: {
+      roles: ["manager"],
+      statuses: ["active"],
+      read: async (transaction, ctx, data) => {
+        const seq = integer(data?.tributeSeq, 0, Number.MAX_SAFE_INTEGER, 0);
+        if (seq < 1 || seq > ctx.seq) return { seq, event: null, receiptExists: false };
+        const snapshot = await transaction.get(eventRef(ctx.contractId, seq));
+        const event = snapshot.exists ? object(snapshot.data()) : null;
+        const receiptId = RECEIPT_ID_PATTERN.test(String(event?.receiptId || "")) ? event.receiptId : "";
+        const receiptSnapshot = receiptId ? await transaction.get(receiptRef(ctx.payerUid, receiptId)) : null;
+        return { seq, event, receiptId, receiptExists: receiptSnapshot?.exists === true };
+      },
+      write(ctx, extra, data) {
+        const event = extra.event;
+        if (!event || event.type !== "tribute" || !RECEIVABLE_KINDS.includes(event.kind)) {
+          fail("not-found", "受け取れる献上が見つかりません。");
+        }
+        if (integer(event.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0) > 0) fail("failed-precondition", "この献上はもう受け取っています。");
+        const normalized = normalizeReward(data?.reward, { tone: ctx.contract.tone, ngWords: ctx.contract.ngWords });
+        if (normalized.error) fail("invalid-argument", normalized.error);
+        const reward = normalized.reward;
+        const marks = { receivedAt: ctx.now, ...(reward ? { reward } : {}) };
+        ctx.extraWrites.push((transaction) => transaction.update(eventRef(ctx.contractId, extra.seq), marks));
+        if (extra.receiptExists) {
+          ctx.extraWrites.push((transaction) => transaction.update(receiptRef(ctx.payerUid, extra.receiptId), marks));
+        }
+        setContract(ctx, {
+          awaitingReceipt: Math.max(0, integer(ctx.contract.awaitingReceipt, 0, Number.MAX_SAFE_INTEGER, 0) - 1),
+          ...(reward ? { rewardCount: integer(ctx.contract.rewardCount, 0, Number.MAX_SAFE_INTEGER, 0) + 1 } : {}),
+        });
+        pushEvent(ctx, {
+          type: "received",
+          actor: "manager",
+          tributeSeq: extra.seq,
+          amount: integer(event.amount, 0, Number.MAX_SAFE_INTEGER, 0),
+          ...(reward ? { reward } : {}),
+        });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
     mark_read: {
       roles: ["manager", "payer"],
       statuses: ["pending", "active", "ended"],
@@ -1957,6 +2079,10 @@ function createTributeService(deps) {
         personaName: cleanLine(value.personaName, LIMITS.personaName),
         disclosure: String(value.disclosure || "undisclosed"),
         sigil: integer(value.sigil, 0, 5, 0),
+        avatar: normalizeAvatar(value.avatar),
+        purpose: PURPOSE_IDS.includes(value.purpose) ? value.purpose : "",
+        receivedAt: integer(value.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+        reward: typeof value.reward === "string" && /^[a-z_]{1,24}$/.test(value.reward) ? value.reward : "",
         pairCount: integer(value.pairCount, 0, Number.MAX_SAFE_INTEGER, 0),
         createdAt: integer(value.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
       };
@@ -2012,6 +2138,7 @@ function createTributeService(deps) {
         personaName: cleanLine(row.profile.card?.personaName || row.value.personaName, LIMITS.personaName) || "管理人",
         disclosure: String(row.profile.card?.disclosure || row.value.disclosure || "undisclosed"),
         sigil: integer(row.profile.card?.sigil ?? row.value.sigil, 0, 5, 0),
+        avatar: normalizeAvatar(row.profile.card?.avatar ?? row.value.avatar),
         honor: honorFor(row.profile, monthKey),
         payers: integer(row.value.payers, 0, Number.MAX_SAFE_INTEGER, 0),
         rankScore: integer(row.value.rankScore, 0, Number.MAX_SAFE_INTEGER, 0),
