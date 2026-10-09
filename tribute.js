@@ -78,7 +78,7 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1";
 import {
   SEAL_INK,
   SHARE_TEXT,
@@ -408,7 +408,6 @@ function isNewWallet() {
 }
 
 function renderStartGuide() {
-  const balance = state.walletBalance;
   const trial = trialCaps(0);
   return `<div class="tribute-start-guide">
     <span class="tribute-eyebrow">財布の始め方</span>
@@ -417,8 +416,15 @@ function renderStartGuide() {
       <li><b>管理人を選ぶ</b><span>掲示板から。入場料0 Payの管理人なら、入場料なしで始められます。</span></li>
       <li><b>お試しで申し込む</b><span>申し込みの「お試しの設定」なら、${TRIAL_DURATION_DAYS}日・1回${trial.perTribute} Pay・合計${trial.total} Payから。上限を下げるのも解約も、いつでもあなたが決めます。</span></li>
     </ol>
-    <p class="tribute-note">いまの財布：${balance === null ? "確認中" : escapeHtml(formatPay(balance))}。AnjuPayはデイリーミッションや毎日のプレイで貯まります（現金では買えません）。${balance !== null && balance < trial.perTribute ? ' <button class="tribute-link" type="button" data-t="open-missions">デイリーミッションを見る</button>' : ""}</p>
+    <p class="tribute-note" data-start-guide-balance>${guideBalanceMarkup()}</p>
   </div>`;
+}
+
+// 財布の始め方の「いまの財布」。残高は後から届くので、届いたらここだけ書き換える（paintWallet）。
+function guideBalanceMarkup() {
+  const balance = state.walletBalance;
+  const trial = trialCaps(0);
+  return `いまの財布：${balance === null ? "確認中" : escapeHtml(formatPay(balance))}。AnjuPayはデイリーミッションや毎日のプレイで貯まります（現金では買えません）。${balance !== null && balance < trial.perTribute ? ' <button class="tribute-link" type="button" data-t="open-missions">デイリーミッションを見る</button>' : ""}`;
 }
 
 // 招待リンク（管理人だけ）。Xのフォロワーを、自分の管理人カードへ直接案内する。牧場の中へ向かう一方通行のリンク。
@@ -2501,6 +2507,9 @@ function paintWallet() {
   document.querySelectorAll("[data-tribute-wallet]").forEach((node) => {
     node.textContent = formatPay(state.walletBalance);
   });
+  document.querySelectorAll("[data-start-guide-balance]").forEach((node) => {
+    node.innerHTML = guideBalanceMarkup();
+  });
 }
 
 function subscribeWallet() {
@@ -2510,7 +2519,8 @@ function subscribeWallet() {
   walletUnsubscribe = onSnapshot(doc(firestore, "wallets", state.uid), (snapshot) => {
     if (!active) return;
     const balance = Number(snapshot.data()?.balance);
-    state.walletBalance = Number.isSafeInteger(balance) ? balance : null;
+    // まだ AnjuPay の財布がない人（はじめて来た人）は 0 Pay。献上の時にはサーバーが財布を用意する。
+    state.walletBalance = !snapshot.exists() ? 0 : Number.isSafeInteger(balance) ? balance : null;
     paintWallet();
   }, () => {});
 }

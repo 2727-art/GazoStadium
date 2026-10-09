@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const { pathToFileURL } = require("node:url");
 const rules = require("../tribute-rules");
 const { viewContract: serverView } = require("../tribute-service");
@@ -31,8 +32,8 @@ function sourceBlock(source, startText, endText) {
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
   assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-collar-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
@@ -545,4 +546,45 @@ test("the demo contract and the newcomer guide never reach the server or move Pa
   assert.match(styles, /\.tribute-demo-banner/);
   assert.match(design, /見学用の見本の契約/);
   assert.match(design, /招待リンク/);
+});
+
+test("a newcomer without an AnjuPay wallet sees 0 Pay and the daily-mission shortcut, updated when the balance arrives", async () => {
+  const core = await loadCore();
+  const pick = (name) => {
+    const start = client.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, name);
+    const body = client.slice(start);
+    const end = /\n\}\r?\n/.exec(body);
+    return body.slice(0, end.index + 2);
+  };
+  const nodes = { wallet: [{ textContent: "" }], guide: [{ innerHTML: "" }] };
+  let listener = null;
+  const context = vm.createContext({
+    state: { walletBalance: null, uid: "newcomer" },
+    active: true,
+    previewScreen: "",
+    walletUnsubscribe: null,
+    firestore: {},
+    doc: () => "wallets/newcomer",
+    onSnapshot: (_reference, next) => {
+      listener = next;
+      return () => {};
+    },
+    document: {
+      querySelectorAll: (selector) => (selector === "[data-tribute-wallet]" ? nodes.wallet : selector === "[data-start-guide-balance]" ? nodes.guide : []),
+    },
+    formatPay: core.formatPay,
+    trialCaps: core.trialCaps,
+    escapeHtml: (value) => String(value),
+  });
+  vm.runInContext(["paintWallet", "subscribeWallet", "guideBalanceMarkup"].map(pick).join("\n"), context);
+  context.subscribeWallet();
+  listener({ exists: () => false, data: () => undefined });
+  assert.equal(context.state.walletBalance, 0, "no wallet yet means 0 Pay, not a stuck 確認中");
+  assert.match(nodes.guide[0].innerHTML, /いまの財布：0 Pay/);
+  assert.match(nodes.guide[0].innerHTML, /data-t="open-missions"/);
+  listener({ exists: () => true, data: () => ({ balance: 120 }) });
+  assert.equal(nodes.wallet[0].textContent, "120 Pay");
+  assert.match(nodes.guide[0].innerHTML, /いまの財布：120 Pay/);
+  assert.doesNotMatch(nodes.guide[0].innerHTML, /open-missions/, "enough Pay hides the shortcut");
 });
