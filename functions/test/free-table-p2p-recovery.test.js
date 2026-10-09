@@ -230,7 +230,9 @@ function createFrontendHarness() {
   });
   window.window = window;
 
-  const executableSource = frontendSource.replace(
+  // Exercise archived transport algorithms independently of the production gate.
+  // free-table-retirement-client.test.js evaluates the unmodified retired module.
+  const executableSource = frontendSource.replace("const FREE_TABLE_RETIRED = true;", "const FREE_TABLE_RETIRED = false;").replace(
     /^import\s*\{[\s\S]*?\}\s*from\s*"[^"]+";\s*/gm,
     "",
   );

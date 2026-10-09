@@ -1,84 +1,43 @@
+"use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const root = path.resolve(__dirname, "../..");
+const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-const root = path.resolve(__dirname, "..", "..");
-const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
-
-test("landing shows free table room counts with gentle non-competitive copy", () => {
-  const appSource = read("app.js");
-  const freeTableCardStart = appSource.indexOf('<li class="vl-board-item is-free">');
-  const freeTableCardEnd = appSource.indexOf("</li>", freeTableCardStart) + "</li>".length;
-  const freeTableCard = appSource.slice(freeTableCardStart, freeTableCardEnd);
-
-  assert.ok(freeTableCardStart >= 0);
-  assert.ok(freeTableCardStart < freeTableCardEnd);
-  assert.match(appSource, /人数・卓数はページ表示時点の参考値/);
-  assert.match(freeTableCard, /id="freeTableButton"/);
-  assert.match(freeTableCard, /お迎え中 \$\{liveCount\("boardFreeTableWelcomingCount", freeTableStats\.welcomingRooms, "卓"\)\}/);
-  assert.match(freeTableCard, /同席中 \$\{liveCount\("boardFreeTableSeatedCount", freeTableStats\.seatedRooms, "卓"\)\}/);
-  assert.match(appSource, /自由卓は人数ではなく、お迎え中・同席中の卓数です。/);
-});
-
-test("free table public stats load only on the initial page snapshot and independent result entry", () => {
-  const appSource = read("app.js");
-  const onlineSource = read("online.js");
-  const loaderStart = onlineSource.indexOf("async function loadFreeTablePublicStatsSnapshot()");
-  const refreshStart = onlineSource.indexOf("function refreshFreeTablePublicStats()");
-  const refreshEnd = onlineSource.indexOf("function refreshLobbyStats(", refreshStart);
-  const refreshSource = onlineSource.slice(loaderStart, refreshEnd);
-
-  assert.ok(loaderStart >= 0);
-  assert.ok(refreshStart > loaderStart && refreshEnd > refreshStart);
-  assert.match(onlineSource, /httpsCallable\(functions, "freeTablePublicStats"\)/);
-  assert.match(refreshSource, /freeTablePublicStatsCallable\(\{\}\)/);
-  assert.doesNotMatch(refreshSource, /ensureAuthenticated|signInAnonymously|setPersistence/);
-  assert.match(
-    onlineSource,
-    /document\.visibilityState === "visible"\s*&& document\.querySelector\("\[data-free-table-lamp-refresh\]"\) !== null/,
-  );
-  assert.match(refreshSource, /if \(freeTablePublicStatsRequest\) return freeTablePublicStatsRequest;/);
-  assert.doesNotMatch(onlineSource, /FREE_TABLE_PUBLIC_STATS_POLL_MS|scheduleFreeTablePublicStatsRefresh/);
-  assert.match(appSource, /window\.dispatchEvent\(new Event\("hariai-landing-rendered"\)\);/);
-  assert.doesNotMatch(onlineSource, /visibilitychange[\s\S]{0,240}refreshFreeTablePublicStats/);
-  assert.match(onlineSource, /screenChanged && state\.screen === "gameover"[\s\S]{0,160}refreshFreeTablePublicStatsImmediately/);
-  assert.match(onlineSource, /welcomingRooms: null,\s*seatedRooms: null,\s*updatedAt: null,/);
-  assert.match(onlineSource, /boardFreeTableWelcomingCount: lobbyStats\.freeTable\.welcomingRooms/);
-  assert.match(onlineSource, /boardFreeTableSeatedCount: lobbyStats\.freeTable\.seatedRooms/);
-  assert.doesNotMatch(onlineSource, /refreshLobbyPublicStats|getLobbyStatsRefreshStatus/);
-});
-
-test("free table counts retain transient success but expire safely after three minutes", () => {
-  const onlineSource = read("online.js");
-  const normalizeStart = onlineSource.indexOf("function normalizeFreeTablePublicStats");
-  const refreshStart = onlineSource.indexOf("function refreshFreeTablePublicStats()");
-  const refreshEnd = onlineSource.indexOf("function refreshFreeTablePublicStatsImmediately()", refreshStart);
-  const safetySource = onlineSource.slice(normalizeStart, refreshEnd);
-
-  assert.match(onlineSource, /const FREE_TABLE_PUBLIC_STATS_STALE_MS = 180_000;/);
-  assert.match(safetySource, /Number\.isSafeInteger\(updatedAt\)/);
-  assert.match(safetySource, /updatedAt <= estimatedServerNow - FREE_TABLE_PUBLIC_STATS_STALE_MS/);
-  assert.match(safetySource, /freeTablePublicStatsLastSuccessAt = receivedAt;/);
-  assert.match(safetySource, /freeTablePublicStatsLastSuccessAt \+ FREE_TABLE_PUBLIC_STATS_STALE_MS/);
-  assert.match(safetySource, /serverUpdatedAtInLocalTime \+ FREE_TABLE_PUBLIC_STATS_STALE_MS/);
-  assert.match(safetySource, /expireFreeTablePublicStats\(\);\s*return \{ \.\.\.freeTablePublicStats \};/);
-  assert.match(onlineSource, /expireFreeTablePublicStats\(Date\.now\(\), false\);/);
-});
-
-test("free table stats styling, docs, and cache generations stay wired", () => {
-  const cssSource = read("styles.css");
-  const html = read("index.html");
-  const readme = read("README.md");
-
-  assert.doesNotMatch(cssSource, /\.lobby-mode-card\.free-table-status/);
-  assert.match(read("velvet.css"), /\.vl-board-item\.is-free/);
-  for (const asset of ["styles.css", "app.js", "online.js"]) {
-    const escapedAsset = asset.replaceAll(".", "\\.");
-    assert.match(html, new RegExp(`${escapedAsset}\\?v=[^"]*free-table-stats-v1`));
+test("landing retires the free-table card and room counts while preserving battle counts", () => {
+  const source = read("app.js");
+  assert.doesNotMatch(source, /freeTableButton|boardFreeTable|freeTableLampPresentation|lobbyStats\.freeTable/);
+  for (const id of ["boardSoloWaitingCount", "boardSoloPlayingCount", "boardStrategyWaitingCount", "boardStrategyPlayingCount"]) {
+    assert.ok(source.includes(id), id);
   }
-  assert.match(readme, /ページ初回表示時に一度だけ/);
-  assert.match(readme, /閲覧のために匿名アカウントを作りません/);
-  assert.match(readme, /通常型・戦略型の最終結果では別途、結果画面へ到達した時に灯りを一度だけ確認します/);
-  assert.match(readme, /`freeTablePublicStats`から、お迎え中・同席中の集計値と更新時刻だけを取得します/);
+  assert.match(source, /人数はページ表示時点の参考値/);
+  assert.doesNotMatch(source, /自由卓は人数ではなく|自由卓の同席中/);
+});
+
+test("neither the initial snapshot nor either match result requests free-table public stats", () => {
+  for (const file of ["online.js", "strategy.js"]) {
+    assert.doesNotMatch(read(file), /freeTablePublicStats|FreeTablePublicStats|FREE_TABLE_PUBLIC_STATS|hariai-free-table-public-stats-updated|data-free-table-lamp-refresh/);
+  }
+  assert.match(read("online.js"), /get\(ref\(database, "online\/publicPresence"\)\)/);
+});
+
+test("retired invite navigation defers lobby reads until the user returns home", () => {
+  const online = read("online.js");
+  const loader = online.slice(online.indexOf("function loadInitialLobbyStats()"), online.indexOf("function watchLobbyStats()"));
+  assert.ok(loader.indexOf('has("freeTableInvite")') < loader.indexOf('get(ref(database'));
+  assert.match(read("app.js"), /if \(!openInitialFreeTableInvite\(\)\) renderLandingScreen\(\);/);
+  assert.match(read("app.js"), /function renderLandingScreen\(\) \{\s*clearRetiredFreeTableInvite\(\);/);
+});
+
+test("HTML has no free-table loads or promotion and all changed active scripts have retirement cache tokens", () => {
+  const html = read("index.html");
+  assert.doesNotMatch(html, /(?:src|href)="free-table\.(?:js|css)|貼り合い自由卓/);
+  for (const file of ["app.js", "online.js", "strategy.js", "ai-text-training.js", "roulette-training.js", "tribute.js"]) {
+    const line = html.split("\n").find((entry) => entry.includes(file + "?v="));
+    assert.match(line, /retire-free-table-v1/, file);
+  }
+  assert.match(read("ai-text-training.js"), /from "\.\/free-table-ambience\.mjs\?v=/);
+  assert.ok(fs.existsSync(path.join(root, "free-table-media.mjs")));
 });

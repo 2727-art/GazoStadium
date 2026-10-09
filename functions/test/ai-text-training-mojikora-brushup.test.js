@@ -462,7 +462,7 @@ test("styles hide the overlapping stamp and keep placement bands, controls and e
 
 test("cache tokens and the design notes cover the brushup", () => {
   assert.match(html, /ai-text-training\.css\?v=[^"]*mojikora-brushup-v1[^"]*retire-training-lights-v1"/);
-  assert.match(html, /ai-text-training\.js\?v=[^"]*mojikora-brushup-v1-tribute-v1[^"]*retire-training-lights-v1"/);
+  assert.match(html, /ai-text-training\.js\?v=[^"]*mojikora-brushup-v1-tribute-v1[^"]*retire-training-lights-v1-retire-free-table-v1"/);
   assert.match(client, /ai-text-training-core\.mjs\?v=[^"]*mojikora-brushup-v1"/);
   assert.match(design, /### 6\.1\.1 マイ台本（端末内・無料）/);
   assert.match(design, /hariai-ai-text-training-my-scripts-v1/);

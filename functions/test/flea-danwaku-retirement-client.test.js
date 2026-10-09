@@ -47,16 +47,16 @@ test("landing render and event binding expose neither retired mode while retaini
     Event: class { constructor(type) { this.type = type; } },
     escapeHtml: String,
     renderLandingTopMessagePanel: () => '<section id="topMessagePanel">共有の推しカード</section>',
-    cancelPendingFreeTableLaunch() {}, setLandingChrome() {}, bindLandingTopMessageEvents() {},
+    clearRetiredFreeTableInvite() {}, setLandingChrome() {}, bindLandingTopMessageEvents() {},
     startStrategyLab() {}, startOnlineBattle() {}, startAiTextTraining() {}, startRouletteTraining() {},
     startFreeTable() {}, startTribute() {}, startValueMarketRankings() {}, renderRankingScreen() {},
     openOnlineFeature() {}, startAccount() {}, openAudioStudio() {},
   });
-  vm.runInContext(["freeTableLampPresentation", "renderLanding", "renderLandingScreen"].map(fn).join("\n"), context);
+  vm.runInContext(["renderLanding", "renderLandingScreen"].map(fn).join("\n"), context);
   context.renderLandingScreen();
   assert.doesNotMatch(app.innerHTML, /fleaMarket|danwakuNote|AnjuPayフリマ|断惑NOTE/);
   assert.equal(queried.some((selector) => /fleaMarket|danwakuNote/.test(selector)), false);
-  for (const id of ["onlineButton", "strategyLabButton", "aiTextTrainingButton", "rouletteTrainingButton", "freeTableButton", "tributeButton", "accountButton", "achievementButton"]) {
+  for (const id of ["onlineButton", "strategyLabButton", "aiTextTrainingButton", "rouletteTrainingButton", "tributeButton", "accountButton", "achievementButton"]) {
     assert.ok(app.innerHTML.includes(`id="${id}"`), id);
     assert.ok(bindings.has(`#${id}:click`), `${id} handler retained`);
   }

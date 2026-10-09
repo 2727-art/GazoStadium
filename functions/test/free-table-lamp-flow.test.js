@@ -13,122 +13,33 @@ const sourceBetween = (source, startMarker, endMarker) => {
   return source.slice(start, end);
 };
 
-test("the landing lamp entrance uses its initial snapshot in place and never treats counts as room authority", () => {
-  const appSource = read("app.js");
-  const onlineSource = read("online.js");
-  const updateSource = sourceBetween(
-    appSource,
-    "function updateLandingFreeTableEntrance()",
-    "function renderLanding()",
-  );
-
-  assert.match(appSource, /◌ ページ表示時、\$\{welcomingRooms\}卓がお迎え中でした/);
-  assert.match(appSource, /お迎え中の一席をのぞく/);
-  assert.match(appSource, /data-free-table-intent="\$\{freeTableLamp\.lit \? "lamp" : "hall"\}"/);
-  assert.doesNotMatch(appSource, /freeTableStatusButton/);
-  assert.match(updateSource, /eyebrow\.textContent = presentation\.eyebrow/);
-  assert.match(updateSource, /label\.textContent = presentation\.label/);
-  assert.match(updateSource, /getLobbyStats\?\.\(\)\.freeTable/);
-  assert.match(updateSource, /querySelector\("\.vl-post-sub"\)/);
-  assert.match(updateSource, /querySelector\("\.vl-post-title"\)/);
-  assert.match(updateSource, /ページ表示時点では\$\{presentation\.welcomingRooms\}卓がお迎え中でした/);
-  assert.match(appSource, /window\.addEventListener\("hariai-lobby-stats-updated", updateLandingFreeTableEntrance\)/);
-  assert.doesNotMatch(appSource, /hariai-free-table-public-stats-updated/);
-  assert.doesNotMatch(updateSource, /innerHTML|renderLandingScreen/);
-  assert.match(appSource, /function startFreeTable\([^)]*\) \{[\s\S]*?setLandingChrome\(\)/);
-  assert.match(appSource, /function cancelPendingFreeTableLaunch\(\)[\s\S]*?pendingFreeTableIntent = ""/);
-  assert.match(
-    appSource,
-    /launchGeneration !== freeTableLaunchGeneration \|\| !pendingFreeTableIntent/,
-  );
-  assert.match(
-    onlineSource,
-    /window\.dispatchEvent\(new CustomEvent\("hariai-free-table-public-stats-updated"/,
-  );
+test("landing no longer offers a free-table lamp or starts a delayed legacy module", () => {
+  const source = read("app.js");
+  assert.doesNotMatch(source, /freeTableButton|freeTableLampPresentation|updateLandingFreeTableEntrance|pendingFreeTableIntent|hariai-free-table-ready/);
+  assert.match(source, /openFreeTable: showRetiredFreeTable/);
+  assert.match(source, /貼り合い自由卓は終了しました/);
 });
 
-test("normal and strategy results offer a rest only while a public lamp is fresh and lit", () => {
-  const html = read("index.html");
-  const onlineSource = read("online.js");
-  const strategySource = read("strategy.js");
-  const cssSource = read("free-table.css");
-  const lampSource = sourceBetween(
-    onlineSource,
-    "function getFreeTableLampState()",
-    "function watchLobbyStats()",
-  );
-
-  assert.match(lampSource, /expireFreeTablePublicStats\(Date\.now\(\), false\)/);
-  assert.match(lampSource, /welcomingRooms > 0/);
-  assert.match(lampSource, /if \(!lamp\.available\) return ""/);
-  assert.match(onlineSource, /id="onlineFreeTableLampSlot"[\s\S]*data-free-table-lamp-refresh/);
-  assert.match(strategySource, /id="strategyFreeTableLampSlot"[\s\S]*data-free-table-lamp-refresh/);
-  assert.match(onlineSource, /勝ち負けをここに置いて、ひと休みできます。/);
-  assert.match(onlineSource, /class="free-table-result-lamp-count" aria-live="polite"/);
-  assert.doesNotMatch(
-    sourceBetween(
-      onlineSource,
-      "function renderFreeTableResultLampContent(",
-      "function syncFreeTableResultLampSlot(",
-    ),
-    /role="status"/,
-  );
-  assert.match(
-    onlineSource,
-    /if \(existingButton && countValue\) \{[\s\S]*?countValue\.textContent !== nextCountText[\s\S]*?countValue\.textContent = nextCountText/,
-  );
-  assert.match(onlineSource, /restoreFocus[\s\S]*?focusFallbackSelector[\s\S]*?focus\(\{ preventScroll: true \}\)/);
-  assert.match(cssSource, /\.free-table-result-lamp-slot:empty\s*\{\s*display: none;/);
-  assert.match(cssSource, /\.lobby-free-table-lamp-link\[hidden\]\s*\{\s*display: none;/);
-  assert.match(
-    onlineSource,
-    /function expireFreeTablePublicStats[\s\S]*?lastFreeTablePublicStatsEventSignature = "";/,
-  );
-
-  for (const asset of [
-    "app.js",
-    "online.js",
-    "strategy.js",
-    "free-table.js",
-    "free-table.css",
-  ]) {
-    const escapedAsset = asset.replaceAll(".", "\\.");
-    assert.match(html, new RegExp(`${escapedAsset}\\?v=[^"]*free-table-lamp-flow-v1`));
+test("normal and strategy results retain play and chat controls without free-table lamps", () => {
+  const online = read("online.js");
+  const strategy = read("strategy.js");
+  for (const source of [online, strategy]) {
+    assert.doesNotMatch(source, /FreeTableLamp|free-table-result-lamp|leaveToFreeTable|refreshFreeTablePublicStats/);
+    assert.match(source, /async function leaveToLanding\(/);
   }
+  assert.match(online, /renderEngawaInvitation\(\)/);
+  assert.match(online, /renderOnlineChat\(\)/);
+  assert.match(strategy, /renderStrategyChatDock\(\)/);
+  assert.match(online, /id="onlineNewMatch"/);
+  assert.match(strategy, /id="strategyNewMatch"/);
 });
 
-test("leaving either battle fully cleans up before opening the free table", () => {
-  const onlineSource = read("online.js");
-  const strategySource = read("strategy.js");
-  const normalTransition = sourceBetween(
-    onlineSource,
-    "async function leaveToFreeTable()",
-    "async function cleanupMatchmaking(",
-  );
-  const strategyTransition = sourceBetween(
-    strategySource,
-    "async function leaveToFreeTable()",
-    "async function cleanupMatchmaking(",
-  );
-
-  assert.match(normalTransition, /await cleanupOnlineResources\(false, expectedState\)/);
-  assert.ok(normalTransition.indexOf("await cleanupOnlineResources") < normalTransition.indexOf("openFreeTable({ intent: \"lamp\" })"));
-  assert.match(normalTransition, /dispatchP2pRecoveryEvent\("MANUAL_CANCELLED", expectedState\)/);
-  assert.match(normalTransition, /releaseAllImages\(\)/);
-  assert.match(strategyTransition, /await cleanupOnlineResources\(false\)/);
-  assert.ok(strategyTransition.indexOf("await cleanupOnlineResources") < strategyTransition.indexOf("openFreeTable({ intent: \"lamp\" })"));
-  assert.match(strategyTransition, /releaseAllImages\(\)/);
-  assert.match(strategySource, /let resultNavigationBusy = false/);
-  assert.match(strategySource, /function beginResultNavigation\([\s\S]*?if \(resultNavigationBusy\) return false/);
-  assert.match(strategyTransition, /if \(!beginResultNavigation\("strategyFreeTableLampButton"\)\) return/);
-  assert.match(
-    strategySource,
-    /async function resetStrategySetup\([\s\S]*?if \(!beginResultNavigation\("strategyNewMatch"\)\) return/,
-  );
-  assert.match(
-    strategySource,
-    /async function leaveToLanding\([\s\S]*?if \(!beginResultNavigation\(\)\) return/,
-  );
+test("remaining strategy result navigation preserves double-click and cleanup protection", () => {
+  const source = read("strategy.js");
+  assert.match(source, /let resultNavigationBusy = false/);
+  assert.match(source, /function beginResultNavigation\([\s\S]*?if \(resultNavigationBusy\) return false/);
+  assert.match(source, /async function resetStrategySetup\([\s\S]*?if \(!beginResultNavigation\("strategyNewMatch"\)\) return/);
+  assert.match(source, /async function leaveToLanding\([\s\S]*?if \(!beginResultNavigation\(\)\) return/);
 });
 
 test("authenticated LIST order selects one room without auto-requesting or sorting by popularity", () => {
@@ -211,49 +122,14 @@ test("hosts see only newly arrived cards as notifications and retain manual appr
   assert.match(actionSource, /button\.dataset\.accept === "true"/);
 });
 
-test("lamp guidance stays noncompetitive and keeps safe choices explicit", () => {
-  const readme = read("README.md");
-  const appSource = read("app.js");
-  const freeTableSource = read("free-table.js");
-  const freeTableCardStart = appSource.indexOf('<li class="vl-board-item is-free">');
-  const freeTableCardEnd = appSource.indexOf("</li>", freeTableCardStart) + "</li>".length;
-  assert.ok(freeTableCardStart >= 0 && freeTableCardEnd > freeTableCardStart);
-  const featureCopy = [
-    sourceBetween(
-      appSource,
-      "function freeTableLampPresentation(",
-      "function renderLanding()",
-    ),
-    appSource.slice(freeTableCardStart, freeTableCardEnd),
-    sourceBetween(
-      read("online.js"),
-      "function renderFreeTableResultLampContent(",
-      "function syncFreeTableResultLampSlot(",
-    ),
-    sourceBetween(
-      freeTableSource,
-      "function renderLampNotice()",
-      "function renderRoomCard(",
-    ),
-  ].join("\n");
-
-  assert.doesNotMatch(featureCopy, /RATE|AnjuPay|順位|連勝|残り\d|締切|急い/);
-  assert.match(freeTableSource, /部屋主が今回は見送った場合、理由や履歴は残りません/);
-  assert.match(freeTableSource, /data-action="safe-exit"/);
-  assert.doesNotMatch(
-    sourceBetween(
-      freeTableSource,
-      "function renderLampNotice()",
-      "function renderRoomCard(",
-    ),
-    /aria-live|role="status"/,
-  );
-  assert.match(freeTableSource, /behavior: "auto"/);
-  assert.doesNotMatch(freeTableSource, /behavior: "smooth"/);
-  assert.match(
-    freeTableSource,
-    /const screenChanged = lastRenderedFreeTableScreen !== state\.screen[\s\S]*?if \(screenChanged\) \{[\s\S]*?app\.focus\(\{ preventScroll: true \}\)/,
-  );
-  assert.match(readme, /来訪札の送信や入室は自動で始めず/);
-  assert.match(readme, /迎える・見送るの判断は従来どおり部屋主の明示操作だけ/);
+test("the archived room implementation remains behind retirement and does not erase saved state", () => {
+  const source = read("free-table.js");
+  const start = sourceBetween(source, "async function start(", "function isActive()");
+  assert.ok(start.indexOf("if (FREE_TABLE_RETIRED)") < start.indexOf("initializeAuthenticatedFreeTable"));
+  assert.match(source, /const FREE_TABLE_RETIRED = true/);
+  const notice = sourceBetween(source, "function showFreeTableRetired()", "function attachPeerConnection(");
+  assert.match(notice, /貼り合い自由卓は終了しました/);
+  assert.match(notice, /ホームへ戻る/);
+  assert.doesNotMatch(notice, /removeItem|deleteDatabase|clearActiveContact|openBlock|signInAnonymously|callFreeTableAction/);
+  assert.match(read("ai-text-training.js"), /createFreeTableAmbienceController/);
 });

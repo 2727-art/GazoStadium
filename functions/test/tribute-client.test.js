@@ -31,7 +31,7 @@ function sourceBlock(source, startText, endText) {
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
   assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1"/);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
@@ -50,7 +50,7 @@ test("every mode refuses to open over お貢ぎ牧場 and お貢ぎ牧場 refuse
     assert.match(read(file), /window\.HariaiTribute\?\.isActive\?\.\(\)/, file);
   }
   const guard = sourceBlock(client, "function modeIsActiveElsewhere", "function subscribeWallet");
-  for (const name of ["HariaiOnline", "HariaiStrategy", "HariaiAiTextTraining", "HariaiRouletteTraining", "HariaiDanwakuNote", "HariaiFreeTable", "HariaiMarket", "HariaiFleaMarket", "HariaiAccount"]) {
+  for (const name of ["HariaiOnline", "HariaiStrategy", "HariaiAiTextTraining", "HariaiRouletteTraining", "HariaiDanwakuNote", "HariaiMarket", "HariaiFleaMarket", "HariaiAccount"]) {
     assert.match(guard, new RegExp(`window\\.${name}\\?\\.isActive`), name);
   }
   assert.match(client, /window\.HariaiTribute = Object\.freeze\(\{\s*start,\s*isActive,\s*requestHome,\s*\}\);/);

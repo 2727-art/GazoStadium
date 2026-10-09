@@ -3,6 +3,7 @@
 const RETIRED_MODE_MESSAGES = Object.freeze({
   anju_pay_flea: "AnjuPayフリマは提供を終了しました。",
   danwaku_note: "断惑NOTEは提供を終了しました。",
+  free_table: "貼り合い自由卓は提供を終了しました。",
 });
 
 // Keep the callable endpoints available to old clients, but reject every action

@@ -35,11 +35,11 @@ test("Realtime Database browser traffic stays on the Firebase SDK", () => {
 
 test("cache busters load one App Check module generation", () => {
   const html = read("index.html");
-  assert.doesNotMatch(html, /src="(?:flea-market|danwaku-note)\.js\?v=/);
-  for (const moduleName of ["account", "strategy", "online", "ai-text-training", "market", "free-table"]) {
+  assert.doesNotMatch(html, /src="(?:flea-market|danwaku-note|free-table)\.js\?v=/);
+  for (const moduleName of ["account", "strategy", "online", "ai-text-training", "market"]) {
     assert.match(html, new RegExp(`${moduleName}\\.js\\?v=[^"]*app-check-v3`));
   }
-  for (const assetName of ["styles.css", "app.js", "account.js", "strategy.js", "online.js", "market.js", "free-table.js"]) {
+  for (const assetName of ["styles.css", "app.js", "account.js", "strategy.js", "online.js", "market.js"]) {
     assert.match(html, new RegExp(`${assetName.replace(".", "\\.")}\\?v=[^"]*ai-text-training-v1`));
   }
   const serviceImporters = [

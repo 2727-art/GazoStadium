@@ -38,15 +38,11 @@ test("the landing opens with a DM example and lists the open tables with live co
   assert.match(landing, /id="onlineButton"/);
   assert.match(landing, /id="soloBoardButton"/);
   assert.match(app, /querySelector\("#soloBoardButton"\)\?\.addEventListener\("click", startOnlineBattle\)/);
-  for (const id of ["boardSoloWaitingCount", "boardSoloPlayingCount", "boardStrategyWaitingCount", "boardStrategyPlayingCount", "boardFreeTableWelcomingCount", "boardFreeTableSeatedCount"]) {
+  for (const id of ["boardSoloWaitingCount", "boardSoloPlayingCount", "boardStrategyWaitingCount", "boardStrategyPlayingCount"]) {
     assert.match(landing, new RegExp(`liveCount\\("${id}"`), `${id} rendered`);
     assert.match(online, new RegExp(`${id}: lobbyStats\\.`), `${id} refreshed with the lobby stats`);
   }
-  // 自由卓の札は、灯りの更新処理がそのまま書き換えられる形（最初の small と span）を保つ。
-  const freeTable = sourceBetween(landing, 'id="freeTableButton"', "</button>");
-  assert.ok(freeTable.indexOf('<span class="vl-post-title">${freeTableLamp.label}</span>') < freeTable.indexOf("<em "));
-  assert.ok(freeTable.indexOf('<small class="vl-post-sub">${freeTableLamp.eyebrow}</small>') >= 0);
-  assert.doesNotMatch(freeTable.slice(0, freeTable.indexOf('<span class="vl-post-title"')), /<span|<small/);
+  assert.doesNotMatch(landing, /freeTableButton|boardFreeTable|自由卓/);
 });
 
 test("normal 1on1 scores on a ten-step meter banded like the reactions", () => {

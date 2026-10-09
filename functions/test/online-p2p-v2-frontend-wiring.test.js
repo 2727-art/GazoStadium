@@ -269,7 +269,7 @@ test("normal 1on1 renders only the entry-time achievement and Danwaku snapshot i
   );
   const connecting = sourceBetween("function renderConnecting", "function renderStatusCard");
   const hud = sourceBetween("function renderOnlineHud", "function renderRoundSelect");
-  const result = sourceBetween("function renderGameOver", "function syncOnlineFreeTableResultLamp");
+  const result = sourceBetween("function renderGameOver", "function getEngawaMood");
   const roomEntry = sourceBetween("async function enterRoom", "function isCurrentRoomSetupContext");
 
   assert.match(stateFactory, /achievementShowcases: emptyOnlineAchievementShowcases\(\)/);

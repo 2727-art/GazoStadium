@@ -1061,7 +1061,6 @@ function modeIsActiveElsewhere() {
     || window.HariaiRouletteTraining?.isActive?.()
     || window.HariaiTribute?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.()
-    || window.HariaiFreeTable?.isActive?.()
     || window.HariaiAccount?.isActive?.()
   );
 }

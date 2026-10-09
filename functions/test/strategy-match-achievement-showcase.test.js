@@ -197,7 +197,7 @@ test("strategy hides achievements and Danwaku before identity, then shows only t
   const hud = section("function renderHudPlayer(index)", "function bindScreenEvents()");
   assert.match(hud, /localPlayer \? "" : renderOpponentAchievementShowcase\(\{ compact: true, context: "is-hud"/);
 
-  const result = section("function renderGameOver()", "function syncStrategyFreeTableResultLamp()");
+  const result = section("function renderGameOver()", "function firebaseNow()");
   assert.match(result, /index === state\.playerIndex \? "" : renderOpponentAchievementShowcase\(\{ context: "is-result"/);
 
   const renderer = section(

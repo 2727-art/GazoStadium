@@ -155,6 +155,7 @@ const {
 } = require("./roulette-training-service");
 const { createTributeService } = require("./tribute-service");
 const { throwRetiredCommunityMode } = require("./retired-community-modes");
+const { cleanupRetiredFreeTableHistory } = require("./free-table-retention");
 const {
   createDanwakuNoteService,
 } = require("./danwaku-note-service");
@@ -982,77 +983,10 @@ exports.reportMarketP2pConnectivity = onCall(
 );
 
 exports.reportFreeTableP2pConnectivity = onCall(
-  callableOptions("reportFreeTableP2pConnectivity", [P2P_DIAGNOSTIC_HMAC_SECRET]),
+  callableOptions("reportFreeTableP2pConnectivity"),
   async (request) => {
-    const uid = requireUid(request);
-    const data = requireFreeTableP2pDiagnosticCallableData(request.data);
-    const now = Date.now();
-    const context = await requireCurrentFreeTableP2pDiagnosticContext(uid, data, now);
-    let hmacSecret;
-    try {
-      hmacSecret = readP2pDiagnosticHmacSecret();
-    } catch (error) {
-      console.warn(
-        "reportFreeTableP2pConnectivity unavailable",
-        safeP2PConnectivityError(error, "diagnostic_write"),
-      );
-      throw new HttpsError("unavailable", "自由卓接続診断を送信できませんでした。");
-    }
-    let record;
-    try {
-      record = createP2PDiagnosticRecord({
-        uid,
-        sessionId: `free-table-session-${context.sessionId}`,
-        roomId: `free-table-session-${context.sessionId}`,
-        hmacSecret,
-        payload: data.diagnostic,
-        now,
-      });
-    } catch (error) {
-      if (error instanceof TypeError) {
-        throw new HttpsError(
-          "invalid-argument",
-          "自由卓接続診断の形式が正しくありません。",
-        );
-      }
-      console.warn(
-        "reportFreeTableP2pConnectivity unavailable",
-        safeP2PConnectivityError(error, "diagnostic_write"),
-      );
-      throw new HttpsError("unavailable", "自由卓接続診断を送信できませんでした。");
-    }
-    await consumeP2pConnectivityRateLimit(
-      uid,
-      "diagnostic",
-      P2P_DIAGNOSTIC_RATE_LIMIT_POLICY,
-    );
-    try {
-      const eventId = realtime.ref(`online/p2pDiagnostics/${record.day}`).push().key;
-      if (!eventId) throw new Error("Free table P2P diagnostic id was not generated");
-      await realtime.ref().update({
-        [`online/p2pDiagnostics/${record.day}/${eventId}`]: {
-          ...record,
-          retentionDays: P2P_DIAGNOSTIC_RETENTION_DAYS,
-          deleteAt: now + P2P_DIAGNOSTIC_RETENTION_MS,
-        },
-        [`online/p2pDiagnosticDays/${record.day}`]: true,
-      });
-    } catch (error) {
-      console.warn(
-        "reportFreeTableP2pConnectivity unavailable",
-        safeP2PConnectivityError(error, "diagnostic_write"),
-      );
-      throw new HttpsError("unavailable", "自由卓接続診断を送信できませんでした。");
-    }
-    try {
-      await maybeCleanupExpiredP2pDiagnostics(now);
-    } catch (error) {
-      console.warn(
-        "P2P diagnostic retention cleanup unavailable",
-        safeP2PConnectivityError(error, "retention_cleanup"),
-      );
-    }
-    return { accepted: true };
+    requireUid(request);
+    throwRetiredCommunityMode(HttpsError, "free_table");
   },
 );
 
@@ -16334,18 +16268,8 @@ const freeTableService = createFreeTableService({
 });
 
 exports.freeTableAction = onCall(callableOptions("freeTableAction"), async (request) => {
-  const uid = requireUid(request);
-  try {
-    return await freeTableService.performAction(uid, request.data);
-  } catch (error) {
-    if (error instanceof HttpsError) throw error;
-    console.error("freeTableAction failed", {
-      uid,
-      action: request.data?.action,
-      error,
-    });
-    throw new HttpsError("internal", "貼り合い自由卓の処理を完了できませんでした。");
-  }
+  requireUid(request);
+  throwRetiredCommunityMode(HttpsError, "free_table");
 });
 
 const aiTextTrainingService = createAiTextTrainingService({
@@ -16469,63 +16393,39 @@ exports.cleanupAiTextTrainingActivePresence = onSchedule({
 exports.freeTableInviteAction = onCall(
   callableOptions("freeTableInviteAction"),
   async (request) => {
-    const uid = requireUid(request);
-    try {
-      return await freeTableService.performInviteAction(uid, request.data);
-    } catch (error) {
-      if (error instanceof HttpsError) throw error;
-      console.error("freeTableInviteAction failed", {
-        uid,
-        action: request.data?.action,
-        error,
-      });
-      throw new HttpsError("internal", "灯り札の処理を完了できませんでした。");
-    }
+    requireUid(request);
+    throwRetiredCommunityMode(HttpsError, "free_table");
   },
 );
 
 exports.freeTableInvitePreview = onCall(
   callableOptions("freeTableInvitePreview"),
-  async (request) => {
-    try {
-      return await freeTableService.getInvitePreview(request.data);
-    } catch (error) {
-      if (error instanceof HttpsError) throw error;
-      console.error("freeTableInvitePreview failed", {
-        code: typeof error?.code === "string" ? error.code : "unknown",
-      });
-      throw new HttpsError("internal", "灯り札を読み込めませんでした。");
-    }
+  async () => {
+    throwRetiredCommunityMode(HttpsError, "free_table");
   },
 );
 
 exports.freeTablePublicStats = onCall(
   callableOptions("freeTablePublicStats"),
-  async (request) => {
-    try {
-      return await freeTableService.getPublicStats(request.data);
-    } catch (error) {
-      if (error instanceof HttpsError) throw error;
-      console.error("freeTablePublicStats failed", {
-        code: typeof error?.code === "string" ? error.code : "unknown",
-      });
-      throw new HttpsError(
-        "internal",
-        "貼り合い自由卓の公開状況を取得できませんでした。",
-      );
-    }
-  },
+  async () => ({
+    welcomingRooms: 0,
+    seatedRooms: 0,
+    updatedAt: Date.now(),
+    retired: true,
+    retiredVersion: "free-table-retired-v1",
+  }),
 );
 
 exports.cleanupExpiredFreeTables = onSchedule({
-  schedule: "every 5 minutes",
+  // Retention only: do not resume runtime matchmaking, presence or invite scans.
+  schedule: "every day 04:30",
   timeZone: "Asia/Tokyo",
   timeoutSeconds: 300,
   memory: "256MiB",
   maxInstances: 1,
 }, async () => {
   try {
-    return await freeTableService.cleanupExpired(Date.now());
+    return await cleanupRetiredFreeTableHistory({ firestore, realtime, Timestamp, now: Date.now() });
   } catch (error) {
     console.error("cleanupExpiredFreeTables failed", { error });
     throw error;

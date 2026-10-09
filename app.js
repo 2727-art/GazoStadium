@@ -115,9 +115,6 @@
   let profileAvatarReadyPromise = null;
   let pendingValueMarketDestination = "";
   let valueMarketReadyListenerPending = false;
-  let pendingFreeTableIntent = "";
-  let freeTableReadyListenerPending = false;
-  let freeTableLaunchGeneration = 0;
   const profileAvatarState = { ready: false, blob: null, url: "" };
   const audioStudioState = {
     recorder: null,
@@ -858,54 +855,11 @@
     if (focusSelector) document.querySelector(focusSelector)?.focus();
   }
 
-  function freeTableLampPresentation(value) {
-    const welcomingRooms = Number.isInteger(value?.welcomingRooms)
-      && value.welcomingRooms > 0
-      ? value.welcomingRooms
-      : 0;
-    if (!welcomingRooms) {
-      return {
-        lit: false,
-        welcomingRooms: 0,
-        eyebrow: "勝ち負けを置いて、ひと休み",
-        label: "貼り合い自由卓",
-      };
-    }
-    return {
-      lit: true,
-      welcomingRooms,
-      eyebrow: `◌ ページ表示時、${welcomingRooms}卓がお迎え中でした`,
-      label: "お迎え中の一席をのぞく",
-    };
-  }
-
-  function updateLandingFreeTableEntrance() {
-    if (currentScreen !== "landing") return;
-    const freeTableStats = window.HariaiOnline?.getLobbyStats?.().freeTable || {};
-    const presentation = freeTableLampPresentation(freeTableStats);
-    const button = document.querySelector("#freeTableButton");
-    if (!button) return;
-    const eyebrow = button.querySelector(".vl-post-sub");
-    const label = button.querySelector(".vl-post-title");
-    if (eyebrow) eyebrow.textContent = presentation.eyebrow;
-    if (label) label.textContent = presentation.label;
-    button.dataset.freeTableIntent = presentation.lit ? "lamp" : "hall";
-    button.classList.toggle("is-lit", presentation.lit);
-    button.setAttribute(
-      "aria-label",
-      presentation.lit
-        ? `貼り合い自由卓。ページ表示時点では${presentation.welcomingRooms}卓がお迎え中でした。部屋札をのぞく`
-        : "貼り合い自由卓を開く",
-    );
-  }
-
   function renderLanding() {
     const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || {};
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
     const soloStats = modeStats("solo");
     const strategyStats = modeStats("strategy");
-    const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
-    const freeTableLamp = freeTableLampPresentation(freeTableStats);
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     // トップ専用の固定画像で描く見本。利用者の投稿画像や名前は取得しない。
     const heroMeter = Array.from({ length: 10 }, (_, index) => {
@@ -966,7 +920,7 @@
         <div class="vl-meibamen-copy"><h2 id="meibamenTitle">終わったら「名場面カード」に</h2><p>チャットの吹き出しをそのまま1枚の画像に。相手の名前と発言は、相手が許可した時だけ載ります。</p></div>
       </section>
       <section class="vl-board" aria-labelledby="landingBoardTitle">
-        <div class="vl-board-head"><h2 id="landingBoardTitle">いま入れる卓</h2><span>人数・卓数はページ表示時点の参考値（未取得は --）</span></div>
+        <div class="vl-board-head"><h2 id="landingBoardTitle">いま入れる卓</h2><span>人数はページ表示時点の参考値（未取得は --）</span></div>
         <ol class="vl-board-list">
           <li class="vl-board-item is-solo"><button class="vl-post" id="soloBoardButton" type="button">
             <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">通常1on1</span><small class="vl-post-sub">サクっと・気軽に</small><em class="vl-post-tag">1〜10点</em>
@@ -980,11 +934,6 @@
             <em class="ha-zones"><b class="is-floor" aria-hidden="true">〜70</b><b class="is-none" aria-hidden="true">70〜</b><b class="is-question">80 質問</b><b class="is-instruction">85 指示</b><b class="is-combo">90 連投</b></em>
             <em class="vl-post-counts">待機 ${liveCount("boardStrategyWaitingCount", strategyStats.waiting, "人")} · 対戦中 ${liveCount("boardStrategyPlayingCount", strategyStats.playing, "人")}</em>
             <strong class="vl-post-go">本式で挑む</strong>
-          </button></li>
-          <li class="vl-board-item is-free"><button class="vl-post${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" type="button" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。ページ表示時点では${freeTableLamp.welcomingRooms}卓がお迎え中でした。部屋札をのぞく` : "貼り合い自由卓を開く"}">
-            <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">${freeTableLamp.label}</span><small class="vl-post-sub">${freeTableLamp.eyebrow}</small>
-            <em class="vl-post-counts">お迎え中 ${liveCount("boardFreeTableWelcomingCount", freeTableStats.welcomingRooms, "卓")} · 同席中 ${liveCount("boardFreeTableSeatedCount", freeTableStats.seatedRooms, "卓")}</em>
-            <strong class="vl-post-go">部屋札を見る</strong>
           </button></li>
         </ol>
       </section>
@@ -1014,14 +963,14 @@
       </section>
       <details class="vl-safe">
         <summary><b>安心して遊べる理由</b><span>匿名で参加</span><span>画像は相手へP2Pで直接</span><span>サーバーに保存しない</span></summary>
-        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
-        <p class="mode-note">ソロトレーニングの候補画像（最大10枚）・抽選結果・自己申告結果は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
+        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
+        <p class="mode-note">ソロトレーニングの候補画像（最大10枚）・抽選結果・自己申告結果は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦や試合後の交流中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </details>
     </section>`;
   }
 
   function renderLandingScreen() {
-    cancelPendingFreeTableLaunch();
+    clearRetiredFreeTableInvite();
     pendingValueMarketDestination = "";
     currentScreen = "landing";
     expandedRankingEntryId = "";
@@ -1035,16 +984,12 @@
       const control = event.target.closest?.("button, a");
       if (!control) return;
       if (!control.matches("#valueMarketButton, #valueMarketRankingButton")) pendingValueMarketDestination = "";
-      if (!control.matches("#freeTableButton")) cancelPendingFreeTableLaunch();
     }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#soloBoardButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#rouletteTrainingButton")?.addEventListener("click", startRouletteTraining);
-    document.querySelector("#freeTableButton")?.addEventListener("click", (event) => {
-      startFreeTable({ intent: event.currentTarget.dataset.freeTableIntent });
-    });
     document.querySelector("#tributeButton")?.addEventListener("click", () => startTribute());
     document.querySelector("#tributeRankingButton")?.addEventListener("click", () => startTribute({ initialScreen: "ranking" }));
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
@@ -2027,49 +1972,31 @@
   }
 
 
-  function cancelPendingFreeTableLaunch() {
-    freeTableLaunchGeneration += 1;
-    pendingFreeTableIntent = "";
-    freeTableReadyListenerPending = false;
+  // retire-free-table-v1: legacy links and external callers stay entirely local.
+  function clearRetiredFreeTableInvite() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(FREE_TABLE_INVITE_QUERY_KEY)) return;
+    url.searchParams.delete(FREE_TABLE_INVITE_QUERY_KEY);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
-  function startFreeTable({ intent = "hall" } = {}) {
-    pendingFreeTableIntent = intent === "lamp" ? "lamp" : "hall";
+  function showRetiredFreeTable() {
+    currentScreen = "free-table-retired";
     setLandingChrome();
-    if (window.HariaiFreeTable?.start) {
-      freeTableLaunchGeneration += 1;
-      const nextIntent = pendingFreeTableIntent;
-      pendingFreeTableIntent = "";
-      freeTableReadyListenerPending = false;
-      window.HariaiFreeTable.start({ intent: nextIntent });
-      return;
-    }
-    showToast("貼り合い自由卓を読み込んでいます…");
-    if (freeTableReadyListenerPending) return;
-    const launchGeneration = ++freeTableLaunchGeneration;
-    freeTableReadyListenerPending = true;
-    window.addEventListener("hariai-free-table-ready", () => {
-      if (launchGeneration !== freeTableLaunchGeneration || !pendingFreeTableIntent) return;
-      freeTableReadyListenerPending = false;
-      const nextIntent = pendingFreeTableIntent || "hall";
-      pendingFreeTableIntent = "";
-      window.HariaiFreeTable?.start?.({ intent: nextIntent });
-    }, { once: true });
+    app.innerHTML = `<section class="screen" data-free-table-retired="retire-free-table-v1"><div class="gameover-card">
+      <h1>貼り合い自由卓は終了しました</h1>
+      <p>自由卓の提供は終了しました。この招待リンクから入室することはできません。</p>
+      <p>通常型・戦略型1on1など、ほかの遊び方はホームからご利用いただけます。</p>
+      <button class="button button-primary" id="retiredFreeTableHome" type="button">ホームへ戻る</button>
+    </div></section>`;
+    document.querySelector("#retiredFreeTableHome")?.addEventListener("click", renderLandingScreen);
+    app.focus({ preventScroll: true });
   }
 
   function openInitialFreeTableInvite() {
     const params = new URLSearchParams(window.location.search);
     if (!params.has(FREE_TABLE_INVITE_QUERY_KEY)) return false;
-    const inviteId = params.get(FREE_TABLE_INVITE_QUERY_KEY) || "";
-    if (window.HariaiFreeTable?.openInvite) {
-      window.HariaiFreeTable.openInvite(inviteId);
-      return true;
-    }
-    window.addEventListener(
-      "hariai-free-table-ready",
-      () => window.HariaiFreeTable?.openInvite?.(inviteId),
-      { once: true },
-    );
+    showRetiredFreeTable();
     return true;
   }
 
@@ -2488,11 +2415,6 @@
       window.HariaiAiTextTraining.requestHome();
       return;
     }
-    if (window.HariaiFreeTable?.isActive?.()) {
-      const requestHome = window.HariaiFreeTable.requestHome || window.HariaiFreeTable.leave;
-      requestHome?.();
-      return;
-    }
     if (window.HariaiAccount?.isActive?.()) {
       window.HariaiAccount.requestHome();
       return;
@@ -2529,7 +2451,7 @@
   window.HariaiApp = {
     returnHome: renderLandingScreen,
     openNormal1on1: startOnlineBattle,
-    openFreeTable: startFreeTable,
+    openFreeTable: showRetiredFreeTable,
     openRouletteTraining: startRouletteTraining,
     openTribute: startTribute,
     shared: {
@@ -2574,10 +2496,8 @@
   window.addEventListener("hariai-online-ready", () => {
     if (currentScreen === "ranking") refreshRankingSurfaces();
     if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.();
-    updateLandingFreeTableEntrance();
   });
 
-  window.addEventListener("hariai-lobby-stats-updated", updateLandingFreeTableEntrance);
 
   window.addEventListener("hariai-top-messages-updated", () => {
     const messages = window.HariaiOnline?.getTopMessages?.() || [];
@@ -2606,7 +2526,6 @@
     if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.({ silent: true });
   });
 
-  renderLandingScreen();
-  openInitialFreeTableInvite();
+  if (!openInitialFreeTableInvite()) renderLandingScreen();
   showAnjuPayUnitNoticeOnce();
 })();

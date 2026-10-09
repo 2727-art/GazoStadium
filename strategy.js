@@ -1352,9 +1352,6 @@ function render() {
   // 画面の登場アニメーションが残す transform の中だと画面下に固定できないので、チャットは画面の直後に置く。
   if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("afterend", renderStrategyChatDock());
   bindScreenEvents();
-  if (screenChanged && state.screen === "gameover") {
-    window.HariaiOnline?.refreshFreeTablePublicStats?.().catch(() => {});
-  }
   if (screenChanged) {
     window.scrollTo(0, 0);
     app.focus({ preventScroll: true });
@@ -1622,20 +1619,8 @@ function renderGameOver() {
     ${renderStrategyShareConsentAsk()}
     ${renderStrategyReviewInvite()}
     ${state.playerSafetyStopped ? "" : renderPostMatchTip({ mode: "strategy", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
-    <div id="strategyFreeTableLampSlot" class="free-table-result-lamp-slot" data-free-table-lamp-refresh>${window.HariaiOnline?.renderFreeTableResultLampContent?.({ buttonId: "strategyFreeTableLampButton" }) || ""}</div>
     <div class="screen-actions strategy-final-actions">${shareButton}${state.playerSafetyStopped ? "" : '<button class="button button-ghost" type="button" id="strategyShareCard">名場面カードを作る</button>'}<button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
   </div></section>`;
-}
-
-function syncStrategyFreeTableResultLamp() {
-  if (!active || state.screen !== "gameover") return;
-  const slot = document.querySelector("#strategyFreeTableLampSlot");
-  window.HariaiOnline?.syncFreeTableResultLampSlot?.({
-    slot,
-    buttonId: "strategyFreeTableLampButton",
-    onClick: leaveToFreeTable,
-    focusFallbackSelector: "#strategyNewMatch",
-  });
 }
 
 function firebaseNow() {
@@ -3411,7 +3396,6 @@ function bindScreenEvents() {
   document.querySelector("#strategyReviewDecline")?.addEventListener("click", () => submitReviewDecision("decline"));
   document.querySelector("#strategyReviewLeave")?.addEventListener("click", leaveStrategyReview);
   document.querySelector("#strategyNewMatch")?.addEventListener("click", resetStrategySetup);
-  document.querySelector("#strategyFreeTableLampButton")?.addEventListener("click", leaveToFreeTable);
   document.querySelector("#strategyWithdrawAgain")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyNoContestAgain")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyRetry")?.addEventListener("click", retryConnection);
@@ -6858,7 +6842,6 @@ function beginResultNavigation(triggerId = "") {
   resultNavigationBusy = true;
   document.querySelectorAll([
     "#strategyNewMatch",
-    "#strategyFreeTableLampButton",
     "#strategyFinish",
     "#strategyWithdrawAgain",
     "#strategyWithdrawHome",
@@ -6978,27 +6961,6 @@ async function leaveToNormal1on1() {
       renderStrategyDeckIfVisible();
     }
     handleRecoverableError(error);
-  }
-}
-
-async function leaveToFreeTable() {
-  if (state.idleCleanupPending || state.idleCleanupPromise) return showToast("通信の終了確認が完了するまでお待ちください。");
-  if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
-    showToast("差し入れの送信が終わるまでお待ちください。");
-    return;
-  }
-  if (!beginResultNavigation("strategyFreeTableLampButton")) return;
-  try {
-    state.matchmakingLaunchGeneration += 1;
-    state.matchmakingLaunchBusy = false;
-    await cleanupOnlineResources(false);
-    releaseAllImages();
-    active = false;
-    const openFreeTable = window.HariaiApp?.openFreeTable;
-    if (typeof openFreeTable === "function") openFreeTable({ intent: "lamp" });
-    else window.HariaiApp?.returnHome?.();
-  } finally {
-    resultNavigationBusy = false;
   }
 }
 
@@ -7142,11 +7104,6 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("hariai-ranking-dashboard-updated", () => {
   if (active && state.screen === "profile") updateStrategyCrownMatchmakingActions();
 });
-
-window.addEventListener(
-  "hariai-free-table-public-stats-updated",
-  syncStrategyFreeTableResultLamp,
-);
 
 window.HariaiStrategy = { start, isActive, requestHome, destroyRoom };
 window.dispatchEvent(new CustomEvent("hariai-strategy-ready"));

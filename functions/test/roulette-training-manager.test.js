@@ -252,7 +252,7 @@ test("hub copy, cache tokens, and design notes describe the manager roulette", (
   assert.match(hub, /<h2>今日のメニューは、あの子が決める。<\/h2>/);
   assert.match(hub, /管理人に関係なく「今日はここまで」で止めてください。/);
   assert.match(html, /roulette-training\.css\?v=[^"]*-manager-roulette-v1"/);
-  assert.match(html, /roulette-training\.js\?v=[^"]*-manager-roulette-v1-tribute-v1"/);
+  assert.match(html, /roulette-training\.js\?v=[^"]*-manager-roulette-v1-tribute-v1-retire-free-table-v1"/);
   assert.match(design, /### 5\.5 管理ルーレット/);
   assert.match(design, /roulette-training-persona\.mjs/);
   assert.match(design, /拒否権なし/);

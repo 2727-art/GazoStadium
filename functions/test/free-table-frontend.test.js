@@ -574,19 +574,21 @@ test("chat, media, arrival, and farewell callbacks cannot leak into a later sess
   assert.match(mediaSource, /FREE_TABLE_MEDIA_MAX_RECEIVE_CHUNK_BYTES/);
 });
 
-test("X invite opens a read-only玄関 before anonymous authentication", () => {
+test("retired X invites stop locally while historical preview code stays inaccessible", () => {
   assert.match(frontendSource, /httpsCallable\(functions, "freeTableInvitePreview"\)/);
   assert.match(frontendSource, /const FREE_TABLE_INVITE_ID_PATTERN = \/\^\[A-Za-z0-9_-\]\{32\}\$\//);
   assert.match(appSource, /const FREE_TABLE_INVITE_QUERY_KEY = "freeTableInvite"/);
   assert.match(appSource, /function openInitialFreeTableInvite\(\)/);
-  assert.match(appSource, /window\.HariaiFreeTable\.openInvite\(inviteId\)/);
-  assert.match(appSource, /renderLandingScreen\(\);\s*openInitialFreeTableInvite\(\);/);
+  assert.doesNotMatch(appSource, /window\.HariaiFreeTable\.openInvite/);
+  assert.match(appSource, /if \(!openInitialFreeTableInvite\(\)\) renderLandingScreen\(\);/);
   const openStart = frontendSource.indexOf("async function openInvite");
   const openEnd = frontendSource.indexOf("async function start", openStart);
   const openSource = frontendSource.slice(openStart, openEnd);
   const refreshStart = frontendSource.indexOf("async function refreshInvitePreview");
   const refreshEnd = frontendSource.indexOf("async function openInvite", refreshStart);
   const previewSource = frontendSource.slice(refreshStart, refreshEnd);
+  assert.match(openSource, /if \(FREE_TABLE_RETIRED\) return showFreeTableRetired\(\);/);
+  assert.match(previewSource, /if \(FREE_TABLE_RETIRED\) return;/);
   assert.match(openSource, /await refreshInvitePreview\(generation, expectedInviteId\)/);
   assert.match(previewSource, /freeTableInvitePreviewCallable\(\{ inviteId: expectedInviteId \}\)/);
   assert.doesNotMatch(

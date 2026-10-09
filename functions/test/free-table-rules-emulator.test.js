@@ -4,416 +4,138 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const {
-  assertFails,
-  assertSucceeds,
-  initializeTestEnvironment,
-} = require("@firebase/rules-unit-testing");
-const {
-  get,
-  ref,
-  set,
-} = require("firebase/database");
+const { assertFails, assertSucceeds, initializeTestEnvironment } = require("@firebase/rules-unit-testing");
+const { get, ref, remove, set, update } = require("firebase/database");
+const { pairIdFor } = require("../player-safety");
 
-const root = path.resolve(__dirname, "..", "..");
 const emulatorHost = process.env.FIREBASE_DATABASE_EMULATOR_HOST || "";
-const projectId = process.env.FREE_TABLE_RULES_TEST_PROJECT_ID || "demo-free-table";
+const projectId = process.env.FREE_TABLE_RULES_TEST_PROJECT_ID || "demo-free-table-retired";
 const safeEmulator = /^demo-[a-z0-9-]+$/.test(projectId)
   && /^(?:127\.0\.0\.1|localhost):\d+$/.test(emulatorHost);
-const SESSION_ID = "S".repeat(24);
-const INVITE_ID = "I".repeat(32);
-const HOST_UID = "free-table-host";
-const VISITOR_UID = "free-table-visitor";
-const OUTSIDER_UID = "free-table-outsider";
-const chatSlotId = (role, index) => (
-  `${"C".repeat(20)}${role === "host" ? "0" : "1"}${String(index).padStart(3, "0")}`
-);
-const signalSlotId = (index) => (
-  `${"S".repeat(22)}${String(index).padStart(2, "0")}`
-);
+const options = { skip: safeEmulator ? false : "run with a loopback Database Emulator and a demo-* project" };
+const HOST = "retired-table-host";
+const VISITOR = "retired-table-visitor";
+const SESSION = "S".repeat(24);
+const ROOM = "R".repeat(24);
+const REQUEST = "Q".repeat(24);
+const CHAT = `${"C".repeat(20)}0000`;
+const SIGNAL = `${"S".repeat(22)}00`;
+const PAIR = pairIdFor(HOST, VISITOR);
 
 async function environmentFor(context) {
-  assert.equal(projectId.startsWith("demo-"), true);
-  const environment = await initializeTestEnvironment({
-    projectId,
-    database: {
-      rules: fs.readFileSync(path.join(root, "database.rules.json"), "utf8"),
-    },
+  const [host, port] = emulatorHost.split(":");
+  const environment = await initializeTestEnvironment({ projectId,
+    database: { host, port: Number(port),
+      rules: fs.readFileSync(path.resolve(__dirname, "../..", "database.rules.json"), "utf8") },
   });
   context.after(() => environment.cleanup());
+  await environment.clearDatabase();
   return environment;
 }
 
-test("free table client records accept exact short-lived shapes and reject TTL bypasses", {
-  skip: safeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* FREE_TABLE_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await environmentFor(context);
+function contact(mode, roomId, now) {
+  return { firstUid: HOST, secondUid: VISITOR, mode, roomId, active: true,
+    createdAt: now, startedAt: now, expiresAt: now + 120_000 };
+}
+
+test("retired free-table reads and valid legacy writes are denied at every surface", options, async (t) => {
+  const environment = await environmentFor(t);
   const now = Date.now();
-  const sessionExpiresAt = now + (2 * 60 * 60 * 1000);
-  await environment.withSecurityRulesDisabled(async (adminContext) => {
-    await set(ref(adminContext.database(), "freeTables"), {
-      publicRooms: {
-        ["R".repeat(24)]: {
-          publicRoomId: "R".repeat(24),
-          publicMemberId: "M".repeat(24),
-          state: "open",
-          expiresAt: now + 120_000,
-        },
-      },
-      invites: {
-        [INVITE_ID]: {
-          inviteId: INVITE_ID,
-          hostUid: HOST_UID,
-          roomId: "O".repeat(24),
-          publicRoomId: "R".repeat(24),
-          expiresAt: now + 60_000,
-        },
-      },
-      hostInvites: {
-        [HOST_UID]: {
-          inviteId: INVITE_ID,
-          expiresAt: now + 60_000,
-        },
-      },
-      active: {
-        [HOST_UID]: {
-          sessionId: SESSION_ID,
-          role: "host",
-          expiresAt: sessionExpiresAt,
-        },
-        [VISITOR_UID]: {
-          sessionId: SESSION_ID,
-          role: "visitor",
-          expiresAt: sessionExpiresAt,
-        },
-      },
-      sessions: {
-        [SESSION_ID]: {
-          sessionId: SESSION_ID,
-          hostUid: HOST_UID,
-          visitorUid: VISITOR_UID,
-          participants: {
-            [HOST_UID]: true,
-            [VISITOR_UID]: true,
-          },
-          status: "active",
-          expiresAt: sessionExpiresAt,
-        },
+  const expiresAt = now + 3_600_000;
+  const session = { sessionId: SESSION, roomId: ROOM, hostUid: HOST, visitorUid: VISITOR,
+    participants: { [HOST]: true, [VISITOR]: true }, status: "active", expiresAt,
+    safetyPairId: PAIR, safetyGrantId: "grant-free-table", safetyVersion: 1 };
+  const chat = { authorUid: HOST, authorRole: "host", type: "text", text: "still open in an old tab",
+    createdAt: now, expiresAt: now + 60_000 };
+  const signal = { fromUid: HOST, toUid: VISITOR, type: "offer", payload: "legacy-offer",
+    createdAt: now, expiresAt: now + 60_000 };
+  const presence = { online: true, lastSeen: now, expiresAt: now + 30_000 };
+  await environment.withSecurityRulesDisabled(async (admin) => {
+    await update(ref(admin.database()), {
+      "online/config/playerSafetyEnabled": true,
+      [`online/contactGates/${PAIR}`]: { initialized: true, blocked: false, version: 1,
+        participants: { [HOST]: true, [VISITOR]: true },
+        grants: { "grant-free-table": contact("free_table", SESSION, now) } },
+      freeTables: {
+        publicRooms: { [ROOM]: { publicRoomId: ROOM, state: "open", expiresAt } },
+        roomStates: { [ROOM]: { hostUid: HOST, state: "active", session } },
+        roomOwners: { [ROOM]: { uid: HOST, expiresAt } },
+        openGenerations: { [HOST]: 1 }, engagements: { [HOST]: { sessionId: SESSION, expiresAt } },
+        hostActive: { [HOST]: { roomId: ROOM, sessionId: SESSION, expiresAt } },
+        visitorPending: { [VISITOR]: { roomId: ROOM, requestId: REQUEST, expiresAt } },
+        requests: { [ROOM]: { [REQUEST]: { visitorUid: VISITOR, expiresAt } } },
+        active: { [HOST]: { sessionId: SESSION, expiresAt }, [VISITOR]: { sessionId: SESSION, expiresAt } },
+        sessions: { [SESSION]: session }, presence: { [SESSION]: { [HOST]: presence } },
+        chat: { [SESSION]: { [CHAT]: chat } }, signals: { [SESSION]: { [VISITOR]: { [SIGNAL]: signal } } },
+        invites: { ["I".repeat(32)]: { roomId: ROOM, expiresAt } },
+        hostInvites: { [HOST]: { inviteId: "I".repeat(32), expiresAt } },
       },
     });
   });
-
-  const hostDatabase = environment.authenticatedContext(HOST_UID).database();
-  const visitorDatabase = environment.authenticatedContext(VISITOR_UID).database();
-  const outsiderDatabase = environment.authenticatedContext(OUTSIDER_UID).database();
-
-  await assertFails(get(ref(hostDatabase, "freeTables/publicRooms")));
-  await assertFails(get(ref(hostDatabase, `freeTables/invites/${INVITE_ID}`)));
-  await assertFails(get(ref(hostDatabase, `freeTables/hostInvites/${HOST_UID}`)));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/invites/${INVITE_ID}`),
-    { inviteId: INVITE_ID },
-  ));
-  await assertSucceeds(get(ref(hostDatabase, `freeTables/sessions/${SESSION_ID}`)));
-  await assertFails(get(ref(outsiderDatabase, `freeTables/sessions/${SESSION_ID}`)));
-
-  await assertSucceeds(set(
-    ref(hostDatabase, `freeTables/presence/${SESSION_ID}/${HOST_UID}`),
-    {
-      online: true,
-      lastSeen: now,
-      expiresAt: now + 45_000,
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/presence/${SESSION_ID}/${HOST_UID}`),
-    {
-      online: true,
-      lastSeen: now,
-      expiresAt: sessionExpiresAt,
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/presence/${SESSION_ID}/${HOST_UID}`),
-    {
-      online: true,
-      lastSeen: now,
-      expiresAt: now + 45_000,
-      uid: HOST_UID,
-    },
-  ));
-  await environment.withSecurityRulesDisabled(async (adminContext) => {
-    await set(
-      ref(adminContext.database(), `freeTables/presence/${SESSION_ID}/_disconnect`),
-      {
-        state: "locked",
-        sessionId: SESSION_ID,
-        cleanupToken: "L".repeat(24),
-      },
-    );
+  const paths = ["freeTables", `freeTables/publicRooms/${ROOM}`, `freeTables/roomStates/${ROOM}`,
+    `freeTables/roomOwners/${ROOM}`, `freeTables/openGenerations/${HOST}`, `freeTables/engagements/${HOST}`,
+    `freeTables/hostActive/${HOST}`, `freeTables/visitorPending/${VISITOR}`, `freeTables/requests/${ROOM}`,
+    `freeTables/requests/${ROOM}/${REQUEST}`, `freeTables/active/${HOST}`, `freeTables/active/${VISITOR}`,
+    `freeTables/sessions/${SESSION}`, `freeTables/sessions/${SESSION}/status`,
+    `freeTables/presence/${SESSION}`, `freeTables/presence/${SESSION}/${HOST}`,
+    `freeTables/chat/${SESSION}`, `freeTables/chat/${SESSION}/${CHAT}`,
+    `freeTables/signals/${SESSION}/${VISITOR}`, `freeTables/signals/${SESSION}/${VISITOR}/${SIGNAL}`,
+    `freeTables/invites/${"I".repeat(32)}`, `freeTables/hostInvites/${HOST}`];
+  const databases = [environment.unauthenticatedContext().database(),
+    ...[HOST, VISITOR, "retired-table-outsider"].map((uid) => environment.authenticatedContext(uid).database())];
+  for (const database of databases) {
+    for (const location of paths) {
+      await assertFails(get(ref(database, location)), `read ${location}`);
+      await assertFails(remove(ref(database, location)), `delete ${location}`);
+    }
+    // These shapes met the old writer rules; rejection cannot be attributed to malformed payloads.
+    await assertFails(set(ref(database, `freeTables/presence/${SESSION}/${HOST}`), presence));
+    await assertFails(set(ref(database, `freeTables/chat/${SESSION}/${"C".repeat(20)}0001`), chat));
+    await assertFails(set(ref(database, `freeTables/signals/${SESSION}/${VISITOR}/${"S".repeat(22)}01`), signal));
+    await assertFails(update(ref(database, "freeTables"), { [`sessions/${SESSION}/status`]: "active" }));
+  }
+  await environment.withSecurityRulesDisabled(async (admin) => {
+    assert.deepEqual((await get(ref(admin.database(), `freeTables/sessions/${SESSION}`))).val(), session);
   });
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/presence/${SESSION_ID}/_disconnect`),
-    {
-      state: "probe",
-      sessionId: SESSION_ID,
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/presence/${SESSION_ID}/${HOST_UID}`),
-    {
-      online: true,
-      lastSeen: now,
-      expiresAt: now + 45_000,
-    },
-  ));
-  await environment.withSecurityRulesDisabled(async (adminContext) => {
-    await set(
-      ref(adminContext.database(), `freeTables/presence/${SESSION_ID}/_disconnect`),
-      null,
-    );
-  });
-  await assertSucceeds(set(
-    ref(hostDatabase, `freeTables/presence/${SESSION_ID}/${HOST_UID}`),
-    {
-      online: true,
-      lastSeen: now,
-      expiresAt: now + 45_000,
-    },
-  ));
+});
 
-  const chatId = chatSlotId("host", 0);
-  await assertSucceeds(set(
-    ref(hostDatabase, `freeTables/chat/${SESSION_ID}/${chatId}`),
-    {
-      authorUid: HOST_UID,
-      authorRole: "host",
-      type: "text",
-      text: "おかえり",
-      createdAt: now,
-      expiresAt: now + (10 * 60 * 1000),
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/chat/${SESSION_ID}/${chatId}`),
-    {
-      authorUid: HOST_UID,
-      authorRole: "host",
-      type: "text",
-      text: "証拠を上書き",
-      createdAt: now + 1,
-      expiresAt: now + (10 * 60 * 1000),
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/chat/${SESSION_ID}/${chatId}`),
-    null,
-  ));
-  await assertFails(set(
-    ref(visitorDatabase, `freeTables/chat/${SESSION_ID}/${chatSlotId("visitor", 0)}`),
-    {
-      authorUid: VISITOR_UID,
-      authorRole: "visitor",
-      type: "text",
-      text: "長すぎるTTL",
-      createdAt: now,
-      expiresAt: sessionExpiresAt,
-    },
-  ));
-  await assertFails(set(
-    ref(outsiderDatabase, `freeTables/chat/${SESSION_ID}/${chatSlotId("visitor", 1)}`),
-    {
-      authorUid: OUTSIDER_UID,
-      authorRole: "visitor",
-      type: "text",
-      text: "部外者",
-      createdAt: now,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/chat/${SESSION_ID}/${chatSlotId("visitor", 2)}`),
-    {
-      authorUid: HOST_UID,
-      authorRole: "host",
-      type: "text",
-      text: "相手のスロット",
-      createdAt: now,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/chat/${SESSION_ID}/${`${"C".repeat(20)}0500`}`),
-    {
-      authorUid: HOST_UID,
-      authorRole: "host",
-      type: "text",
-      text: "範囲外",
-      createdAt: now,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertSucceeds(set(
-    ref(visitorDatabase, `freeTables/chat/${SESSION_ID}/${chatSlotId("visitor", 499)}`),
-    {
-      authorUid: VISITOR_UID,
-      authorRole: "visitor",
-      type: "text",
-      text: "来訪者の末尾スロット",
-      createdAt: now,
-      expiresAt: now + 60_000,
-    },
-  ));
-  const expiredChatId = chatSlotId("host", 3);
-  await environment.withSecurityRulesDisabled(async (adminContext) => {
-    await set(
-      ref(adminContext.database(), `freeTables/chat/${SESSION_ID}/${expiredChatId}`),
-      {
-        authorUid: HOST_UID,
-        authorRole: "host",
-        type: "text",
-        text: "期限切れ",
-        createdAt: now - 2_000,
-        expiresAt: now - 1,
-      },
-    );
-  });
-  await assertSucceeds(set(
-    ref(hostDatabase, `freeTables/chat/${SESSION_ID}/${expiredChatId}`),
-    {
-      authorUid: HOST_UID,
-      authorRole: "host",
-      type: "text",
-      text: "期限後の再利用",
-      createdAt: now + 1,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertFails(set(
-    ref(visitorDatabase, `freeTables/chat/${SESSION_ID}/short`),
-    {
-      authorUid: VISITOR_UID,
-      authorRole: "visitor",
-      type: "text",
-      text: "短いキー",
-      createdAt: now,
-      expiresAt: now + 60_000,
-    },
-  ));
-
-  const signalId = signalSlotId(0);
-  await assertSucceeds(set(
-    ref(hostDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}/${signalId}`),
-    {
-      fromUid: HOST_UID,
-      toUid: VISITOR_UID,
-      type: "offer",
-      payload: "{\"type\":\"offer\"}",
-      createdAt: now,
-      expiresAt: now + 90_000,
-    },
-  ));
-  await assertSucceeds(get(
-    ref(visitorDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}`),
-  ));
-  await assertFails(get(
-    ref(outsiderDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}`),
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}/${signalSlotId(1)}`),
-    {
-      fromUid: HOST_UID,
-      toUid: VISITOR_UID,
-      type: "candidate",
-      payload: "{}",
-      createdAt: now,
-      expiresAt: sessionExpiresAt,
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/signals/${SESSION_ID}/${HOST_UID}/${signalSlotId(2)}`),
-    {
-      fromUid: HOST_UID,
-      toUid: HOST_UID,
-      type: "offer",
-      payload: "{}",
-      createdAt: now,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}/${`${"S".repeat(22)}80`}`),
-    {
-      fromUid: HOST_UID,
-      toUid: VISITOR_UID,
-      type: "candidate",
-      payload: "{}",
-      createdAt: now,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertSucceeds(set(
-    ref(hostDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}/${signalId}`),
-    {
-      fromUid: HOST_UID,
-      toUid: VISITOR_UID,
-      type: "candidate",
-      payload: "{}",
-      createdAt: now + 1,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertFails(set(
-    ref(visitorDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}/${signalId}`),
-    {
-      fromUid: VISITOR_UID,
-      toUid: VISITOR_UID,
-      type: "candidate",
-      payload: "{}",
-      createdAt: now + 2,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertSucceeds(set(
-    ref(visitorDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}/${signalId}`),
-    null,
-  ));
-
-  await environment.withSecurityRulesDisabled(async (adminContext) => {
-    await set(ref(adminContext.database(), `freeTables/sessions/${SESSION_ID}/status`), "ended");
-  });
-  await assertFails(set(
-    ref(visitorDatabase, `freeTables/chat/${SESSION_ID}/${chatSlotId("visitor", 4)}`),
-    {
-      authorUid: VISITOR_UID,
-      authorRole: "visitor",
-      type: "text",
-      text: "終了後",
-      createdAt: now,
-      expiresAt: now + 60_000,
-    },
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `freeTables/presence/${SESSION_ID}/${HOST_UID}`),
-    {
-      online: true,
-      lastSeen: now,
-      expiresAt: now + 45_000,
-    },
-  ));
-  await assertFails(get(ref(hostDatabase, `freeTables/presence/${SESSION_ID}`)));
-  await assertFails(get(ref(visitorDatabase, `freeTables/chat/${SESSION_ID}`)));
-  await assertFails(get(
-    ref(visitorDatabase, `freeTables/signals/${SESSION_ID}/${VISITOR_UID}`),
-  ));
-
-  await environment.withSecurityRulesDisabled(async (adminContext) => {
-    await set(
-      ref(adminContext.database(), `freeTables/sessions/${SESSION_ID}/expiresAt`),
-      now - 1,
-    );
-  });
-  await assertFails(get(ref(hostDatabase, `freeTables/sessions/${SESSION_ID}`)));
+test("free-table retirement preserves normal and strategy contacts, chat, and signaling", options, async (t) => {
+  const environment = await environmentFor(t);
+  const now = Date.now();
+  const database = environment.authenticatedContext(HOST).database();
+  const outsider = environment.authenticatedContext("retired-table-outsider").database();
+  for (const mode of ["solo", "strategy"]) {
+    const roomId = `${mode}-still-active`;
+    const roomPath = `online/${mode === "solo" ? "rooms" : "strategyRooms"}/${roomId}`;
+    const grantId = `grant-${mode}`;
+    await environment.withSecurityRulesDisabled(async (admin) => {
+      await update(ref(admin.database()), {
+        "online/config/playerSafetyEnabled": true,
+        [roomPath]: { hostUid: HOST, guestUid: VISITOR, status: "active", turn: 1,
+          members: { [HOST]: true, [VISITOR]: true }, createdAt: now,
+          safetyPairId: PAIR, safetyGrantId: grantId, safetyVersion: 1 },
+        [`online/contactGates/${PAIR}`]: { initialized: true, blocked: false, version: 1,
+          participants: { [HOST]: true, [VISITOR]: true }, grants: { [grantId]: contact(mode, roomId, now) } },
+      });
+    });
+    await assertSucceeds(get(ref(database, roomPath)));
+    await assertFails(get(ref(outsider, roomPath)));
+    const chatPath = mode === "solo" ? `${roomPath}/chat/message-one` : `online/strategyChats/${roomId}/message-one`;
+    const chat = mode === "solo"
+      ? { authorUid: HOST, name: "Host", text: "hello", round: 1, createdAt: now }
+      : { authorUid: HOST, text: "hello", phase: "scout", round: 1, createdAt: now };
+    await assertSucceeds(set(ref(database, chatPath), chat));
+    await assertSucceeds(set(ref(database, `${roomPath}/signals/${VISITOR}/signal-one`),
+      { fromUid: HOST, type: "offer", payload: "offer", createdAt: now }));
+    await assertFails(update(ref(database), {
+      [`${chatPath}-two`]: chat, [`freeTables/sessions/${SESSION}/status`]: "active",
+    }));
+    await environment.withSecurityRulesDisabled(async (admin) => {
+      assert.equal((await get(ref(admin.database(), `${chatPath}-two`))).exists(), false,
+        "a denied multi-location write must not partially modify the live mode");
+      await set(ref(admin.database(), `online/contactGates/${PAIR}/blocked`), true);
+    });
+    await assertFails(get(ref(database, roomPath)));
+    await assertFails(set(ref(database, `${chatPath}-blocked`), chat));
+  }
 });

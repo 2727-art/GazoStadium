@@ -214,46 +214,10 @@ test("free-table diagnostics reject malformed generations and participant identi
   }
 });
 
-test("free-table diagnostic callable is App Check enforced and server-context bounded", () => {
+test("free-table diagnostic callable is retired before data or secret access", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportFreeTableP2pConnectivity, true);
-  const requestHelper = sourceBetween(
-    "function requireFreeTableP2pDiagnosticCallableData",
-    "async function requireCurrentP2pDiagnosticContext",
-  );
-  const contextHelper = sourceBetween(
-    "async function requireCurrentFreeTableP2pDiagnosticContext",
-    "function readCloudflareTurnApiToken",
-  );
-  const callable = sourceBetween(
-    "exports.reportFreeTableP2pConnectivity",
-    "function cleanText",
-  );
-  const diagnosticWrite = callable.slice(
-    callable.indexOf("const eventId ="),
-    callable.indexOf("return { accepted: true }"),
-  );
-
-  assert.match(requestHelper, /new Set\(\["sessionId", "diagnostic"\]\)/);
-  assert.doesNotMatch(requestHelper, /"roomId"/);
-  assert.match(requestHelper, /value\.diagnostic\.phase !== "free_table"/);
-  assert.match(contextHelper, /freeTables\/sessions\/\$\{data\.sessionId\}/);
-  assert.match(contextHelper, /freeTables\/active\/\$\{uid\}/);
-  assert.match(contextHelper, /currentFreeTableP2pDiagnosticContext\(\{/);
-  assert.match(callable, /const uid = requireUid\(request\)/);
-  assert.match(
-    callable,
-    /callableOptions\("reportFreeTableP2pConnectivity", \[P2P_DIAGNOSTIC_HMAC_SECRET\]\)/,
-  );
-  assert.match(callable, /await requireCurrentFreeTableP2pDiagnosticContext\(uid, data, now\)/);
-  assert.match(callable, /sessionId: `free-table-session-\$\{context\.sessionId\}`/);
-  assert.match(callable, /roomId: `free-table-session-\$\{context\.sessionId\}`/);
-  assert.doesNotMatch(callable, /roomId: `free-table-[^`]*context\.roomId/);
-  assert.match(callable, /createP2PDiagnosticRecord\(\{/);
-  assert.match(callable, /payload: data\.diagnostic/);
-  assert.match(callable, /P2P_DIAGNOSTIC_RATE_LIMIT_POLICY/);
-  assert.match(callable, /retentionDays: P2P_DIAGNOSTIC_RETENTION_DAYS/);
-  assert.match(callable, /deleteAt: now \+ P2P_DIAGNOSTIC_RETENTION_MS/);
-  assert.match(diagnosticWrite, /\.\.\.record/);
-  assert.doesNotMatch(diagnosticWrite, /\b(?:uid|sessionId|roomId):/);
-  assert.doesNotMatch(callable, /\.\.\.data/);
+  const callable = sourceBetween("exports.reportFreeTableP2pConnectivity", "function cleanText");
+  assert.match(callable, /requireUid\(request\)/);
+  assert.match(callable, /throwRetiredCommunityMode\(HttpsError, "free_table"\)/);
+  assert.doesNotMatch(callable, /P2P_DIAGNOSTIC_HMAC_SECRET|realtime\.|firestore\.|consumeP2pConnectivityRateLimit|requireCurrentFreeTableP2pDiagnosticContext/);
 });

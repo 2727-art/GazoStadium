@@ -51,6 +51,10 @@ import {
   createFreeTableAmbienceController,
 } from "./free-table-ambience.mjs?v=free-table-ambience-v2";
 
+// retire-free-table-v1: stale HTML may still load this module. Every public
+// entry and authentication/action boundary must stop before network activity.
+const FREE_TABLE_RETIRED = true;
+const FREE_TABLE_RETIRED_MESSAGE = "貼り合い自由卓は終了しました。ホームからほかの遊び方をご利用ください。";
 const FREE_TABLE_ROOT = "freeTables";
 const FREE_TABLE_CHAT_LIMIT = 80;
 const FREE_TABLE_CHAT_SLOT_CAP = 500;
@@ -992,6 +996,7 @@ function isVisitor() {
 }
 
 async function callFreeTableAction(action, payload = {}) {
+  assertFreeTableAvailable();
   const response = await freeTableActionCallable({ action, ...payload });
   const data = valueFromSnapshot(response?.data);
   if (data.ok === false) throw new Error(data.message || "自由卓の操作を完了できませんでした。");
@@ -999,6 +1004,7 @@ async function callFreeTableAction(action, payload = {}) {
 }
 
 async function callFreeTableInviteAction(action, payload = {}) {
+  assertFreeTableAvailable();
   const response = await freeTableInviteActionCallable({ action, ...payload });
   const data = valueFromSnapshot(response?.data);
   if (data.ok === false) throw new Error(data.message || "灯り札の操作を完了できませんでした。");
@@ -1033,6 +1039,7 @@ function waitForDelay(delayMs) {
 }
 
 async function ensureAuthenticated() {
+  assertFreeTableAvailable();
   if (auth.currentUser) return auth.currentUser;
   await setPersistence(auth, browserLocalPersistence);
   const credential = await signInAnonymously(auth);
@@ -2692,6 +2699,7 @@ function renderFarewell() {
 }
 
 function render() {
+  if (FREE_TABLE_RETIRED) return showFreeTableRetired();
   if (!active || !app) return;
   if (state.sessionId && state.opponentUid) {
     const sessionId = state.sessionId;
@@ -3809,6 +3817,7 @@ async function reportFreeTableP2pDiagnostic(event, peer = state.peer, {
   peerStartedAt = state.peerStartedAt,
   turnAvailable = state.peerTurnAvailable,
 } = {}) {
+  if (FREE_TABLE_RETIRED) return;
   const diagnosticState = state;
   if (!sessionContextIsCurrent(sessionId, sessionGeneration)) return;
   const normalizedAttempt = Math.min(3, Math.max(0, Math.trunc(Number(attempt) || 0)));
@@ -5567,6 +5576,11 @@ function finishSessionLocally(message = "", { deferHallMs = 0 } = {}) {
 }
 
 async function leave({ reason = "safe_exit", returnHome = false } = {}) {
+  if (FREE_TABLE_RETIRED) {
+    active = false;
+    if (returnHome) window.HariaiApp?.returnHome?.();
+    return;
+  }
   if (!active) return;
   const sessionId = state.sessionId;
   rememberCurrentReportContext();
@@ -5600,6 +5614,7 @@ async function requestHome() {
 }
 
 async function initializeAuthenticatedFreeTable(generation = state.generation) {
+  assertFreeTableAvailable();
   if (state.uid && state.authenticatedReady) return state.uid;
   try {
     const user = await ensureAuthenticated();
@@ -5746,6 +5761,7 @@ function scheduleInvitePreviewRefresh(generation, inviteId, delay = invitePrevie
 }
 
 async function refreshInvitePreview(generation, expectedInviteId) {
+  if (FREE_TABLE_RETIRED) return;
   if (!invitePreviewContextIsCurrent(generation, expectedInviteId)
       || document.visibilityState !== "visible"
       || state.invitePreviewStatus === "inactive") return;
@@ -5788,6 +5804,7 @@ async function refreshInvitePreview(generation, expectedInviteId) {
 }
 
 async function openInvite(inviteIdValue) {
+  if (FREE_TABLE_RETIRED) return showFreeTableRetired();
   if (location.protocol === "file:") {
     showToast("自由卓はローカルサーバーまたは公開URLから開いてください。");
     return;
@@ -5845,6 +5862,7 @@ function resolveFreeTableEntryIntent() {
 }
 
 async function start({ intent = "hall" } = {}) {
+  if (FREE_TABLE_RETIRED) return showFreeTableRetired();
   const entryIntent = normalizeFreeTableIntent(intent);
   if (active) {
     if (entryIntent === "lamp" && !state.sessionId) {
@@ -5908,13 +5926,34 @@ async function start({ intent = "hall" } = {}) {
 }
 
 function isActive() {
-  return active;
+  return !FREE_TABLE_RETIRED && active;
+}
+
+function assertFreeTableAvailable() {
+  if (!FREE_TABLE_RETIRED) return;
+  const error = new Error(FREE_TABLE_RETIRED_MESSAGE);
+  error.code = "failed-precondition";
+  throw error;
+}
+
+function showFreeTableRetired() {
+  active = false;
+  if (!app) return;
+  app.classList.remove("is-busy");
+  app.innerHTML = `<section class="screen" data-free-table-retired="retire-free-table-v1"><div class="gameover-card">
+    <h1>貼り合い自由卓は終了しました</h1>
+    <p>自由卓の提供は終了しました。この招待リンクから入室することはできません。</p>
+    <button class="button button-primary" id="retiredFreeTableHome" type="button">ホームへ戻る</button>
+  </div></section>`;
+  document.querySelector("#retiredFreeTableHome")?.addEventListener("click", requestHome);
+  app.focus?.({ preventScroll: true });
 }
 
 function attachPeerConnection(peer, {
   role = state.role,
   opponentUid = state.opponentUid,
 } = {}) {
+  if (FREE_TABLE_RETIRED) return null;
   if (!peer || typeof peer.createDataChannel !== "function") throw new Error("P2P接続を確認できません。");
   if (!active || !state.sessionId) throw new Error("自由卓の席を確認できません。");
   resetPeerTransport({
@@ -5958,11 +5997,13 @@ function attachPeerConnection(peer, {
 }
 
 function setDataChannel(channel) {
+  if (FREE_TABLE_RETIRED) return null;
   configureMediaDataChannel(channel);
   return channel;
 }
 
 async function handleDocumentAction(event) {
+  if (FREE_TABLE_RETIRED) return;
   if (!active) return;
   const button = event.target.closest("[data-action]");
   if (!button || !app?.contains(button)) return;
@@ -6083,6 +6124,7 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("visibilitychange", () => {
+  if (FREE_TABLE_RETIRED) return;
   if (document.visibilityState !== "visible") {
     state.ambienceController?.suspendForVisibility(true);
     state.ambienceSoundEnabled = false;
@@ -6103,6 +6145,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("beforeunload", () => {
+  if (FREE_TABLE_RETIRED) return;
   stopOpenHeartbeat();
   stopHallRefresh();
   rememberCurrentReportContext();
@@ -6119,6 +6162,7 @@ window.HariaiFreeTable = {
   setDataChannel,
   render,
   refresh: async () => {
+    if (FREE_TABLE_RETIRED) return { retired: true };
     await Promise.all([refreshRooms(), refreshMyState()]);
     render();
   },

@@ -62,8 +62,8 @@ test("shared safety Rules and services on isolated Firestore/RTDB emulators", {
   }
   const gateUpdate = (patch) => env.withSecurityRulesDisabled((admin) => update(ref(admin.database(), `online/contactGates/${pairId}`), patch));
 
-  await t.test("all four room surfaces enforce membership, current grant, block and revision", async () => {
-    for (const mode of ["solo", "strategy", "market", "free_table"]) {
+  await t.test("current room surfaces enforce membership, current grant, block and revision", async () => {
+    for (const mode of ["solo", "strategy", "market"]) {
       const { roomPath, metadata } = await seed(mode);
       await assertSucceeds(get(ref(user.database(), roomPath)));
       await assertSucceeds(get(ref(other.database(), roomPath)));
@@ -84,7 +84,7 @@ test("shared safety Rules and services on isolated Firestore/RTDB emulators", {
   });
 
   await t.test("chat and signaling reject post-block writes through every transport", async () => {
-    for (const mode of ["solo", "strategy", "market", "free_table"]) {
+    for (const mode of ["solo", "strategy", "market"]) {
       const { roomPath } = await seed(mode);
       let chatPath; let message;
       if (mode === "free_table") {
@@ -112,6 +112,22 @@ test("shared safety Rules and services on isolated Firestore/RTDB emulators", {
       const nextSignalPath = mode === "free_table" ? signalPath.slice(0, -1) + "1" : signalPath + "-two";
       await assertFails(set(ref(user.database(), nextSignalPath), signal));
     }
+  });
+
+  await t.test("retired free-table contacts stay closed even with a valid unblocked shared grant", async () => {
+    const { roomPath } = await seed("free_table");
+    for (const actor of [user, other, stranger]) {
+      await assertFails(get(ref(actor.database(), roomPath)));
+      await assertFails(get(ref(actor.database(), `freeTables/active/${actor === other ? "B" : "A"}`)));
+      await assertFails(set(ref(actor.database(), `freeTables/chat/${roomId}/${"C".repeat(20)}0000`),
+        { authorUid: "A", authorRole: "host", type: "text", text: "hello", createdAt: at, expiresAt: at + 60000 }));
+      await assertFails(set(ref(actor.database(), `freeTables/signals/${roomId}/B/${"S".repeat(22)}00`),
+        { fromUid: "A", toUid: "B", type: "offer", payload: "test", createdAt: at, expiresAt: at + 60000 }));
+    }
+    await gateUpdate({ blocked: true });
+    await assertFails(get(ref(user.database(), roomPath)));
+    await gateUpdate({ blocked: false, version: 2 });
+    await assertFails(get(ref(user.database(), roomPath)));
   });
 
   await t.test("pending expiry denies reads while active long contacts survive their initial expiry", async () => {

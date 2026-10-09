@@ -1773,7 +1773,6 @@ function modeIsActiveElsewhere() {
     || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiRouletteTraining?.isActive?.()
     || window.HariaiDanwakuNote?.isActive?.()
-    || window.HariaiFreeTable?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.()
     || window.HariaiAccount?.isActive?.(),

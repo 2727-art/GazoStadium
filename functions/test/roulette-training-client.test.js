@@ -26,7 +26,7 @@ test("landing and module wiring expose a separate solo roulette mode", () => {
   assert.match(html, /roulette-training\.css\?v=[^"]*-room-scrapbook-v1[^"]*"/);
   assert.match(html, /roulette-training\.js\?v=[^"]*-room-scrapbook-v1[^"]*"/);
   assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1"/);
-  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1-tribute-v1"/);
+  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1-tribute-v1-retire-free-table-v1"/);
   assert.match(app, /id="rouletteTrainingButton"/);
   assert.match(app, /function startRouletteTraining\(\)/);
   assert.match(app, /hariai-roulette-training-ready/);
