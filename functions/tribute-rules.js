@@ -47,6 +47,20 @@ const REWARDS = Object.freeze([
   Object.freeze({ id: "tsugi", label: "次も持ってきな", tones: Object.freeze(["harsh"]) }),
 ]);
 const RECEIVABLE_KINDS = Object.freeze(["request", "silent"]);
+// 管理人の受取印。カードに一覧から3つまで登録し、受け取る時に1つ選んで押す。自由入力はない。
+const SEALS = Object.freeze([
+  Object.freeze({ id: "kakunin", label: "確認済" }),
+  Object.freeze({ id: "juryo", label: "受領" }),
+  Object.freeze({ id: "yoku", label: "よくできました" }),
+  Object.freeze({ id: "gokaku", label: "合格" }),
+  Object.freeze({ id: "zako", label: "雑魚" }),
+  Object.freeze({ id: "youbun", label: "養分" }),
+  Object.freeze({ id: "gokurou", label: "ご苦労" }),
+]);
+const SEAL_IDS = Object.freeze(SEALS.map((seal) => seal.id));
+const DEFAULT_SEALS = Object.freeze(["juryo", "yoku", "kakunin"]);
+const FALLBACK_SEAL = "juryo";
+const MAX_SEALS = 3;
 const REPORT_REASONS = Object.freeze([
   "external_trade",
   "personal_info",
@@ -239,6 +253,22 @@ function normalizeXProfile(value) {
   return { xHandle: handle };
 }
 
+// カードに登録する受取印。一覧にあるものだけを、重複なく3つまで。空なら既定の3つ。
+function normalizeSeals(value) {
+  const list = Array.isArray(value) ? value : [];
+  const seals = [...new Set(list.map(String).filter((id) => SEAL_IDS.includes(id)))].slice(0, MAX_SEALS);
+  return seals.length ? seals : [...DEFAULT_SEALS];
+}
+
+// 受け取る時に押す印。管理人が登録した印だけを使い、財布の「言われたくない言葉」に当たる印は「受領」に置き換える。
+function sealFor(value, { seals = DEFAULT_SEALS, ngWords = [] } = {}) {
+  const registered = normalizeSeals(seals);
+  const requested = String(value ?? "");
+  const id = registered.includes(requested) ? requested : registered[0];
+  const seal = SEALS.find((entry) => entry.id === id);
+  return seal && !containsNgWord(seal.label, ngWords) ? id : FALLBACK_SEAL;
+}
+
 function normalizeManagerCard(value) {
   const personaName = cleanLine(value?.personaName, LIMITS.personaName);
   const intro = cleanLine(value?.intro, LIMITS.intro);
@@ -266,6 +296,9 @@ function normalizeManagerCard(value) {
       entryFee,
       sigil,
       avatar,
+      seals: normalizeSeals(value?.seals),
+      // 財布の貢ぎ報告の画像に、名前とアイコンを出してよいか。決めていないカードは出さない。
+      reportConsent: value?.reportConsent === true,
       xHandle: x.xHandle,
       accepting: value?.accepting === true,
     },
@@ -441,6 +474,10 @@ module.exports = {
   SEXUAL_PURPOSE_IDS,
   REWARDS,
   RECEIVABLE_KINDS,
+  SEALS,
+  SEAL_IDS,
+  DEFAULT_SEALS,
+  FALLBACK_SEAL,
   AVATAR_IDS,
   AVATAR_MAX,
   normalizeAvatar,
@@ -459,6 +496,8 @@ module.exports = {
   normalizeCaps,
   capsAreLowerOrEqual,
   normalizeManagerCard,
+  normalizeSeals,
+  sealFor,
   normalizeXProfile,
   X_HANDLE_PATTERN,
   normalizeWalletName,

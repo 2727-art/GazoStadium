@@ -22,6 +22,7 @@ import {
 import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2";
 import {
   AVATARS,
+  DEFAULT_SEALS,
   DEFINITION,
   DISCLOSURE_LABELS,
   DISCLOSURE_SHORT,
@@ -34,9 +35,12 @@ import {
   PER_TRIBUTE_OPTIONS,
   POLICY_LABELS,
   PREMISES,
+  MAX_SEALS,
   PURPOSES,
   RECEIVABLE_KINDS,
+  REQUEST_NOTES,
   REPORT_REASON_LABELS,
+  SEALS,
   SEXUAL_PURPOSE_SUMMARY,
   SIGIL_COLORS,
   STYLE_LABELS,
@@ -57,11 +61,21 @@ import {
   remainingLabel,
   rewardLabel,
   rewardsFor,
+  sealLabel,
+  sealsFor,
   templatesFor,
   textLength,
   tributeFee,
   viewContract,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1";
+import {
+  SEAL_INK,
+  SHARE_TEXT,
+  canvasToPngBlob,
+  renderExcerptImage,
+  renderReceiptImage,
+  sealSvg,
+} from "./tribute-share.mjs?v=ranch-collar-v1";
 
 const appRoot = document.querySelector("#app");
 // 確認シートとレシートは画面の外側に置く。画面要素の入場アニメーションが transform を使うため、
@@ -318,7 +332,7 @@ function renderContractRow(contract) {
       : `<small>${escapeHtml(contract.endReasonLabel || END_REASON_LABELS[contract.endReason] || "終了")}</small>`;
   return `<button type="button" class="tribute-contract-row is-${contract.status}" data-t="open-thread" data-contract="${escapeHtml(contract.contractId)}">
     ${sigil(counterpart.card)}
-    <span class="tribute-contract-main"><span class="tribute-contract-line"><strong>${escapeHtml(counterpart.name)}</strong>${contract.role === "payer" ? disclosureTag(contract.manager.disclosure) : ""}${statusChip(contract)}${contract.role === "manager" && contract.awaitingReceipt ? `<span class="tribute-chip is-awaiting">受け取り待ち ${Number(contract.awaitingReceipt)}</span>` : ""}</span>${numbers}</span>
+    <span class="tribute-contract-main"><span class="tribute-contract-line"><strong>${escapeHtml(counterpart.name)}</strong>${contract.role === "payer" ? disclosureTag(contract.manager.disclosure) : ""}${statusChip(contract)}${contract.collarNo ? `<span class="tribute-collar is-mini"><b>${Number(contract.collarNo)}号</b></span>` : ""}${contract.role === "manager" && contract.awaitingReceipt ? `<span class="tribute-chip is-awaiting">受け取り待ち ${Number(contract.awaitingReceipt)}</span>` : ""}</span>${numbers}</span>
     ${contract.unread && contract.status !== "ended" ? `<b class="tribute-badge">${contract.unread}</b>` : ""}
   </button>`;
 }
@@ -530,6 +544,10 @@ function renderCardEditor() {
       <small>用意した12種から選びます（画像のアップロードはできません）。上の段はゆるめ、下の段は大人びた絵です。</small></fieldset>
     <fieldset><legend>印の色</legend><div class="tribute-swatches">${SIGIL_COLORS.map((color, index) => `<label style="--sigil:${color}"><input type="radio" name="sigil" value="${index}" ${Number(card.sigil || 0) === index ? "checked" : ""} /><span aria-label="色${index + 1}"></span></label>`).join("")}</div>
       <small>アイコンの縁と、掲示板のカードの色になります。</small></fieldset>
+    ${renderSealSettings(card)}
+    <fieldset><legend>貢ぎ報告</legend>
+      <label class="tribute-check"><input type="checkbox" name="reportConsent" ${(profile.card ? card.reportConsent === true : true) ? "checked" : ""} /><span>財布の貢ぎ報告の画像に、名前とアイコンを出してよい<small>外すと「管理人様」とシルエットになります。画像を作れるのは財布だけで、URLは入りません。</small></span></label>
+    </fieldset>
     <label class="tribute-field"><span>紹介（${LIMITS.intro}文字まで）</span><input name="intro" maxlength="${LIMITS.intro}" value="${escapeHtml(card.intro || "")}" /></label>
     <label class="tribute-field"><span>Xのプロフィール（任意）</span><input name="xProfile" maxlength="80" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://x.com/ユーザー名 または @ユーザー名" value="${cardXHandle(card) ? escapeHtml(`https://x.com/${cardXHandle(card)}`) : ""}" />
       <small>管理人カードと掲示板に「自己申告・本人未確認」として表示され、開く前に外部サイトである確認が出ます。空にすると外します。スレッドでのSNSのID交換は、これまでどおりできません。</small></label>
@@ -543,6 +561,27 @@ function renderCardEditor() {
     <div class="tribute-row"><button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>保存する</button>
       <button class="button button-ghost" type="button" data-t="nav" data-screen="hub">戻る</button></div>
   </form>`, { title: "管理人カード" });
+}
+
+// 受取印。一覧から3つまで選び、受け取る時にこの中から1つ押す。
+function renderSealSettings(card) {
+  const selected = Array.isArray(card.seals) && card.seals.length ? card.seals : DEFAULT_SEALS;
+  return `<fieldset><legend>受取印（${MAX_SEALS}つまで）</legend>
+    <div class="tribute-seal-choices">${SEALS.map((seal) => `<label><input type="checkbox" name="seals" value="${seal.id}" ${selected.includes(seal.id) ? "checked" : ""} /><span>${escapeHtml(seal.label)}</span></label>`).join("")}</div>
+    <div class="tribute-seal-preview" data-seal-preview>${sealPreview(selected[0], card.personaName)}</div>
+    <small>受け取る時に、この中から1つ選んで押します。財布の「言われたくない言葉」に当たる印は「受領」になります。</small>
+  </fieldset>`;
+}
+
+function sealPreview(id, personaName) {
+  return sealSvg({ label: sealLabel(id) || "受領", name: String(personaName || "").trim() || "管理人", at: Date.now(), size: 128, ink: SEAL_INK.dark });
+}
+
+function updateSealPreview(form) {
+  const preview = form.querySelector("[data-seal-preview]");
+  if (!preview) return;
+  const first = form.querySelector('input[name="seals"]:checked')?.value || DEFAULT_SEALS[0];
+  preview.innerHTML = sealPreview(first, form.elements.personaName?.value);
 }
 
 function renderAvatarChoices(card) {
@@ -606,20 +645,29 @@ function purposeChoices({ allowSexual, selected = "", role }) {
   return `<fieldset class="tribute-purpose-field"><legend>名目</legend><div class="tribute-radio-row tribute-purposes">${options.map((purpose) => `<label${purpose.sexual ? ' class="is-sexual"' : ""}><input type="radio" name="purpose" value="${purpose.id}" ${purpose.id === selected ? "checked" : ""} /><span>${escapeHtml(purpose.label)}</span></label>`).join("")}</div>${hint}</fieldset>`;
 }
 
-// 財布から差し出された献上に、管理人が付ける「受け取る」とご褒美。押すのは毎回管理人。
+// 受け取る時に選んだ印。スレッドが描き直されても選択が戻らないよう、献上ごとに覚えておく。
+const sealChoices = new Map();
+
+// 財布から差し出された献上に、管理人が押す受取印とご褒美。押すのは毎回管理人。
 function renderReceiveControls(event, view) {
   const rewards = rewardsFor(view.tone, view.ngWords);
+  const seals = sealsFor(state.profile?.card?.seals, view.ngWords);
   const seq = Number(event.seq);
+  const chosen = seals.includes(sealChoices.get(seq)) ? sealChoices.get(seq) : seals[0];
   return `<div class="tribute-receive">
-    <button class="button button-primary button-small" type="button" data-t="receive" data-seq="${seq}">受け取る</button>
+    <div class="tribute-seal-pick" role="radiogroup" aria-label="押す印">${seals.map((id) => `<label><input type="radio" name="seal-${seq}" value="${id}" ${id === chosen ? "checked" : ""} /><span>${sealSvg({ label: sealLabel(id), name: view.manager.personaName, at: Date.now(), size: 52, ink: SEAL_INK.dark, rough: false })}<small>${escapeHtml(sealLabel(id))}</small></span></label>`).join("")}</div>
+    <button class="button button-primary button-small" type="button" data-t="receive" data-seq="${seq}">印を押して受け取る</button>
     ${rewards.length ? `<div class="tribute-reward-chips" role="group" aria-label="ご褒美を添えて受け取る">${rewards.map((reward) => `<button type="button" data-t="receive" data-seq="${seq}" data-reward="${escapeHtml(reward.id)}">${escapeHtml(reward.label)}</button>`).join("")}</div>` : ""}
   </div>`;
 }
 
 function renderTally(view) {
-  const parts = PURPOSES
+  const collar = view.collarNo
+    ? [`<span class="tribute-collar"><i aria-hidden="true"></i>${escapeHtml(view.role === "payer" ? `${view.manager.personaName}の財布` : "財布")}<b>${Number(view.collarNo)}号</b></span>`]
+    : [];
+  const parts = [...collar, ...PURPOSES
     .filter((purpose) => view.purposeCounts?.[purpose.id])
-    .map((purpose) => `<span class="${purpose.sexual ? "is-sexual" : ""}">${escapeHtml(purpose.label)} <b>${Number(view.purposeCounts[purpose.id])}回</b></span>`);
+    .map((purpose) => `<span class="${purpose.sexual ? "is-sexual" : ""}">${escapeHtml(purpose.label)} <b>${Number(view.purposeCounts[purpose.id])}回</b></span>`)];
   if (view.rewardCount) parts.push(`<span class="is-reward">ご褒美 <b>${Number(view.rewardCount)}回</b></span>`);
   if (view.role === "manager" && view.awaitingReceipt) parts.push(`<span class="is-awaiting">受け取り待ち <b>${Number(view.awaitingReceipt)}</b></span>`);
   if (view.allowSexualPurposes) parts.push('<span class="is-sexual">性的な名目 可</span>');
@@ -643,8 +691,13 @@ function renderEvent(event, view, statuses) {
         <span class="tribute-bubble">${escapeHtml(event.text)}</span>${time}</li>`;
     case "applied":
       return system(`申し込み：${escapeHtml(capsText(event.caps))} ・ ${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_LABELS[event.tone] || "普通")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}`);
-    case "accepted":
-      return system(`受理されました。管理は ${escapeHtml(formatDateTime(event.expiresAt))} まで続きます。`, "is-strong");
+    case "accepted": {
+      const collarNo = Number(event.collarNo) || 0;
+      const collar = collarNo
+        ? view.role === "payer" ? `あなたは${escapeHtml(managerName)}の財布 ${collarNo}号です。` : `この財布は ${collarNo}号です。`
+        : "";
+      return system(`受理されました。管理は ${escapeHtml(formatDateTime(event.expiresAt))} まで続きます。${collar}`, "is-strong");
+    }
     case "request": {
       const pendingNow = view.pendingRequests.find((entry) => entry.requestId === event.requestId);
       const status = pendingNow ? "pending" : statuses.get(event.requestId) || "closed";
@@ -660,13 +713,21 @@ function renderEvent(event, view, statuses) {
     case "tribute": {
       const receivable = RECEIVABLE_KINDS.includes(event.kind);
       const receivedAt = Number(event.receivedAt || 0);
+      // 既読: 管理人がこの献上まで読んだのに、まだ受け取っていない。
+      const seen = !receivedAt && receivable && view.role === "payer" && view.peerReadSeq >= Number(event.seq);
       const receipt = receivedAt
         ? `<span class="tribute-received"><i aria-hidden="true">✓</i>受け取り完了 <time>${escapeHtml(formatDateTime(receivedAt))}</time></span>`
-        : receivable ? '<span class="tribute-awaiting">受け取り待ち</span>' : "";
+        : receivable ? `<span class="tribute-awaiting${seen ? " is-seen" : ""}">${seen ? "<b>既読</b>" : ""}受け取り待ち</span>` : "";
+      const seal = receivedAt && sealLabel(event.seal)
+        ? `<span class="tribute-stamp-seal">${sealSvg({ label: sealLabel(event.seal), name: managerName, at: receivedAt, size: 76, ink: SEAL_INK.dark, rough: false })}</span>`
+        : "";
       const controls = !receivedAt && receivable && view.role === "manager" && view.status === "active"
         ? renderReceiveControls(event, view)
         : "";
-      return `<li class="tribute-event is-tribute${receivedAt ? " is-received" : ""}"><div class="tribute-stamp">${purposeTag(event.purpose, view)}<span>${escapeHtml(KIND_LABELS[event.kind] || "献上")}</span><strong>${escapeHtml(formatPay(event.amount))}</strong><small>${escapeHtml(payerName)} → ${escapeHtml(managerName)}</small>${receipt}</div>${controls}${time}</li>`;
+      const save = view.role === "payer"
+        ? `<button class="tribute-save-image" type="button" data-t="share-open" data-seq="${Number(event.seq)}">画像で保存</button>`
+        : "";
+      return `<li class="tribute-event is-tribute${receivedAt ? " is-received" : ""}"><div class="tribute-stamp">${purposeTag(event.purpose, view)}<span>${escapeHtml(KIND_LABELS[event.kind] || "献上")}</span><strong>${escapeHtml(formatPay(event.amount))}</strong><small>${escapeHtml(payerName)} → ${escapeHtml(managerName)}</small>${receipt}${seal}</div>${controls}${save}${time}</li>`;
     }
     case "received": {
       const reward = rewardLabel(event.reward);
@@ -778,7 +839,12 @@ function renderThreadActions(view) {
 }
 
 function renderTemplates(view) {
-  const groups = templatesFor(view.role, view.tone, { disclosure: view.manager.disclosure, ngWords: view.ngWords });
+  const groups = templatesFor(view.role, view.tone, {
+    disclosure: view.manager.disclosure,
+    ngWords: view.ngWords,
+    allowSexual: view.allowSexualPurposes,
+    collarNo: view.collarNo,
+  });
   return `<details class="tribute-templates"><summary>定型文（${escapeHtml(TONE_LABELS[view.tone] || "普通")}）</summary>
     ${groups.map((group) => `<div class="tribute-template-group"><span>${escapeHtml(group.label)}</span><div>${group.lines.map((line) => `<button type="button" data-t="template" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div></div>`).join("")}
   </details>`;
@@ -834,9 +900,11 @@ function scrollThreadToEnd() {
 function renderSheet() {
   const sheet = state.sheet;
   const view = state.thread.view;
-  if (!sheet || !view) return "";
+  if (!sheet) return "";
   const close = `<button class="tribute-sheet-close" type="button" data-t="sheet-close" aria-label="閉じる">×</button>`;
   const wrap = (title, body) => `<div class="tribute-sheet-backdrop" data-t="sheet-close"></div><div class="tribute-sheet" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}"><header><h2>${escapeHtml(title)}</h2>${close}</header>${body}</div>`;
+  if (sheet.type === "share") return renderShareSheet(sheet, wrap);
+  if (!view) return "";
   const amountChips = (maximum, name = "amount") => {
     const chips = [10, 30, 50, 100, 300, 500, 1_000].filter((value) => value <= maximum);
     if (maximum > 0 && !chips.includes(maximum)) chips.push(maximum);
@@ -880,6 +948,7 @@ function renderSheet() {
         <label class="tribute-field"><span>金額（Pay）</span><input name="amount" type="number" inputmode="numeric" min="1" max="${maximum}" step="1" required /></label>
         ${purposeChoices({ allowSexual: view.allowSexualPurposes, role: "manager" })}
         <label class="tribute-field"><span>一言（${LIMITS.requestNote}文字まで）</span><input name="note" maxlength="${LIMITS.requestNote}" /></label>
+        <div class="tribute-note-chips" data-note-chips>${renderNoteChips("", view)}</div>
         <p class="tribute-form-error" data-form-error role="alert"></p>
         <button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>請求を送る</button>
       </form>`);
@@ -953,6 +1022,261 @@ function renderSheet() {
 
 // 差し出した直後の献上完了の画面。金額・宛先・名目・時刻・支払後の財布を、改ざんできない記録として並べる。
 // 見た目は牧場のもので、実在の決済サービスの画面には似せない。
+// 請求の一言の候補。選んだ名目に合わせて変え、言われたくない言葉を含む候補は出さない。
+function renderNoteChips(purpose, view) {
+  const lines = (REQUEST_NOTES[purpose] || REQUEST_NOTES[""])
+    .filter((line) => !messageProblem(line, { role: "manager", ngWords: view.ngWords }));
+  return lines.map((line) => `<button type="button" data-t="pick-note" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("");
+}
+
+// ───────────── 貢ぎ報告の画像（財布だけ・この端末の中で作る） ─────────────
+
+let shareRenderTicket = 0;
+
+const SHARE_OPTIONS = Object.freeze([
+  Object.freeze({ key: "purpose", label: "名目を入れる" }),
+  Object.freeze({ key: "amount", label: "金額を入れる" }),
+  Object.freeze({ key: "marks", label: "受取印とご褒美を入れる" }),
+  Object.freeze({ key: "wallet", label: "財布名を入れる" }),
+]);
+
+function openShare({ contractId, receiptId = "", seq = 0 }) {
+  if (!contractId) return;
+  closeSharePreview();
+  state.sheet = {
+    type: "share",
+    contractId,
+    receiptId,
+    seq: Number(seq) || 0,
+    mode: "receipt",
+    options: { purpose: true, amount: true, marks: true, wallet: false },
+    info: null,
+    status: "loading",
+    error: "",
+    previewUrl: "",
+    blob: null,
+    fileName: "",
+    rendering: false,
+  };
+  rerenderSheet();
+  loadShareInfo(state.sheet);
+}
+
+function closeSharePreview() {
+  if (state.sheet?.type === "share" && state.sheet.previewUrl) URL.revokeObjectURL(state.sheet.previewUrl);
+}
+
+async function loadShareInfo(sheet) {
+  try {
+    const info = await call("share_info", { contractId: sheet.contractId, ...(sheet.receiptId ? { receiptId: sheet.receiptId } : {}) });
+    if (state.sheet !== sheet) return;
+    sheet.info = info;
+    sheet.status = "ready";
+    renderLayer();
+    await refreshSharePreview();
+  } catch (error) {
+    if (state.sheet !== sheet) return;
+    sheet.status = "error";
+    sheet.error = friendlyError(error, "画像の準備ができませんでした。");
+    renderLayer();
+  }
+}
+
+function shareManager(info) {
+  const manager = info?.manager || {};
+  const disclosureKey = DISCLOSURE_SHORT[manager.disclosure] ? manager.disclosure : "undisclosed";
+  if (!info?.consent || !manager.personaName) {
+    return { personaName: "", disclosureKey, disclosureLabel: DISCLOSURE_LABELS[disclosureKey] };
+  }
+  return {
+    personaName: manager.personaName,
+    avatarUrl: avatarUrl(manager.avatar),
+    color: SIGIL_COLORS[Number(manager.sigil) || 0] || SIGIL_COLORS[0],
+    disclosureKey,
+    disclosureLabel: DISCLOSURE_LABELS[disclosureKey],
+    styleLabel: STYLE_LABELS[manager.style] || "",
+  };
+}
+
+function shareWalletLabel(sheet) {
+  const info = sheet.info || {};
+  if (sheet.options.wallet && info.walletName) return info.walletName;
+  return info.collarNo ? `財布 ${info.collarNo}号` : "財布";
+}
+
+// スレッドから作る時は、いまの契約の許可に合わせる。レシート一覧から作る時は、本人の記録なのでそのまま。
+function shareAllowSexual(sheet) {
+  return !sheet.seq || state.thread.view?.allowSexualPurposes === true;
+}
+
+function shareTribute(sheet) {
+  return sheet.seq ? state.thread.events.find((event) => event.type === "tribute" && Number(event.seq) === sheet.seq) || null : null;
+}
+
+function shareReceiptData(sheet) {
+  const info = sheet.info || {};
+  const stored = info.receipt || null;
+  const event = shareTribute(sheet);
+  const source = { ...(stored || {}), ...(event || {}) };
+  return {
+    receiptNo: stored?.receiptNo || 0,
+    kind: source.kind,
+    kindLabel: KIND_LABELS[source.kind] || "献上",
+    amount: source.amount,
+    purposeLabel: purposeLabel(source.purpose, { allowSexual: shareAllowSexual(sheet) }),
+    createdAt: source.createdAt,
+    receivedAt: Number(source.receivedAt || 0),
+    sealLabel: sealLabel(source.seal),
+    rewardLabel: rewardLabel(source.reward),
+    pairCount: stored?.pairCount || 0,
+    collarNo: Number(info.collarNo) || 0,
+    walletLabel: shareWalletLabel(sheet),
+    manager: shareManager(info),
+  };
+}
+
+// 切り抜き: 選んだ献上までの最大3回分を「請求 → 献上（受取印）→ ご褒美」で並べる。財布や管理人の会話の文は入れない。
+function shareExcerptData(sheet) {
+  const info = sheet.info || {};
+  const view = state.thread.view;
+  const events = state.thread.events;
+  const allowSexual = view?.allowSexualPurposes === true;
+  const tributes = events.filter((event) => event.type === "tribute" && Number(event.seq) <= sheet.seq).slice(-3);
+  const items = [];
+  for (const tribute of tributes) {
+    const request = tribute.requestId ? events.find((event) => event.type === "request" && event.requestId === tribute.requestId) : null;
+    if (request) {
+      items.push({
+        type: "request",
+        purposeLabel: purposeLabel(request.purpose, { allowSexual }),
+        amount: request.amount,
+        note: info.consent ? String(request.note || "") : "",
+        at: request.createdAt,
+      });
+    }
+    items.push({
+      type: "tribute",
+      seq: tribute.seq,
+      purposeLabel: purposeLabel(tribute.purpose, { allowSexual }),
+      kindLabel: KIND_LABELS[tribute.kind] || "献上",
+      amount: tribute.amount,
+      receivedAt: Number(tribute.receivedAt || 0),
+      sealLabel: sealLabel(tribute.seal),
+      sealRotation: Number(tribute.seq) % 2 ? -12 : 9,
+      at: tribute.createdAt,
+    });
+    const received = events.find((event) => event.type === "received" && Number(event.tributeSeq) === Number(tribute.seq));
+    if (rewardLabel(received?.reward)) items.push({ type: "reward", label: rewardLabel(received.reward), at: received.createdAt });
+  }
+  const counts = view?.purposeCounts || {};
+  const top = PURPOSES.filter((purpose) => counts[purpose.id]).sort((left, right) => counts[right.id] - counts[left.id])[0];
+  return {
+    at: tributes.at(-1)?.createdAt || Date.now(),
+    collarNo: Number(info.collarNo) || 0,
+    walletLabel: shareWalletLabel(sheet),
+    manager: shareManager(info),
+    headline: { label: top?.label || "", count: top ? counts[top.id] : 0, rewardCount: view?.rewardCount || 0, tributeCount: view?.tributeCount || 0 },
+    items,
+  };
+}
+
+function shareFileName(sheet) {
+  const stamp = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll("-", "");
+  if (sheet.mode === "excerpt") return `omitsugi-record-${stamp}.png`;
+  const number = sheet.info?.receipt?.receiptNo;
+  return number ? `omitsugi-receipt-${String(number).padStart(5, "0")}.png` : `omitsugi-receipt-${stamp}.png`;
+}
+
+async function refreshSharePreview() {
+  const sheet = state.sheet;
+  if (sheet?.type !== "share" || !sheet.info) return;
+  const ticket = (shareRenderTicket += 1);
+  sheet.rendering = true;
+  paintSharePreview();
+  try {
+    const canvas = sheet.mode === "excerpt"
+      ? await renderExcerptImage(shareExcerptData(sheet), sheet.options)
+      : await renderReceiptImage(shareReceiptData(sheet), sheet.options);
+    const blob = await canvasToPngBlob(canvas);
+    if (ticket !== shareRenderTicket || state.sheet !== sheet) return;
+    if (sheet.previewUrl) URL.revokeObjectURL(sheet.previewUrl);
+    sheet.blob = blob;
+    sheet.previewUrl = URL.createObjectURL(blob);
+    sheet.fileName = shareFileName(sheet);
+    sheet.error = "";
+  } catch (error) {
+    if (ticket !== shareRenderTicket || state.sheet !== sheet) return;
+    sheet.error = friendlyError(error, "画像を作れませんでした。");
+  }
+  sheet.rendering = false;
+  paintSharePreview();
+}
+
+function sharePreviewMarkup(sheet) {
+  if (sheet.error) return `<p class="tribute-form-error" role="alert">${escapeHtml(sheet.error)}</p>`;
+  if (!sheet.previewUrl) return `<span class="tribute-share-wait">画像を作っています…</span>`;
+  return `<img src="${escapeHtml(sheet.previewUrl)}" alt="作った貢ぎ報告の画像" width="1080" height="1350" />${sheet.rendering ? '<span class="tribute-share-wait is-over">作り直しています…</span>' : ""}`;
+}
+
+// 見本だけを差し替える（シート全体を描き直すと、選んでいる項目の位置が飛ぶため）。
+function paintSharePreview() {
+  const sheet = state.sheet;
+  if (sheet?.type !== "share") return;
+  const preview = layer.querySelector("[data-share-preview]");
+  if (preview) preview.innerHTML = sharePreviewMarkup(sheet);
+  for (const button of layer.querySelectorAll("[data-share-action]")) button.disabled = !sheet.blob || sheet.rendering;
+}
+
+function renderShareSheet(sheet, wrap) {
+  if (sheet.status === "loading") return wrap("貢ぎ報告の画像", `<p class="tribute-empty">画像の準備をしています…</p>`);
+  if (sheet.status === "error") return wrap("貢ぎ報告の画像", `<p class="tribute-form-error" role="alert">${escapeHtml(sheet.error)}</p>`);
+  const info = sheet.info || {};
+  const canExcerpt = sheet.seq > 0 && Boolean(shareTribute(sheet));
+  const plainWallet = info.collarNo ? `財布 ${info.collarNo}号` : "財布";
+  return wrap("貢ぎ報告の画像", `<div class="tribute-share">
+    ${canExcerpt ? `<div class="tribute-radio-row" role="radiogroup" aria-label="画像の種類">${[["receipt", "このレシート"], ["excerpt", "やりとりを切り抜く"]].map(([mode, label]) => `<label><input type="radio" name="shareMode" value="${mode}" data-share-mode ${sheet.mode === mode ? "checked" : ""} /><span>${label}</span></label>`).join("")}</div>` : ""}
+    <div class="tribute-share-body">
+      <div class="tribute-share-preview" data-share-preview>${sharePreviewMarkup(sheet)}</div>
+      <div class="tribute-share-options">${SHARE_OPTIONS.map((option) => `<label class="tribute-check"><input type="checkbox" data-share-option="${option.key}" ${sheet.options[option.key] ? "checked" : ""} /><span>${escapeHtml(option.label)}${option.key === "wallet" ? `<small>入れない時は「${escapeHtml(plainWallet)}」</small>` : ""}</span></label>`).join("")}</div>
+    </div>
+    <p class="tribute-note">${info.consent ? "管理人の名前とアイコンは、管理人が「貢ぎ報告に出してよい」にしているので入ります。" : "管理人が名前とアイコンを出す許可をしていないので、「管理人様」とシルエットになります。"}「AnjuPay・換金不可」の表記とお貢ぎ牧場の名前は必ず入り、URLは入りません。</p>
+    <div class="tribute-row"><button class="button button-primary" type="button" data-t="share-send" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>共有（X など）</button><button class="button button-ghost" type="button" data-t="share-save" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>画像で保存</button></div>
+    <small>スマホは共有から画像ごとXへ送れます。PCは保存してから、Xの投稿に添付します。</small>
+  </div>`);
+}
+
+function downloadShareBlob(blob, fileName) {
+  const download = shared()?.downloadBlob;
+  if (typeof download === "function") {
+    download(blob, fileName);
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+async function sendShareImage(saveOnly) {
+  const sheet = state.sheet;
+  if (sheet?.type !== "share" || !sheet.blob || sheet.rendering) return;
+  const file = new File([sheet.blob], sheet.fileName, { type: "image/png" });
+  if (!saveOnly && navigator.share && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], text: SHARE_TEXT });
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+  }
+  downloadShareBlob(sheet.blob, sheet.fileName);
+  showToast(saveOnly ? "画像を保存しました。Xの投稿に添付できます。" : "この端末では共有が使えないため、画像を保存しました。Xの投稿に添付できます。");
+}
+
 function renderReceiptOverlay() {
   const receipt = state.receipt;
   if (!receipt) return "";
@@ -990,7 +1314,10 @@ function renderReceipts() {
         ${purposeLabel(receipt.purpose, { allowSexual: true }) ? `<p class="tribute-receipt-purpose">${escapeHtml(purposeLabel(receipt.purpose, { allowSexual: true }))}</p>` : ""}
         <strong class="tribute-receipt-amount">${escapeHtml(formatPay(receipt.amount))}</strong>
         ${Number(receipt.receivedAt || 0) ? `<p class="tribute-receipt-received">受け取り済み ${escapeHtml(formatDateTime(receipt.receivedAt))}${rewardLabel(receipt.reward) ? `<b>「${escapeHtml(rewardLabel(receipt.reward))}」</b>` : ""}</p>` : ""}
+        ${Number(receipt.collarNo || 0) ? `<p class="tribute-receipt-collar">${escapeHtml(receipt.personaName)}の財布 ${Number(receipt.collarNo)}号</p>` : ""}
+        ${Number(receipt.receivedAt || 0) && sealLabel(receipt.seal) ? `<span class="tribute-receipt-seal">${sealSvg({ label: sealLabel(receipt.seal), name: receipt.personaName, at: receipt.receivedAt, size: 88, ink: SEAL_INK.paper, rough: false })}</span>` : ""}
         <footer>${escapeHtml(formatDateTime(receipt.createdAt))} ・ ${Number(receipt.pairCount)}回目</footer>
+        ${receipt.contractId ? `<button class="tribute-save-image is-paper" type="button" data-t="share-receipt" data-receipt="${escapeHtml(receipt.receiptId)}" data-contract="${escapeHtml(receipt.contractId)}">画像で保存</button>` : ""}
       </article>`).join("")}</div>${receipts.more ? `<button class="button button-ghost" type="button" data-t="receipts-more">もっと見る</button>` : ""}`
       : `<p class="tribute-empty">まだ献上していません。</p>`}
   </div>`, { title: "献上レシート" });
@@ -1400,6 +1727,7 @@ function contractPayload(extra = {}) {
 }
 
 function closeSheet() {
+  closeSharePreview();
   state.sheet = null;
   cancelHold();
   rerenderSheet();
@@ -1523,6 +1851,8 @@ async function handleSubmit(form) {
           entryFee: Number(data.get("entryFee")),
           sigil: Number(data.get("sigil") || 0),
           avatar: avatarId(data.get("avatar")),
+          seals: data.getAll("seals").map(String).slice(0, MAX_SEALS),
+          reportConsent: data.get("reportConsent") === "on",
         },
         accepting: data.get("accepting") === "on",
       }, {
@@ -1750,9 +2080,33 @@ async function handleClick(target) {
       return;
     case "receive": {
       const reward = target.dataset.reward || "";
-      await mutate("receive", contractPayload({ tributeSeq: Number(target.dataset.seq), reward }), {
-        success: reward ? `「${rewardLabel(reward)}」を添えて受け取りました。` : "受け取りました。",
+      const seq = Number(target.dataset.seq);
+      const seal = target.closest(".tribute-receive")?.querySelector(`input[name="seal-${seq}"]:checked`)?.value || sealChoices.get(seq) || "";
+      const result = await mutate("receive", contractPayload({ tributeSeq: seq, reward, seal }), {
+        success: reward ? `「${sealLabel(seal) || "受領"}」の印に「${rewardLabel(reward)}」を添えて受け取りました。` : `「${sealLabel(seal) || "受領"}」の印を押して受け取りました。`,
       });
+      if (result) sealChoices.delete(seq);
+      return;
+    }
+    case "share-open": {
+      const event = state.thread.events.find((entry) => entry.type === "tribute" && Number(entry.seq) === Number(target.dataset.seq));
+      if (!event || !view) return;
+      openShare({ contractId: view.contractId, receiptId: event.receiptId || "", seq: event.seq });
+      return;
+    }
+    case "share-receipt":
+      openShare({ contractId: target.dataset.contract, receiptId: target.dataset.receipt });
+      return;
+    case "share-send":
+    case "share-save":
+      await sendShareImage(action === "share-save");
+      return;
+    case "pick-note": {
+      const input = target.closest("form")?.elements?.note;
+      if (input) {
+        input.value = target.dataset.text || "";
+        input.focus();
+      }
       return;
     }
     case "set-purposes": {
@@ -1873,6 +2227,29 @@ function bindRoot(root) {
     if (target) handleClick(target);
     const cardForm = event.target.closest?.('form[data-form="card"]');
     if (cardForm && ["avatar", "sigil"].includes(event.target.name)) updateCardPreview(cardForm);
+    if (cardForm && event.target.name === "seals") {
+      if (cardForm.querySelectorAll('input[name="seals"]:checked').length > MAX_SEALS) {
+        event.target.checked = false;
+        showToast(`受取印は${MAX_SEALS}つまでです。`);
+      }
+      updateSealPreview(cardForm);
+    }
+    const sealPick = String(event.target.name || "").match(/^seal-(\d+)$/);
+    if (sealPick) sealChoices.set(Number(sealPick[1]), event.target.value);
+    const requestForm = event.target.closest?.('form[data-form="request"]');
+    if (requestForm && event.target.name === "purpose" && state.thread.view) {
+      const chips = requestForm.querySelector("[data-note-chips]");
+      if (chips) chips.innerHTML = renderNoteChips(event.target.value, state.thread.view);
+    }
+    const sheet = state.sheet;
+    if (sheet?.type === "share" && event.target.matches?.("[data-share-option]")) {
+      sheet.options[event.target.dataset.shareOption] = event.target.checked;
+      refreshSharePreview();
+    }
+    if (sheet?.type === "share" && event.target.matches?.("[data-share-mode]")) {
+      sheet.mode = event.target.value === "excerpt" ? "excerpt" : "receipt";
+      refreshSharePreview();
+    }
   });
 
   root.addEventListener("submit", (event) => {
@@ -1891,7 +2268,10 @@ function bindRoot(root) {
       updateComposerCount(form);
     }
     const cardForm = event.target.closest?.('form[data-form="card"]');
-    if (cardForm && event.target.name === "personaName") updateCardPreview(cardForm);
+    if (cardForm && event.target.name === "personaName") {
+      updateCardPreview(cardForm);
+      updateSealPreview(cardForm);
+    }
   });
 
   root.addEventListener("pointerdown", (event) => {
@@ -2097,6 +2477,8 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   entryFee: 10,
   sigil: 0,
   avatar: 7,
+  seals: ["yoku", "zako", "kakunin"],
+  reportConsent: true,
   xHandle: "mio_sama_ranch",
   accepting: true,
   honor: { tierId: "offerer", label: "上納者" },
@@ -2125,6 +2507,7 @@ function previewRaw(role, status = "active") {
     allowReportRequests: true,
     rankOptIn: true,
     allowSexualPurposes: true,
+    collarNo: 3,
     purposeCounts: { edging: 2 },
     rewardCount: 1,
     awaitingReceipt: 1,
@@ -2152,19 +2535,19 @@ function previewEvents(raw) {
   }
   return [
     { seq: 1, type: "applied", actor: "payer", caps: raw.caps, durationDays: 3, tone: "harsh", entryFee: 10, createdAt: at(120) },
-    { seq: 2, type: "accepted", actor: "manager", expiresAt: raw.expiresAt, createdAt: at(117) },
+    { seq: 2, type: "accepted", actor: "manager", expiresAt: raw.expiresAt, collarNo: 3, createdAt: at(117) },
     { seq: 3, type: "tribute", actor: "payer", kind: "entry", amount: 10, createdAt: at(117) },
     { seq: 4, type: "message", actor: "manager", text: "やっと来た。財布のくせに待たせるな。", createdAt: at(110) },
     { seq: 5, type: "message", actor: "payer", text: "遅れてすみません。", createdAt: at(108) },
     { seq: 6, type: "request", actor: "manager", requestId: "0123456789abcdef", amount: 100, note: "まだイかせない。", purpose: "edging", createdAt: at(100) },
-    { seq: 7, type: "tribute", actor: "payer", kind: "request", requestId: "0123456789abcdef", amount: 100, purpose: "edging", receivedAt: at(97), reward: "gohoubi", createdAt: at(98) },
-    { seq: 8, type: "received", actor: "manager", tributeSeq: 7, amount: 100, reward: "gohoubi", createdAt: at(97) },
+    { seq: 7, type: "tribute", actor: "payer", kind: "request", requestId: "0123456789abcdef", amount: 100, purpose: "edging", receiptId: "7".repeat(40), receivedAt: at(97), seal: "yoku", reward: "gohoubi", createdAt: at(98) },
+    { seq: 8, type: "received", actor: "manager", tributeSeq: 7, amount: 100, seal: "yoku", reward: "gohoubi", createdAt: at(97) },
     { seq: 9, type: "escrow_deposit", actor: "payer", amount: 200, escrowBalance: 200, createdAt: at(60) },
     { seq: 10, type: "caps_raise_scheduled", actor: "payer", caps: { perTribute: 300, perDay: 300, total: 1_000 }, effectiveDateKey: raw.pendingCapsEffectiveDateKey || "2026-10-06", createdAt: at(40) },
     { seq: 11, type: "report_requested", actor: "manager", createdAt: at(5) },
     { seq: 12, type: "escrow_withdraw_request", actor: "payer", amount: 50, createdAt: at(1) },
     { seq: 13, type: "message", actor: "manager", text: "中身が男だって知ってて貢ぐんだ。救いようがないね。", createdAt: at(3) },
-    { seq: 14, type: "tribute", actor: "payer", kind: "silent", amount: 50, purpose: "edging", createdAt: at(2) },
+    { seq: 14, type: "tribute", actor: "payer", kind: "silent", amount: 50, purpose: "edging", receiptId: "e".repeat(40), createdAt: at(2) },
     { seq: 15, type: "message", actor: "payer", text: "寸止め料です。", createdAt: at(2) },
     { seq: 16, type: "request", actor: "manager", requestId: "abcdef0123456789", amount: 100, note: "イきたいなら払え。", purpose: "release", createdAt: at(1) },
   ];
@@ -2231,7 +2614,7 @@ function previewCall(action, payload) {
       return Promise.resolve({
         ok: true,
         receipts: [
-          { receiptId: "r3", receiptNo: 3, kind: "request", amount: 100, purpose: "edging", receivedAt: now - 97 * 60_000, reward: "gohoubi", personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, pairCount: 3, createdAt: now - 98 * 60_000 },
+          { receiptId: "r3", contractId: "1".repeat(40), receiptNo: 3, kind: "request", amount: 100, purpose: "edging", receivedAt: now - 97 * 60_000, seal: "yoku", collarNo: 3, reward: "gohoubi", personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, pairCount: 3, createdAt: now - 98 * 60_000 },
           { receiptId: "r2", receiptNo: 2, kind: "silent", amount: 100, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, pairCount: 2, createdAt: now - 3 * 86_400_000 },
           { receiptId: "r1", receiptNo: 1, kind: "entry", amount: 10, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, pairCount: 1, createdAt: now - 4 * 86_400_000 },
         ],
@@ -2286,7 +2669,7 @@ function previewCall(action, payload) {
         raw.todayTributed = Number(raw.todayTributed || 0) + Number(payload.amount);
         raw.awaitingReceipt = Number(raw.awaitingReceipt || 0) + 1;
         if (purpose) raw.purposeCounts = { ...raw.purposeCounts, [purpose]: Number(raw.purposeCounts?.[purpose] || 0) + 1 };
-        push({ type: "tribute", actor: "payer", kind: payload.kind, amount: Number(payload.amount), ...(payload.requestId ? { requestId: payload.requestId } : {}), ...(purpose ? { purpose } : {}) });
+        push({ type: "tribute", actor: "payer", kind: payload.kind, amount: Number(payload.amount), receiptId: "9".repeat(40), ...(payload.requestId ? { requestId: payload.requestId } : {}), ...(purpose ? { purpose } : {}) });
       });
       return Promise.resolve({
         ok: true,
@@ -2299,12 +2682,27 @@ function previewCall(action, payload) {
         const target = state.thread.events.find((event) => event.seq === Number(payload.tributeSeq));
         if (!target || target.receivedAt) return;
         target.receivedAt = at;
+        target.seal = payload.seal || "juryo";
         if (payload.reward) target.reward = payload.reward;
         raw.awaitingReceipt = Math.max(0, Number(raw.awaitingReceipt || 0) - 1);
         if (payload.reward) raw.rewardCount = Number(raw.rewardCount || 0) + 1;
-        push({ type: "received", actor: "manager", tributeSeq: target.seq, amount: target.amount, ...(payload.reward ? { reward: payload.reward } : {}) });
+        push({ type: "received", actor: "manager", tributeSeq: target.seq, amount: target.amount, seal: target.seal, ...(payload.reward ? { reward: payload.reward } : {}) });
       });
       return Promise.resolve({ ok: true, contract: view });
+    }
+    case "share_info": {
+      const listed = state.receipts.items.find((receipt) => receipt.receiptId === payload.receiptId);
+      const event = state.thread.events.find((entry) => entry.type === "tribute" && entry.receiptId && entry.receiptId === payload.receiptId);
+      const receipt = listed || (event ? { receiptId: event.receiptId, receiptNo: 40 + Number(event.seq), kind: event.kind, amount: event.amount, purpose: event.purpose || "", pairCount: 40 + Number(event.seq), createdAt: event.createdAt, receivedAt: event.receivedAt || 0, seal: event.seal || "", reward: event.reward || "" } : null);
+      return Promise.resolve({
+        ok: true,
+        contractId: payload.contractId,
+        consent: true,
+        manager: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", sigil: 0, avatar: 7 },
+        collarNo: 3,
+        walletName: "ポチ財布",
+        receipt,
+      });
     }
     case "set_purposes": {
       const view = previewThreadChange((raw, push) => {

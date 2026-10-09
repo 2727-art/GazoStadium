@@ -987,3 +987,110 @@ test("the manager receives each payer tribute once, may add a reward, and the pa
   await harness.act("p2", "terminate", { contractId: ngContract });
   await rejects(harness.act("manager", "receive", { contractId: ngContract, tributeSeq: ngTribute.seq }), /終了しています/, "nothing is sent after the payer leaves");
 });
+
+test("collar numbers are given per pair on acceptance, kept on renewal, never reused, and backfilled on the next tribute", async () => {
+  const harness = createHarness({ balances: { manager: 0, p1: 1_000, p2: 1_000, p3: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+  const first = await startContract(harness, "manager", "p1", publicManagerId, {}, 0);
+  const second = await startContract(harness, "manager", "p2", publicManagerId, {}, 0);
+  assert.equal(harness.contract(first).collarNo, 1);
+  assert.equal(harness.contract(second).collarNo, 2);
+  assert.equal(harness.events(first).find((event) => event.type === "accepted").collarNo, 1);
+  assert.equal((await harness.act("p2", "state")).contracts[0].collarNo, 2);
+  await harness.act("p1", "terminate", { contractId: first });
+  harness.advance(31_000);
+  const renewed = await startContract(harness, "manager", "p1", publicManagerId, {}, 0);
+  assert.equal(harness.contract(renewed).collarNo, 1, "a returning wallet keeps its number");
+  const third = await startContract(harness, "manager", "p3", publicManagerId, {}, 0);
+  assert.equal(harness.contract(third).collarNo, 3, "numbers are never reused");
+  const given = await harness.act("p3", "tribute", { contractId: third, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  assert.equal(given.receipt.collarNo, 3);
+  assert.equal((await harness.act("p3", "receipts")).receipts[0].collarNo, 3);
+
+  // このリリースより前の契約（番号なし）は、次の献上で番号が付く。
+  const legacy = harness.contract(second);
+  delete legacy.collarNo;
+  harness.firestore.write(`tributeContracts/${second}`, legacy);
+  const pair = harness.firestore.read("tributePairs/manager__p2");
+  delete pair.collarNo;
+  harness.firestore.write("tributePairs/manager__p2", pair);
+  await harness.act("p2", "tribute", { contractId: second, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  assert.equal(harness.contract(second).collarNo, 4);
+  assert.equal(harness.firestore.read("tributePairs/manager__p2").collarNo, 4);
+});
+
+test("the manager presses one of their registered seals, which is stamped on the event and the payer's receipt", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000, p2: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0, seals: ["zako", "yoku"] });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  const given = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 30, clientRequestId: nextRequestId() });
+  const tribute = harness.events(contractId).at(-1);
+  await harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, seal: "zako", reward: "zako" });
+  assert.equal(harness.events(contractId).find((event) => event.seq === tribute.seq).seal, "zako");
+  assert.equal(harness.events(contractId).at(-1).seal, "zako");
+  const receipt = (await harness.act("payer", "receipts")).receipts.find((row) => row.receiptId === given.receipt.receiptId);
+  assert.equal(receipt.seal, "zako");
+
+  await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 30, clientRequestId: nextRequestId() });
+  const unregistered = harness.events(contractId).at(-1);
+  await harness.act("manager", "receive", { contractId, tributeSeq: unregistered.seq, seal: "gokaku" });
+  assert.equal(harness.events(contractId).find((event) => event.seq === unregistered.seq).seal, "zako", "an unregistered seal becomes the first registered one");
+
+  const ngContract = await startContract(harness, "manager", "p2", publicManagerId, { ngWords: ["雑魚"] }, 0);
+  await harness.act("p2", "tribute", { contractId: ngContract, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  const ngTribute = harness.events(ngContract).at(-1);
+  await harness.act("manager", "receive", { contractId: ngContract, tributeSeq: ngTribute.seq, seal: "zako" });
+  assert.equal(harness.events(ngContract).find((event) => event.seq === ngTribute.seq).seal, "juryo", "a seal with the payer's NG word becomes 受領");
+
+  const profile = (await harness.act("manager", "state")).profile;
+  assert.deepEqual(profile.card.seals, ["zako", "yoku"]);
+});
+
+test("share_info gives only the payer the manager's current consent, card and their own receipt, without writing", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000, other: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0, avatar: 7 });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  const otherContract = await startContract(harness, "manager", "other", publicManagerId, {}, 0);
+  const given = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 50, clientRequestId: nextRequestId() });
+  const otherGiven = await harness.act("other", "tribute", { contractId: otherContract, kind: "silent", amount: 20, clientRequestId: nextRequestId() });
+  const before = harness.contract(contractId);
+
+  const hidden = await harness.act("payer", "share_info", { contractId, receiptId: given.receipt.receiptId });
+  assert.equal(hidden.consent, false, "a card saved without the setting does not consent");
+  assert.equal(hidden.manager.personaName, "");
+  assert.equal(hidden.manager.avatar, 0);
+  assert.equal(hidden.manager.disclosure, "nekama", "the disclosure tag stays even when the name is hidden");
+  assert.equal(hidden.collarNo, 1);
+  assert.equal(hidden.walletName, "ポチ財布");
+  assert.equal(hidden.receipt.receiptNo, given.receipt.receiptNo);
+  assert.equal(hidden.receipt.amount, 50);
+
+  harness.advance(2_100);
+  await harness.act("manager", "save_profile", {
+    card: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, avatar: 7, reportConsent: true },
+    accepting: true,
+  });
+  const shown = await harness.act("payer", "share_info", { contractId });
+  assert.equal(shown.consent, true);
+  assert.equal(shown.manager.personaName, "ミオ様");
+  assert.equal(shown.manager.avatar, 7);
+  assert.equal(shown.receipt, null);
+  const foreign = await harness.act("payer", "share_info", { contractId, receiptId: otherGiven.receipt.receiptId });
+  assert.equal(foreign.receipt, null, "another wallet's receipt is never returned");
+  await rejects(harness.act("manager", "share_info", { contractId }), /預ける側だけ/);
+  await rejects(harness.act("other", "share_info", { contractId }), /預ける側だけ/);
+  await rejects(harness.act("stranger", "share_info", { contractId }), /18歳以上/);
+  assert.deepEqual(harness.contract(contractId), before, "share_info writes nothing");
+});
+
+test("each side sees how far the other has read, so a payer can see a tribute that was read but not yet received", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  const tribute = harness.events(contractId).at(-1);
+  const payerView = () => harness.act("payer", "state").then((state) => state.contracts.find((contract) => contract.contractId === contractId));
+  assert.ok((await payerView()).peerReadSeq < tribute.seq);
+  await harness.act("manager", "mark_read", { contractId, seq: tribute.seq });
+  assert.equal((await payerView()).peerReadSeq, tribute.seq);
+});

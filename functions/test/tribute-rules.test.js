@@ -209,3 +209,24 @@ test("rewards are short fixed praises chosen per tone and filtered by the payer'
   }
   assert.deepEqual([...rules.RECEIVABLE_KINDS], ["request", "silent"]);
 });
+
+test("receipt seals come from a fixed list, three per card, and fall back to 受領 on the payer's NG words", () => {
+  assert.deepEqual(rules.SEALS.map((seal) => [seal.id, seal.label]), [
+    ["kakunin", "確認済"], ["juryo", "受領"], ["yoku", "よくできました"], ["gokaku", "合格"],
+    ["zako", "雑魚"], ["youbun", "養分"], ["gokurou", "ご苦労"],
+  ]);
+  assert.deepEqual(rules.normalizeSeals(["zako", "zako", "bogus", "yoku", "gokaku", "juryo"]), ["zako", "yoku", "gokaku"]);
+  assert.deepEqual(rules.normalizeSeals([]), [...rules.DEFAULT_SEALS]);
+  assert.deepEqual(rules.normalizeSeals("zako"), [...rules.DEFAULT_SEALS], "free text is never a seal");
+  assert.equal(rules.sealFor("zako", { seals: ["yoku", "zako"] }), "zako");
+  assert.equal(rules.sealFor("gokaku", { seals: ["yoku", "zako"] }), "yoku", "an unregistered seal becomes the card's first seal");
+  assert.equal(rules.sealFor("", { seals: ["zako"] }), "zako");
+  assert.equal(rules.sealFor("zako", { seals: ["zako"], ngWords: ["雑魚"] }), rules.FALLBACK_SEAL);
+  for (const seal of rules.SEALS) assert.equal(rules.forbiddenReason(seal.label), "", seal.label);
+  const base = { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 };
+  const card = rules.normalizeManagerCard(base).card;
+  assert.deepEqual(card.seals, [...rules.DEFAULT_SEALS]);
+  assert.equal(card.reportConsent, false, "consent to appear in payers' images is never assumed");
+  assert.equal(rules.normalizeManagerCard({ ...base, reportConsent: "true" }).card.reportConsent, false);
+  assert.equal(rules.normalizeManagerCard({ ...base, reportConsent: true, seals: ["zako"] }).card.reportConsent, true);
+});

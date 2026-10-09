@@ -19,6 +19,9 @@ const {
   normalizeCaps,
   capsAreLowerOrEqual,
   normalizeManagerCard,
+  normalizeSeals,
+  sealFor,
+  SEAL_IDS,
   X_HANDLE_PATTERN,
   normalizeAvatar,
   normalizeWalletName,
@@ -78,6 +81,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "request_report",
   "set_purposes",
   "receive",
+  "share_info",
   "mark_read",
   "report_user",
   "receipts",
@@ -173,6 +177,7 @@ function readProfile(snapshot) {
       managerPending: integer(counts.managerPending, 0, 1_000, 0),
     },
     receiptCount: integer(data.receiptCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    collarCount: integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0),
     receiveDayKey: String(data.receiveDayKey || ""),
     receiveDayTotal: integer(data.receiveDayTotal, 0, Number.MAX_SAFE_INTEGER, 0),
     recommendedMonthKey: String(data.recommendedMonthKey || ""),
@@ -205,6 +210,8 @@ function publicCard(profile, monthKey) {
     entryFee: integer(card.entryFee, 0, 1_000, 0),
     sigil: integer(card.sigil, 0, 5, 0),
     avatar: normalizeAvatar(card.avatar),
+    seals: normalizeSeals(card.seals),
+    reportConsent: card.reportConsent === true,
     xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
     accepting: profile.accepting,
     honor: honorFor(profile, monthKey),
@@ -258,6 +265,7 @@ function viewContract(contract, uid, now) {
   const pendingKey = String(contract.pendingCapsEffectiveDateKey || "");
   const pendingStillScheduled = Boolean(pending && pendingKey && jstDateKey(now) < pendingKey);
   const readSeq = integer(object(contract.readSeq)[role], 0, Number.MAX_SAFE_INTEGER, 0);
+  const peerReadSeq = integer(object(contract.readSeq)[role === "manager" ? "payer" : "manager"], 0, Number.MAX_SAFE_INTEGER, 0);
   const eventSeq = integer(contract.eventSeq, 0, Number.MAX_SAFE_INTEGER, 0);
   const withdrawRequest = contract.escrowWithdrawRequest && typeof contract.escrowWithdrawRequest === "object"
     ? {
@@ -274,6 +282,7 @@ function viewContract(contract, uid, now) {
     accepted: Number(contract.acceptedAt || 0) > 0,
     manager: cardSnapshot(contract.managerCard),
     payer: { walletName: normalizeWalletName(contract.payerWalletName) },
+    collarNo: integer(contract.collarNo, 0, Number.MAX_SAFE_INTEGER, 0),
     caps,
     pendingCaps: pendingStillScheduled ? pending : null,
     pendingCapsEffectiveDateKey: pendingStillScheduled ? pendingKey : "",
@@ -307,6 +316,7 @@ function viewContract(contract, uid, now) {
     reportRequested: Number(contract.reportRequestedAt || 0) > 0,
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
+    peerReadSeq: Math.min(eventSeq, peerReadSeq),
   };
 }
 
@@ -607,6 +617,21 @@ function createTributeService(deps) {
   async function mirrorTouched(wallets) {
     if (!wallets.length) return;
     await bestEffort("tribute", wallets.map((entry) => mirrorWallet(entry.uid, entry.balance)));
+  }
+
+  // 首輪番号。管理人ごとに、初めて受理した組へ順に振る。再契約しても組の番号を使い、番号は使い回さない。
+  // 番号のない進行中の契約（このリリースより前の契約）は、次の献上の時に振る。
+  function ensureCollar(ctx) {
+    const existing = integer(ctx.contract.collarNo, 0, Number.MAX_SAFE_INTEGER, 0);
+    if (existing > 0) return existing;
+    let collarNo = integer(ctx.pair.value.collarNo, 0, Number.MAX_SAFE_INTEGER, 0);
+    if (!collarNo) {
+      collarNo = ctx.profiles.manager.value.collarCount + 1;
+      patchProfile(ctx, "manager", { collarCount: collarNo });
+      patchPair(ctx, { collarNo });
+    }
+    setContract(ctx, { collarNo });
+    return collarNo;
   }
 
   function settleCaps(ctx) {
@@ -969,6 +994,7 @@ function createTributeService(deps) {
     const rankAdd = Math.max(0, Math.min(amount, LIMITS.rankDailyPairCap - rankAddedToday));
     const firstForPairToday = pair.rankDayKey !== ctx.dateKey;
     const card = cardSnapshot(contract.managerCard);
+    const collarNo = ensureCollar(ctx);
     const receipt = {
       schemaVersion: TRIBUTE_SCHEMA_VERSION,
       receiptNo,
@@ -980,6 +1006,7 @@ function createTributeService(deps) {
       disclosure: card.disclosure,
       sigil: card.sigil,
       avatar: card.avatar,
+      collarNo,
       pairCount: pairCountBefore + 1,
       ...(receivable ? {} : { receivedAt: ctx.now }),
       createdAt: ctx.now,
@@ -1566,7 +1593,8 @@ function createTributeService(deps) {
           walletName: payerName(ctx),
           managerPersonaName: managerName(ctx),
         });
-        pushEvent(ctx, { type: "accepted", actor: "manager", expiresAt: ctx.contract.expiresAt });
+        const collarNo = ensureCollar(ctx);
+        pushEvent(ctx, { type: "accepted", actor: "manager", expiresAt: ctx.contract.expiresAt, collarNo });
         markManagerActive(ctx);
         ctx.caps = effectiveCaps(ctx.contract, ctx.now).caps;
         const entryFee = integer(ctx.contract.entryFee, 0, 1_000, 0);
@@ -1939,7 +1967,8 @@ function createTributeService(deps) {
         const normalized = normalizeReward(data?.reward, { tone: ctx.contract.tone, ngWords: ctx.contract.ngWords });
         if (normalized.error) fail("invalid-argument", normalized.error);
         const reward = normalized.reward;
-        const marks = { receivedAt: ctx.now, ...(reward ? { reward } : {}) };
+        const seal = sealFor(data?.seal, { seals: ctx.profiles.manager.value.card?.seals, ngWords: ctx.contract.ngWords });
+        const marks = { receivedAt: ctx.now, seal, ...(reward ? { reward } : {}) };
         ctx.extraWrites.push((transaction) => transaction.update(eventRef(ctx.contractId, extra.seq), marks));
         if (extra.receiptExists) {
           ctx.extraWrites.push((transaction) => transaction.update(receiptRef(ctx.payerUid, extra.receiptId), marks));
@@ -1953,6 +1982,7 @@ function createTributeService(deps) {
           actor: "manager",
           tributeSeq: extra.seq,
           amount: integer(event.amount, 0, Number.MAX_SAFE_INTEGER, 0),
+          seal,
           ...(reward ? { reward } : {}),
         });
         markManagerActive(ctx);
@@ -2083,11 +2113,60 @@ function createTributeService(deps) {
         purpose: PURPOSE_IDS.includes(value.purpose) ? value.purpose : "",
         receivedAt: integer(value.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0),
         reward: typeof value.reward === "string" && /^[a-z_]{1,24}$/.test(value.reward) ? value.reward : "",
+        seal: SEAL_IDS.includes(value.seal) ? value.seal : "",
+        collarNo: integer(value.collarNo, 0, Number.MAX_SAFE_INTEGER, 0),
         pairCount: integer(value.pairCount, 0, Number.MAX_SAFE_INTEGER, 0),
         createdAt: integer(value.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
       };
     });
     return { ok: true, receipts, more: receipts.length === LIMITS.receiptsPage };
+  }
+
+  // 貢ぎ報告の画像を作る時に、管理人のいまの許可とカードを確かめる。読むのは契約・自分・管理人（と自分のレシート1枚）だけで、書き込まない。
+  // 許可がない時は名前とアイコンを返さず、画像では「管理人様」とシルエットにする。
+  async function shareInfoAction(uid, data) {
+    const contractId = requireContractId(data?.contractId);
+    const [contractSnapshot, ownSnapshot] = await Promise.all([contractRef(contractId).get(), profileRef(uid).get()]);
+    requireAge(readProfile(ownSnapshot));
+    if (!contractSnapshot.exists) fail("not-found", "契約が見つかりません。");
+    const contract = object(contractSnapshot.data());
+    const managerUid = String(contract.managerUid || "");
+    if (contract.payerUid !== uid || !managerUid) fail("permission-denied", "貢ぎ報告の画像を作れるのは、預ける側だけです。");
+    const receiptId = RECEIPT_ID_PATTERN.test(String(data?.receiptId || "")) ? data.receiptId : "";
+    const [managerSnapshot, receiptSnapshot] = await Promise.all([
+      profileRef(managerUid).get(),
+      receiptId ? receiptRef(uid, receiptId).get() : Promise.resolve(null),
+    ]);
+    const managerProfile = readProfile(managerSnapshot);
+    const consent = managerProfile.card?.reportConsent === true;
+    const card = cardSnapshot(managerProfile.card || contract.managerCard);
+    const stored = receiptSnapshot?.exists ? object(receiptSnapshot.data()) : null;
+    // 自分のレシートで、この契約のものだけを返す。
+    const receipt = stored && stored.contractId === contractId
+      ? {
+        receiptId,
+        receiptNo: integer(stored.receiptNo, 0, Number.MAX_SAFE_INTEGER, 0),
+        kind: String(stored.kind || "silent"),
+        amount: integer(stored.amount, 0, Number.MAX_SAFE_INTEGER, 0),
+        purpose: PURPOSE_IDS.includes(stored.purpose) ? stored.purpose : "",
+        pairCount: integer(stored.pairCount, 0, Number.MAX_SAFE_INTEGER, 0),
+        createdAt: integer(stored.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
+        receivedAt: integer(stored.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+        seal: SEAL_IDS.includes(stored.seal) ? stored.seal : "",
+        reward: typeof stored.reward === "string" && /^[a-z_]{1,24}$/.test(stored.reward) ? stored.reward : "",
+      }
+      : null;
+    return {
+      receipt,
+      ok: true,
+      contractId,
+      consent,
+      manager: consent
+        ? { personaName: card.personaName, disclosure: card.disclosure, style: card.style, sigil: card.sigil, avatar: card.avatar }
+        : { personaName: "", disclosure: card.disclosure, sigil: 0, avatar: 0 },
+      collarNo: integer(contract.collarNo, 0, Number.MAX_SAFE_INTEGER, 0),
+      walletName: normalizeWalletName(contract.payerWalletName),
+    };
   }
 
   async function ledgerAction(uid) {
@@ -2413,6 +2492,7 @@ function createTributeService(deps) {
       case "manager": return managerAction(uid, data);
       case "apply": return applyAction(uid, data);
       case "receipts": return receiptsAction(uid, data);
+      case "share_info": return shareInfoAction(uid, data);
       case "ledger": return ledgerAction(uid);
       case "rankings": return rankingsAction(uid, data);
       case "fund": return fundAction(uid, data, context);

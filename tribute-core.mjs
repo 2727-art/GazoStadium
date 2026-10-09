@@ -95,6 +95,41 @@ export const REWARDS = Object.freeze([
 ]);
 export const RECEIVABLE_KINDS = Object.freeze(["request", "silent"]);
 
+// 管理人の受取印。サーバーの SEALS と同じ。カードに3つまで登録し、受け取る時に1つ選んで押す。
+export const SEALS = Object.freeze([
+  Object.freeze({ id: "kakunin", label: "確認済" }),
+  Object.freeze({ id: "juryo", label: "受領" }),
+  Object.freeze({ id: "yoku", label: "よくできました" }),
+  Object.freeze({ id: "gokaku", label: "合格" }),
+  Object.freeze({ id: "zako", label: "雑魚" }),
+  Object.freeze({ id: "youbun", label: "養分" }),
+  Object.freeze({ id: "gokurou", label: "ご苦労" }),
+]);
+export const DEFAULT_SEALS = Object.freeze(["juryo", "yoku", "kakunin"]);
+export const MAX_SEALS = 3;
+
+export function sealLabel(id) {
+  return SEALS.find((seal) => seal.id === id)?.label || "";
+}
+
+// 受け取る時に選べる印。サーバーの sealFor と同じく、言われたくない言葉に当たる印は出さない。
+export function sealsFor(cardSeals, ngWords = []) {
+  const ids = Array.isArray(cardSeals) && cardSeals.length ? cardSeals : DEFAULT_SEALS;
+  const usable = ids.filter((id) => SEALS.some((seal) => seal.id === id) && !containsNgWord(sealLabel(id), ngWords));
+  return usable.length ? usable : ["juryo"];
+}
+
+// 請求の一言の候補。名目ごとに出し、性的な名目は許可のある契約でだけ使われる。
+export const REQUEST_NOTES = Object.freeze({
+  "": Object.freeze(["今日の分。", "遅れずに。"]),
+  management: Object.freeze(["今月の管理費。", "管理費、遅れずに。"]),
+  reward_fee: Object.freeze(["ご褒美が欲しいなら先に払いな。", "ご褒美代。"]),
+  penalty: Object.freeze(["罰金。言い訳は聞かない。", "待たせた罰金。"]),
+  edging: Object.freeze(["まだイかせない。", "寸止め料、払え。"]),
+  release: Object.freeze(["イきたいなら払え。", "イく許可、買う？"]),
+  leak_penalty: Object.freeze(["勝手にイったね。罰金。", "許可なくイった罰金。"]),
+});
+
 export function visiblePurpose(value, { allowSexual = false } = {}) {
   const purpose = String(value ?? "");
   if (!PURPOSE_IDS.includes(purpose)) return "";
@@ -297,6 +332,7 @@ export function viewContract(contract, uid, now = Date.now()) {
   const pendingStillScheduled = Boolean(pending && pendingKey && jstDateKey(now) < pendingKey);
   const eventSeq = integer(raw.eventSeq);
   const readSeq = integer(object(raw.readSeq)[role]);
+  const peerReadSeq = integer(object(raw.readSeq)[role === "manager" ? "payer" : "manager"]);
   const withdraw = raw.escrowWithdrawRequest && typeof raw.escrowWithdrawRequest === "object"
     ? { amount: integer(raw.escrowWithdrawRequest.amount), requestedAt: integer(raw.escrowWithdrawRequest.requestedAt) }
     : null;
@@ -311,6 +347,7 @@ export function viewContract(contract, uid, now = Date.now()) {
     accepted: integer(raw.acceptedAt) > 0,
     manager: cardSnapshot(raw.managerCard),
     payer: { walletName: String(raw.payerWalletName || "名無しの財布").slice(0, 32) },
+    collarNo: integer(raw.collarNo),
     caps,
     pendingCaps: pendingStillScheduled ? pending : null,
     pendingCapsEffectiveDateKey: pendingStillScheduled ? pendingKey : "",
@@ -350,6 +387,7 @@ export function viewContract(contract, uid, now = Date.now()) {
     reportRequested: integer(raw.reportRequestedAt) > 0,
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
+    peerReadSeq: Math.min(eventSeq, peerReadSeq),
   };
 }
 
@@ -362,12 +400,14 @@ export const MANAGER_SITUATIONS = Object.freeze([
   Object.freeze({ id: "ignore", label: "突き放す" }),
   Object.freeze({ id: "report", label: "報告させる" }),
   Object.freeze({ id: "nekama", label: "ネカマとして" }),
+  Object.freeze({ id: "control", label: "寸止め・射精管理", sexual: true }),
   Object.freeze({ id: "caps_lowered", label: "上限が下がった時" }),
   Object.freeze({ id: "ended", label: "終わる時" }),
 ]);
 export const PAYER_SITUATIONS = Object.freeze([
   Object.freeze({ id: "give", label: "差し出す" }),
   Object.freeze({ id: "reply", label: "返事" }),
+  Object.freeze({ id: "control", label: "寸止め・射精管理", sexual: true }),
   Object.freeze({ id: "safety", label: "止める・下げる" }),
 ]);
 
@@ -382,6 +422,10 @@ export const TEMPLATES = Object.freeze({
         "返事が遅い。躾が足りてない。",
         "お前の存在価値、残高の数字だけだから。",
         "ぼーっとしてる暇あったら財布開けな。",
+        "ATMのくせに止まるな。",
+        "養分は黙って差し出せ。",
+        "お財布くん、今日の分は？",
+        "{no}号、待たせるな。",
       ]),
       after: Object.freeze([
         "それっぽっち？まあ受け取ってやる。",
@@ -390,18 +434,31 @@ export const TEMPLATES = Object.freeze({
         "レシート眺めてニヤつくな、気持ち悪い。",
         "貢ぐしか能がないの、ほんと惨め。",
         "差し出す時の顔、想像しただけで笑える。",
+        "今日もATMご苦労。",
+        "養分としては合格。",
+        "お財布くん、よくできました。",
+        "家畜にしては上出来。",
+        "{no}号の分、確かに受け取った。",
       ]),
       ignore: Object.freeze(["……。", "既読。", "で？", "興味ない。"]),
       report: Object.freeze([
         "残高、報告。今すぐ。",
         "財布の中身、隠さず見せろ。",
         "管理されてる自覚あるなら、報告くらい自分から出せ。",
+        "お財布くん、残高報告。",
       ]),
       nekama: Object.freeze([
         "中身が男だって知ってて貢ぐんだ。救いようがないね。",
         "ネカマに財布握られて満足？終わってる。",
         "おっさんに貢いでる自覚、ちゃんと持って差し出せ。",
         "男だって分かってて尻尾振る財布、最高に情けない。",
+      ]),
+      control: Object.freeze([
+        "まだイかせない。",
+        "イきたいなら払え。",
+        "寸止め料を払ってから話しかけな。",
+        "勝手にイったら罰金。",
+        "許可なくイったね。お漏らし罰金。",
       ]),
       caps_lowered: Object.freeze([
         "了解。その枠で管理する。",
@@ -418,11 +475,13 @@ export const TEMPLATES = Object.freeze({
         "そろそろ顔出して。",
         "ちゃんと持ってきてね。",
         "財布の管理は私の仕事。",
+        "{no}号、今日もよろしく。",
       ]),
       after: Object.freeze([
         "受け取った。よくできました。",
         "確認した。次も遅れないで。",
         "うん、それでいい。",
+        "{no}号、確認した。",
       ]),
       ignore: Object.freeze(["……。", "既読。"]),
       report: Object.freeze(["残高、見せて。", "今の財布、報告して。"]),
@@ -430,6 +489,7 @@ export const TEMPLATES = Object.freeze({
         "男に貢いでるって分かってるよね。よろしい。",
         "中身が男でも差し出せるなら、合格。",
       ]),
+      control: Object.freeze(["まだイっちゃだめ。", "イきたいなら先に払って。", "勝手にイったら罰金ね。"]),
       caps_lowered: Object.freeze(["了解。その枠でいこう。", "決めてくれてありがとう。その範囲で管理する。"]),
       ended: Object.freeze(["おつかれさま。ここまでありがとう。", "契約終了。ちゃんと休んでね。"]),
     }),
@@ -443,6 +503,7 @@ export const TEMPLATES = Object.freeze({
         "えらいね、ちゃんと持ってきたんだ。",
         "ありがと。大事にするね。",
         "今日もいい子。",
+        "{no}号、えらいね。",
       ]),
       ignore: Object.freeze(["……ふふ。", "今はちょっと放置。"]),
       report: Object.freeze(["今の財布、ちょっと見せて？"]),
@@ -450,38 +511,48 @@ export const TEMPLATES = Object.freeze({
         "中身が男でも来てくれるんだ。かわいいね。",
         "おっさんだって知ってるのに律儀だね。",
       ]),
+      control: Object.freeze(["まだ我慢できるよね。", "ちゃんと払えたら、イっていいよ。", "勝手にイったら罰金だよ？"]),
       caps_lowered: Object.freeze(["了解。決めてくれてありがとう。", "その枠でも、ちゃんと見てるよ。"]),
       ended: Object.freeze(["おつかれさま。また気が向いたらね。", "ここまでありがとう。ゆっくり休んで。"]),
     }),
   }),
   payer: Object.freeze({
     harsh: Object.freeze({
-      give: Object.freeze(["差し出します。", "今日の分です。受け取ってください。", "遅れてすみません。"]),
-      reply: Object.freeze(["はい。", "財布として使ってください。", "もっと罵ってください。", "ありがとうございます。"]),
+      give: Object.freeze(["差し出します。", "今日の分です。受け取ってください。", "遅れてすみません。", "{no}号、献上します。"]),
+      reply: Object.freeze(["はい。", "財布として使ってください。", "もっと罵ってください。", "ありがとうございます。", "ATMとして使ってください。", "養分です。"]),
+      control: Object.freeze(["寸止め料、払いました。", "イかせてください。お願いします。", "勝手にイきました。罰金を払います。"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "上限を下げます。"]),
     }),
     normal: Object.freeze({
-      give: Object.freeze(["今日の分です。", "差し出します。"]),
+      give: Object.freeze(["今日の分です。", "差し出します。", "{no}号、献上します。"]),
       reply: Object.freeze(["はい。", "ありがとうございます。", "報告します。"]),
+      control: Object.freeze(["寸止め料です。", "イってもいいですか。"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "上限を下げます。"]),
     }),
     sweet: Object.freeze({
       give: Object.freeze(["今日の分、どうぞ。", "受け取ってくれたらうれしい。"]),
       reply: Object.freeze(["ありがとう。", "今日もお願いします。", "うれしい。"]),
+      control: Object.freeze(["寸止め料、どうぞ。", "イってもいい？"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "上限を下げます。"]),
     }),
   }),
 });
 
-export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords = [] } = {}) {
+// 性的な定型文は、預ける側が性的な名目を許した契約でだけ出す。{no} は首輪番号に置き換え、番号がなければその文を出さない。
+export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords = [], allowSexual = false, collarNo = 0 } = {}) {
   const roleSet = TEMPLATES[role === "manager" ? "manager" : "payer"];
   const toneSet = roleSet[tone] || roleSet.normal;
   const situations = role === "manager" ? MANAGER_SITUATIONS : PAYER_SITUATIONS;
+  const number = Number.isSafeInteger(Number(collarNo)) && Number(collarNo) > 0 ? String(Number(collarNo)) : "";
   return situations
     .filter((situation) => situation.id !== "nekama" || disclosure === "nekama")
+    .filter((situation) => !situation.sexual || allowSexual === true)
     .map((situation) => ({
       ...situation,
-      lines: (toneSet[situation.id] || []).filter((line) => !messageProblem(line, { role, ngWords })),
+      lines: (toneSet[situation.id] || [])
+        .filter((line) => !line.includes("{no}") || number)
+        .map((line) => line.replaceAll("{no}", number))
+        .filter((line) => !messageProblem(line, { role, ngWords })),
     }))
     .filter((situation) => situation.lines.length);
 }
