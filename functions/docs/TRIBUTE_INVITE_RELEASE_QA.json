@@ -1,0 +1,231 @@
+{
+  "checkedAt": "2026-10-09T12:06:48.028Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "ddb7937",
+  "releaseHead": "848091b",
+  "baseCommit": "72cf646",
+  "scope": {
+    "functions": [],
+    "hosting": true,
+    "hostingFiles": 106,
+    "newPublicFiles": [],
+    "databaseRules": false,
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "otherModesChanged": false,
+    "serverCodeChanged": false
+  },
+  "tests": {
+    "total": 1986,
+    "passed": 1955,
+    "failed": 0,
+    "skipped": 31,
+    "note": "Skipped tests are emulator-only. No Functions predeploy ran because Functions were not deployed; same code tested locally."
+  },
+  "functions": {
+    "listed": 36,
+    "allActive": true,
+    "changedSincePreviousRelease": [],
+    "tributeActionHash": "c32541bec7e090a02493b415805e41fab441ea94"
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "conclusion": "success"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-invite-v1",
+    "ok": true,
+    "inviteUrlChecked": "/?ranch=000000000000000000000000",
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-invite-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-invite-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-invite-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/gohoubi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/share-render.html",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.anjugames.workers.dev",
+    "moduleInitialized": true,
+    "ranchOpensWithoutInvite": false,
+    "appCheckExchange": "403 in the automated built-in browser (also seen on 2026-10-05 for web.app/firebaseapp.com); App Check untouched by this release; user asked to confirm in their own browser",
+    "productionWrites": "none beyond page load"
+  },
+  "caveats": [
+    "HTML is cached up to one hour; an old screen ignores the invite parameter and shows the normal landing.",
+    "Opening an invite link starts the ranch and anonymous sign-in; nothing is written before the age check.",
+    "The demo runs on the device only and resets on reload.",
+    "No two-player production or emulator run; no iPhone/Android/Safari check."
+  ]
+}
