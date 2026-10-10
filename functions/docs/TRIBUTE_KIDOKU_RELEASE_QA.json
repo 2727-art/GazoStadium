@@ -1,0 +1,374 @@
+{
+  "checkedAt": "2026-10-10T07:25:09.768Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "2f90c97",
+  "releaseHead": "47fbce8",
+  "baseCommit": "5be3b8a",
+  "scope": {
+    "functions": [
+      "tributeAction",
+      "expireTributeContracts"
+    ],
+    "firestoreRules": true,
+    "firestoreIndexes": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 107,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "tribute-share.mjs"
+    ],
+    "serverCodeChanged": true,
+    "dataMigration": "functions/scripts/migrate-tribute-limits.cjs --apply"
+  },
+  "decisions": {
+    "readReceipts": "payer messages show 既読",
+    "ignoredLabel": "既読無視 N時間／N日目, only while an unpaid request exists",
+    "declaration": "manager card 「未払いは既読無視」, toggled in the thread",
+    "decline": "removed; pay or cancel (consent required at apply)",
+    "limits": "hidden from the manager in tributeContracts/{id}/private/limits (payer-only read)",
+    "lowerLimits": "unpaid requests stay unpaid",
+    "highRequest": "高額請求 tag for 30 days after a request of 3,000 Pay or more",
+    "numbers": {
+      "requestMax": 10000,
+      "payerOpenContracts": 5,
+      "managerActiveContracts": 50,
+      "managerDailyReceive": 100000,
+      "perTributeOptionsMax": 10000,
+      "perDayOptionsMax": 30000,
+      "totalOptionsMax": 100000,
+      "googleProtectedFromPerTribute": 3000
+    },
+    "premiseVersionBumped": false
+  },
+  "tests": {
+    "total": 2002,
+    "passed": 1971,
+    "failed": 0,
+    "skipped": 31
+  },
+  "functions": {
+    "listed": 36,
+    "allActive": true,
+    "runtimes": [
+      "nodejs22"
+    ],
+    "changedSincePreviousRelease": [
+      {
+        "id": "expireTributeContracts",
+        "previousSourceHash": "5ea3252dcacb0d0539f8d2741166aef12a41f3ed",
+        "sourceHash": "dca3fae69913869c5d110d53b8bcaee2b9d52312",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      },
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "0dcf41c57a1ed97544e7c39d2df7b366c9911330",
+        "sourceHash": "dca3fae69913869c5d110d53b8bcaee2b9d52312",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      }
+    ]
+  },
+  "firestoreRules": {
+    "checked": true,
+    "rulesetName": "projects/gazostadium/rulesets/7c8e49f7-7b25-478f-b8cd-72437a9b0aef",
+    "releaseUpdateTime": "2026-10-10T07:18:58.624988Z",
+    "rulesetCreateTime": "2026-10-10T07:18:58.227599Z",
+    "matchesLocal": true,
+    "payerOnlyLimits": true
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-10T07:21:11Z"
+  },
+  "migration": {
+    "dryRun": {
+      "checkedAt": "2026-10-10T07:22:34.659Z",
+      "contracts": 174,
+      "legacyContracts": 174,
+      "eventsWithLimits": 197
+    },
+    "failedAttempt": "an --apply in a second terminal without FIREBASE_TOOLS_AUTH_MODULE stopped at credential lookup before any read or write",
+    "apply": {
+      "checkedAt": "2026-10-10T07:26:48.387Z",
+      "contracts": 174,
+      "legacyContracts": 173,
+      "moved": 173,
+      "limitsAlreadyPresent": 0,
+      "eventsWithLimits": 197,
+      "eventsScrubbed": 197
+    },
+    "lazilyMovedBeforeApply": 1,
+    "recountAfterApply": "not run"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-kidoku-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/migrate-tribute-limits.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-kidoku-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-kidoku.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/kidoku-mushi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/migrate-tribute-limits.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-kidoku-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-kidoku.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/kidoku-mushi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/database.rules.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/migrate-tribute-limits.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-kidoku-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-kidoku.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/kidoku-mushi.html",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "cacheKeys": {
+      "tribute.js": "…-ranch-kidoku-v1",
+      "tribute.css": "…-ranch-kidoku-v1"
+    },
+    "modules": [
+      "tribute-core.mjs (…-ranch-wallet-v1-ranch-kidoku-v1)",
+      "tribute-share.mjs (ranch-kidoku-v1)",
+      "tribute-deco.mjs (ranch-frame-color-v1)"
+    ],
+    "consoleErrors": 0,
+    "ranchActionsInProduction": false
+  },
+  "limits": [
+    "Clients loaded before the release (HTML max-age 3600) can show the payer's limits missing and the give button disabled, and cannot apply, until reloaded.",
+    "web.app and firebaseapp.com served the previous client from the Functions deploy until the Hosting deploy a few minutes later.",
+    "No two-player run, iPhone/Android device or Safari check in production."
+  ]
+}
