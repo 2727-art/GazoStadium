@@ -6,9 +6,9 @@
 const TRIBUTE_SCHEMA_VERSION = 1;
 const TRIBUTE_AGE_VERSION = "tribute-age-v1";
 
-const PER_TRIBUTE_OPTIONS = Object.freeze([10, 30, 50, 100, 300, 500, 1_000]);
-const PER_DAY_OPTIONS = Object.freeze([30, 100, 300, 500, 1_000, 3_000, 5_000]);
-const TOTAL_OPTIONS = Object.freeze([100, 300, 1_000, 3_000, 5_000, 10_000, 30_000]);
+const PER_TRIBUTE_OPTIONS = Object.freeze([10, 30, 50, 100, 300, 500, 1_000, 3_000, 5_000, 10_000]);
+const PER_DAY_OPTIONS = Object.freeze([30, 100, 300, 500, 1_000, 3_000, 5_000, 10_000, 30_000]);
+const TOTAL_OPTIONS = Object.freeze([100, 300, 1_000, 3_000, 5_000, 10_000, 30_000, 50_000, 100_000]);
 const DURATION_DAYS_OPTIONS = Object.freeze([1, 3, 7]);
 const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 const TONES = Object.freeze(["sweet", "normal", "harsh"]);
@@ -108,13 +108,13 @@ const LIMITS = Object.freeze({
   message: 240,
   requestNote: 60,
   pendingRequests: 3,
-  payerOpenContracts: 3,
-  managerActiveContracts: 30,
+  payerOpenContracts: 5,
+  managerActiveContracts: 50,
   managerPendingContracts: 30,
   messageIntervalMs: 2_000,
   messagesPerDay: 300,
   applicationTtlMs: 48 * 60 * 60 * 1_000,
-  managerDailyReceive: 20_000,
+  managerDailyReceive: 100_000,
   rankDailyPairCap: 500,
   feeRateBasisPoints: 500,
   minimumFee: 1,
@@ -133,6 +133,13 @@ const LIMITS = Object.freeze({
   todayWordTtlMs: 24 * 60 * 60 * 1_000,
   todayWordsPerDay: 3,
   cardAchievements: 3,
+  // 管理人の請求は、財布の限度額に関係なく1回10,000 Payまで。払えない請求は未払いのまま残る。
+  requestMax: 10_000,
+  // 直近30日に3,000 Pay以上を請求した管理人のカードに「高額請求」の札を出す。
+  highRequest: 3_000,
+  highRequestWindowMs: 30 * 24 * 60 * 60 * 1_000,
+  // 1回の限度額を3,000 Pay以上にできるのは、AnjuPayウォレットを Google で保護した財布だけ。
+  googleCapThreshold: 3_000,
 });
 
 const HONOR_TIERS = Object.freeze([
@@ -389,6 +396,8 @@ function normalizeManagerCard(value) {
       achievements: normalizeCardAchievements(value?.achievements),
       // 財布の貢ぎ報告の画像に、名前とアイコンを出してよいか。決めていないカードは出さない。
       reportConsent: value?.reportConsent === true,
+      // 管理人の宣言「未払いは既読無視」。財布の画面と掲示板のカードに札として出す。
+      ignoreUnpaid: value?.ignoreUnpaid === true,
       xHandle: x.xHandle,
       accepting: value?.accepting === true,
     },
@@ -403,13 +412,17 @@ function normalizeWalletName(value) {
 
 function normalizeApplication(value, { entryFee = 0 } = {}) {
   const caps = normalizeCaps(value?.caps);
-  if (!caps) return { error: "上限は「1回 ≦ 1日 ≦ 合計」になるように選んでください。" };
+  if (!caps) return { error: "限度額は「1回 ≦ 1日 ≦ 合計」になるように選んでください。" };
   const durationDays = pickOption(value?.durationDays, DURATION_DAYS_OPTIONS);
   if (durationDays === null) return { error: "期間を選び直してください。" };
   const tone = pickEnum(value?.tone, TONES);
   if (!tone) return { error: "言葉の強さを選び直してください。" };
   if (Number(entryFee) > caps.perTribute) {
-    return { error: "この管理人の入場料が、あなたの1回の上限を超えています。" };
+    return { error: "この管理人の入場料が、あなたの1回の限度額を超えています。" };
+  }
+  // 請求は断れない（払うか、解約するか）。申し込む時に、財布が確かめたことを残す。
+  if (value?.acceptNoDecline !== true) {
+    return { error: "請求は断れず、払うか解約するかであることを確かめてください。" };
   }
   const ngWords = normalizeNgWords(value?.ngWords);
   return {
@@ -533,13 +546,18 @@ function tributeAllowance(contract, caps, timestamp = Date.now()) {
   ));
 }
 
+// 1回の限度額が大きい（3,000 Pay以上）か。Google で保護した財布だけが選べる。
+function capsNeedGoogle(caps) {
+  return Number(caps?.perTribute) >= LIMITS.googleCapThreshold;
+}
+
 function capViolation(amount, contract, caps, timestamp = Date.now()) {
   const value = Number(amount);
   if (!Number.isSafeInteger(value) || value < 1) return "金額は1 Pay以上の整数で指定してください。";
-  if (!caps) return "契約の上限を確認できませんでした。";
-  if (value > caps.perTribute) return `1回の上限（${caps.perTribute} Pay）を超えています。`;
-  if (todayUsed(contract, timestamp) + value > caps.perDay) return `今日の上限（${caps.perDay} Pay）を超えています。`;
-  if ((Number(contract?.totalTributed) || 0) + value > caps.total) return `契約の合計上限（${caps.total} Pay）を超えています。`;
+  if (!caps) return "限度額を確認できませんでした。";
+  if (value > caps.perTribute) return `1回の限度額（${caps.perTribute} Pay）を超えています。`;
+  if (todayUsed(contract, timestamp) + value > caps.perDay) return `今日の限度額（${caps.perDay} Pay）を超えています。`;
+  if ((Number(contract?.totalTributed) || 0) + value > caps.total) return `契約合計の限度額（${caps.total} Pay）を超えています。`;
   return "";
 }
 
@@ -627,5 +645,6 @@ module.exports = {
   todayUsed,
   tributeAllowance,
   capViolation,
+  capsNeedGoogle,
   pairId,
 };

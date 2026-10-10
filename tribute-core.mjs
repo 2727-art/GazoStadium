@@ -7,14 +7,15 @@ export const DEFINITION = "お貢ぎは、会わない前提で、金や残高�
 
 export const PREMISES = Object.freeze([
   "会わない前提の遊びです。現実のお金・PayPay・現金化・外部送金はありません。使うのは、アプリ内で稼いだ換金できない AnjuPay だけです。",
-  "上限（1回・1日・契約合計）と解約は、預ける側がいつでも握っています。管理する側は触れられません。",
+  "限度額（1回・1日・契約合計）は自分だけが見られる設定で、管理する側には見えません。解約はいつでもできます。",
+  "管理する側の請求は断れません。払うか、解約するかです。払えない請求は、未払いのまま残ります。",
   "連絡先・SNSのID・外部決済・会う約束・住所や本名は、送ろうとしても送れません。",
   "辛口の侮蔑表現を含みます。言葉の強さ（甘め・普通・辛口）と「言われたくない言葉」は預ける側が決めます。",
 ]);
 
-export const PER_TRIBUTE_OPTIONS = Object.freeze([10, 30, 50, 100, 300, 500, 1_000]);
-export const PER_DAY_OPTIONS = Object.freeze([30, 100, 300, 500, 1_000, 3_000, 5_000]);
-export const TOTAL_OPTIONS = Object.freeze([100, 300, 1_000, 3_000, 5_000, 10_000, 30_000]);
+export const PER_TRIBUTE_OPTIONS = Object.freeze([10, 30, 50, 100, 300, 500, 1_000, 3_000, 5_000, 10_000]);
+export const PER_DAY_OPTIONS = Object.freeze([30, 100, 300, 500, 1_000, 3_000, 5_000, 10_000, 30_000]);
+export const TOTAL_OPTIONS = Object.freeze([100, 300, 1_000, 3_000, 5_000, 10_000, 30_000, 50_000, 100_000]);
 export const DURATION_DAYS_OPTIONS = Object.freeze([1, 3, 7]);
 export const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 
@@ -27,9 +28,13 @@ export const LIMITS = Object.freeze({
   message: 240,
   requestNote: 60,
   pendingRequests: 3,
-  payerOpenContracts: 3,
+  payerOpenContracts: 5,
   feeRateBasisPoints: 500,
   minimumFee: 1,
+  // 管理人の請求は1回10,000 Payまで（財布の限度額には関係しない）。
+  requestMax: 10_000,
+  // 1回の限度額を3,000 Pay以上にできるのは、Google で保護した財布だけ。
+  googleCapThreshold: 3_000,
 });
 
 export const TONE_LABELS = Object.freeze({ sweet: "甘め", normal: "普通", harsh: "辛口" });
@@ -172,7 +177,7 @@ export const END_REASON_LABELS = Object.freeze({
 export const REPORT_REASON_LABELS = Object.freeze({
   external_trade: "外部取引（現金・外部決済・ギフト券）に誘われた",
   personal_info: "個人情報や連絡先を求められた",
-  exit_obstruction: "解約や上限の引き下げを妨げられた",
+  exit_obstruction: "解約や限度額の引き下げを妨げられた",
   threat: "脅迫・差別・晒しの脅し",
   other: "その他",
 });
@@ -282,10 +287,10 @@ export function tributeAllowance(contract, caps, timestamp = Date.now()) {
 export function capViolation(amount, contract, caps, timestamp = Date.now()) {
   const value = Number(amount);
   if (!Number.isSafeInteger(value) || value < 1) return "金額は1 Pay以上の整数で指定してください。";
-  if (!caps) return "契約の上限を確認できませんでした。";
-  if (value > caps.perTribute) return `1回の上限（${caps.perTribute} Pay）を超えています。`;
-  if (todayUsed(contract, timestamp) + value > caps.perDay) return `今日の上限（${caps.perDay} Pay）を超えています。`;
-  if ((Number(contract?.totalTributed) || 0) + value > caps.total) return `契約の合計上限（${caps.total} Pay）を超えています。`;
+  if (!caps) return "限度額を確認できませんでした。";
+  if (value > caps.perTribute) return `1回の限度額（${caps.perTribute} Pay）を超えています。`;
+  if (todayUsed(contract, timestamp) + value > caps.perDay) return `今日の限度額（${caps.perDay} Pay）を超えています。`;
+  if ((Number(contract?.totalTributed) || 0) + value > caps.total) return `契約合計の限度額（${caps.total} Pay）を超えています。`;
   return "";
 }
 
@@ -322,14 +327,16 @@ function cardSnapshot(card) {
 }
 
 // サーバーの viewContract と同じ形に、Firestore から直接読んだ契約を整える。
+// 限度額（caps）は財布だけ。管理人の画面には、限度額も残り枠も出さない（サーバーの viewContract と同じ）。
+// 限度額は契約の記録ではなく private/limits にあるので、財布の画面はそれを足してから渡す。
 export function viewContract(contract, uid, now = Date.now()) {
   const raw = object(contract);
   const role = raw.managerUid === uid ? "manager" : "payer";
   const status = String(raw.status || "ended");
-  const { caps } = effectiveCaps(raw, now);
+  const caps = role === "payer" ? effectiveCaps(raw, now).caps : null;
   const pending = normalizeCaps(raw.pendingCaps);
   const pendingKey = String(raw.pendingCapsEffectiveDateKey || "");
-  const pendingStillScheduled = Boolean(pending && pendingKey && jstDateKey(now) < pendingKey);
+  const pendingStillScheduled = role === "payer" && Boolean(pending && pendingKey && jstDateKey(now) < pendingKey);
   const eventSeq = integer(raw.eventSeq);
   const readSeq = integer(object(raw.readSeq)[role]);
   const peerReadSeq = integer(object(raw.readSeq)[role === "manager" ? "payer" : "manager"]);
@@ -374,6 +381,8 @@ export function viewContract(contract, uid, now = Date.now()) {
     escrowBalance,
     escrowRoom: caps ? Math.max(0, caps.total - totalTributed - escrowBalance) : 0,
     escrowWithdrawRequest: withdraw && withdraw.amount > 0 ? withdraw : null,
+    ignoredSince: integer(raw.ignoredSince),
+    managerIgnoreUnpaid: raw.managerIgnoreUnpaid === true,
     pendingRequests: Object.entries(object(raw.pendingRequests))
       .map(([requestId, entry]) => ({
         requestId,
@@ -391,6 +400,15 @@ export function viewContract(contract, uid, now = Date.now()) {
   };
 }
 
+// 既読無視の長さ。24時間までは「○時間」、それを過ぎたら「○日目」。
+export function ignoreLabel(since, now = Date.now()) {
+  const start = Number(since) || 0;
+  if (start <= 0) return "";
+  const elapsed = Math.max(0, now - start);
+  if (elapsed < 24 * 3_600_000) return `既読無視 ${Math.max(1, Math.floor(elapsed / 3_600_000))}時間`;
+  return `既読無視 ${Math.floor(elapsed / 86_400_000) + 1}日目`;
+}
+
 // 定型文。言葉の強さ（預ける側が契約で選ぶ）ごとに用意する。辛口は徹底して辛く、ただし
 // 自傷・死・暴力・差別・晒しの語、上限を上げさせる文、解約をためらわせる文は入れない。
 // 上限を下げた時・終わった時の反応は、責めない。
@@ -401,7 +419,6 @@ export const MANAGER_SITUATIONS = Object.freeze([
   Object.freeze({ id: "report", label: "報告させる" }),
   Object.freeze({ id: "nekama", label: "ネカマとして" }),
   Object.freeze({ id: "control", label: "寸止め・射精管理", sexual: true }),
-  Object.freeze({ id: "caps_lowered", label: "上限が下がった時" }),
   Object.freeze({ id: "ended", label: "終わる時" }),
 ]);
 export const PAYER_SITUATIONS = Object.freeze([
@@ -460,10 +477,6 @@ export const TEMPLATES = Object.freeze({
         "勝手にイったら罰金。",
         "許可なくイったね。お漏らし罰金。",
       ]),
-      caps_lowered: Object.freeze([
-        "了解。その枠で管理する。",
-        "上限は財布が決めること。続けるなら、その枠で。",
-      ]),
       ended: Object.freeze([
         "おつかれ。財布、閉じていいよ。",
         "契約終了。好きにしな。",
@@ -490,7 +503,6 @@ export const TEMPLATES = Object.freeze({
         "中身が男でも差し出せるなら、合格。",
       ]),
       control: Object.freeze(["まだイっちゃだめ。", "イきたいなら先に払って。", "勝手にイったら罰金ね。"]),
-      caps_lowered: Object.freeze(["了解。その枠でいこう。", "決めてくれてありがとう。その範囲で管理する。"]),
       ended: Object.freeze(["おつかれさま。ここまでありがとう。", "契約終了。ちゃんと休んでね。"]),
     }),
     sweet: Object.freeze({
@@ -512,7 +524,6 @@ export const TEMPLATES = Object.freeze({
         "おっさんだって知ってるのに律儀だね。",
       ]),
       control: Object.freeze(["まだ我慢できるよね。", "ちゃんと払えたら、イっていいよ。", "勝手にイったら罰金だよ？"]),
-      caps_lowered: Object.freeze(["了解。決めてくれてありがとう。", "その枠でも、ちゃんと見てるよ。"]),
       ended: Object.freeze(["おつかれさま。また気が向いたらね。", "ここまでありがとう。ゆっくり休んで。"]),
     }),
   }),
@@ -521,19 +532,19 @@ export const TEMPLATES = Object.freeze({
       give: Object.freeze(["差し出します。", "今日の分です。受け取ってください。", "遅れてすみません。", "{no}号、献上します。"]),
       reply: Object.freeze(["はい。", "財布として使ってください。", "もっと罵ってください。", "ありがとうございます。", "ATMとして使ってください。", "養分です。"]),
       control: Object.freeze(["寸止め料、払いました。", "イかせてください。お願いします。", "勝手にイきました。罰金を払います。"]),
-      safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "上限を下げます。"]),
+      safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
     }),
     normal: Object.freeze({
       give: Object.freeze(["今日の分です。", "差し出します。", "{no}号、献上します。"]),
       reply: Object.freeze(["はい。", "ありがとうございます。", "報告します。"]),
       control: Object.freeze(["寸止め料です。", "イってもいいですか。"]),
-      safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "上限を下げます。"]),
+      safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
     }),
     sweet: Object.freeze({
       give: Object.freeze(["今日の分、どうぞ。", "受け取ってくれたらうれしい。"]),
       reply: Object.freeze(["ありがとう。", "今日もお願いします。", "うれしい。"]),
       control: Object.freeze(["寸止め料、どうぞ。", "イってもいい？"]),
-      safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "上限を下げます。"]),
+      safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
     }),
   }),
 });

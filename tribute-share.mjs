@@ -956,7 +956,7 @@ export async function renderExcerptImage(data, options = {}) {
 
 // ───────────── 財布募集の画像 ─────────────
 // 管理人が自分のカードを X に貼るための画像。管理人の端末の中で描き、サーバーへは送らない。
-// URL は入れない（招待リンクは投稿の文に付ける）。中の人の札は略さず全文で入れ、上限と解約は財布が握ることを必ず書く。
+// URL は入れない（招待リンクは投稿の文に付ける）。中の人の札は略さず全文で入れ、AnjuPay だけで現金がないことを必ず書く。
 // 枠は SVG の画像を使わず canvas で描く（端末によっては、画像を重ねた canvas を書き出せなくなるため）。
 
 const RECRUIT_CARD = Object.freeze({ x: 64, y: 206, width: 952, height: 880 });
@@ -1289,8 +1289,11 @@ export async function renderRecruitImage(data) {
   const intro = String(data.intro || "");
   const achievements = (Array.isArray(data.achievements) ? data.achievements : []).slice(0, 3);
   const honorLabel = String(data.honorLabel || "");
-  const tags = [manager.disclosureLabel, manager.styleLabel, honorLabel].filter(Boolean);
-  await loadFonts([manager.personaName, word, intro, tags.join(""), achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布募集中入場料管理中今月の財布人上限と解約は財布が握るだけ現金なし#WALLET WANTED"].join(""));
+  // 中の人の札を先頭に。宣言「未払いは既読無視」と「高額請求」は、型と称号より先に並べる。
+  const OATH = "未払いは既読無視";
+  const HIGH = "高額請求";
+  const tags = [manager.disclosureLabel, data.ignoreUnpaid ? OATH : "", data.highRequest ? HIGH : "", manager.styleLabel, honorLabel].filter(Boolean);
+  await loadFonts([manager.personaName, word, intro, tags.join(""), achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布募集中入場料管理中今月の財布人アプリ内ポイントだけ現金なし#WALLET WANTED"].join(""));
   const image = await loadImage(manager.avatarUrl);
   const canvas = canvasFor();
   const ctx = canvas.getContext("2d");
@@ -1330,21 +1333,29 @@ export async function renderRecruitImage(data) {
   fitFont(ctx, manager.personaName, right - nameX, 88, MINCHO, 800, 40);
   ctx.fillText(manager.personaName, nameX, box.y + 64 + 92);
   let tagX = nameX;
-  const tagY = box.y + 64 + 120;
+  let tagY = box.y + 64 + 120;
+  let tagRows = 1;
   tags.forEach((label, index) => {
     const font = `700 27px ${SANS}`;
     ctx.font = font;
     const width = ctx.measureText(label).width + 40;
-    // 中の人の札（最初の札）は必ず入れる。ほかの札は入りきる時だけ。
-    if (index > 0 && tagX + width > right) return;
+    // 中の人の札（最初の札）は必ず入れる。ほかの札は2段目まで、入りきる時だけ。
+    if (index > 0 && tagX + width > right) {
+      if (tagRows === 2 || nameX + width > right) return;
+      tagRows = 2;
+      tagX = nameX;
+      tagY += 58;
+    }
     const isDisclosure = index === 0;
-    const isHonor = !isDisclosure && label === honorLabel;
+    const isHonor = !isDisclosure && (label === honorLabel || label === HIGH);
+    const isOath = !isDisclosure && label === OATH;
     const nekama = manager.disclosureKey === "nekama";
-    const color = isDisclosure ? (nekama ? "#9fe6ff" : TEXT) : isHonor ? "#f6dfa6" : TEXT;
-    const border = isDisclosure ? (nekama ? "#5fd4ff" : "rgba(255, 255, 255, 0.45)") : isHonor ? GOLD : "rgba(255, 255, 255, 0.3)";
+    const color = isDisclosure ? (nekama ? "#9fe6ff" : TEXT) : isOath ? "#ffb3c6" : isHonor ? "#f6dfa6" : TEXT;
+    const border = isDisclosure ? (nekama ? "#5fd4ff" : "rgba(255, 255, 255, 0.45)") : isOath ? "#ff6b8a" : isHonor ? GOLD : "rgba(255, 255, 255, 0.3)";
     tagX += paintPill(ctx, { x: tagX, y: tagY, text: label, height: 50, font, color, border, padding: 20, lineWidth: 3 }) + 12;
   });
-  let cursor = box.y + 64 + 190;
+  // 札が2段になった分だけ下げる（紹介を1行減らして、カードの高さに収める）。
+  let cursor = Math.max(box.y + 64 + 190, tagY + 58);
 
   // 今日のひとこと
   if (word) {
@@ -1371,7 +1382,7 @@ export async function renderRecruitImage(data) {
   if (intro) {
     ctx.font = `400 30px ${SANS}`;
     ctx.fillStyle = "rgba(244, 236, 246, 0.86)";
-    const lines = wrapLines(ctx, intro, innerWidth, 3);
+    const lines = wrapLines(ctx, intro, innerWidth, tagRows === 2 ? 2 : 3);
     cursor += 22;
     lines.forEach((line, index) => ctx.fillText(line, left, cursor + 34 + index * 46));
     cursor += lines.length * 46 + 8;
@@ -1458,7 +1469,7 @@ export async function renderRecruitImage(data) {
   // 守ること（左に寄せ、右下の印と重ねない）
   const rulesY = box.y + box.height + 64;
   let ruleX = 64;
-  for (const [text, strong] of [["上限と解約は", false], ["財布が握る", true], ["　AnjuPay だけ・", false], ["現金なし", true]]) {
+  for (const [text, strong] of [["AnjuPay（アプリ内ポイント）だけ・", false], ["現金なし", true]]) {
     ctx.fillStyle = strong ? GREEN : MIST;
     ctx.font = `${strong ? 700 : 400} 24px ${SANS}`;
     ctx.fillText(text, ruleX, rulesY);

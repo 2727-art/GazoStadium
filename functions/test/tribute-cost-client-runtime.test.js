@@ -58,7 +58,7 @@ async function harness(dispatch) {
     auth: { currentUser: { uid: "player" }, authStateReady: async () => {} },
     browserLocalPersistence: {}, setPersistence: async () => {}, signInAnonymously: async () => { throw new Error("unexpected auth"); },
     active: false, lifecycleGeneration: 0, state: {}, stateRequest: null,
-    threadGeneration: 0, markReadProgress: new Map(), contractUnsubscribe: null, eventsUnsubscribe: null,
+    threadGeneration: 0, markReadProgress: new Map(), contractUnsubscribe: null, eventsUnsubscribe: null, limitsUnsubscribe: null,
     walletUnsubscribe: null, markReadTimer: null, tickTimer: null, hold: null,
     previewScreen: "", EVENTS_LIMIT: 100, TRIBUTE_AGE_VERSION: 1,
     // 見学用の見本と招待リンク（ranch-invite-v1）。見本の契約IDはサーバーへ送られず、招待がなければ通常の入場になる。
@@ -87,7 +87,7 @@ async function harness(dispatch) {
   });
   vm.runInContext([
     "createState", "isCurrent", "ensureUser", "call", "applyState", "requestState", "refreshState", "navigate",
-    "stopThread", "openThread", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "scheduleMarkRead",
+    "stopThread", "openThread", "withThreadLimits", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "scheduleMarkRead",
     "mutate", "handleSubmit", "start", "isActive", "requestHome",
   ].map(fn).join("\n"), context);
   return {

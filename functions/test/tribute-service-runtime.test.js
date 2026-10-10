@@ -49,6 +49,11 @@ class FakeDocumentReference {
   async get() {
     return this.firestore.snapshot(this);
   }
+
+  async set(value, options = {}) {
+    const current = options.merge ? this.firestore.read(this.path) || {} : {};
+    this.firestore.write(this.path, { ...current, ...clone(value) });
+  }
 }
 
 class FakeQuery {
@@ -174,6 +179,10 @@ class FakeFirestore {
     this.documents.set(path, clone(value));
   }
 
+  delete(path) {
+    this.documents.delete(path);
+  }
+
   keys(prefix) {
     return [...this.documents.keys()].filter((path) => path.startsWith(prefix));
   }
@@ -288,6 +297,7 @@ const BASE_APPLICATION = Object.freeze({
   allowReportRequests: true,
   rankOptIn: true,
   walletName: "ポチ財布",
+  acceptNoDecline: true,
 });
 
 async function startContract(harness, managerUid, payerUid, publicManagerId, application = {}, entryFee = 10) {
@@ -416,11 +426,25 @@ test("manager wording is filtered for contact routes and the payer's NG words, a
   ]);
 });
 
-test("requests and silent tributes respect per-tribute, per-day and total caps held by the payer", async () => {
+test("managers request up to 10,000 regardless of the payer's hidden limits; paying still respects them and requests cannot be declined", async () => {
   const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
   const publicManagerId = await openManager(harness, "manager");
   const contractId = await startContract(harness, "manager", "payer", publicManagerId);
-  await rejects(harness.act("manager", "request", { contractId, amount: 101 }), /1回の上限/);
+  // 限度額は契約の記録にも「申し込み」の出来事にもなく、財布だけが読める場所にある。
+  assert.equal(harness.contract(contractId).caps, undefined);
+  assert.deepEqual(harness.firestore.read(`tributeContracts/${contractId}/private/limits`).caps, { perTribute: 100, perDay: 300, total: 1_000 });
+  assert.equal(harness.events(contractId)[0].type, "applied");
+  assert.equal(harness.events(contractId)[0].caps, undefined);
+  const managerView = (await harness.act("manager", "state")).contracts.find((entry) => entry.contractId === contractId);
+  assert.deepEqual({ caps: managerView.caps, pendingCaps: managerView.pendingCaps, allowance: managerView.allowance, escrowRoom: managerView.escrowRoom }, { caps: null, pendingCaps: null, allowance: 0, escrowRoom: 0 });
+
+  await rejects(harness.act("manager", "request", { contractId, amount: 10_001 }), /1回 10,000 Pay まで/);
+  const big = await harness.act("manager", "request", { contractId, amount: 10_000, note: "払えないなら黙ってな。" });
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "request", requestId: big.requestId, amount: 10_000, clientRequestId: nextRequestId() }), /1回の限度額（100 Pay）/);
+  await rejects(harness.act("payer", "decline_request", { contractId, requestId: big.requestId }), /請求は断れません/);
+  assert.equal(harness.contract(contractId).pendingRequests[big.requestId].amount, 10_000, "an unpayable request stays unpaid");
+  assert.ok(harness.firestore.read("tributeProfiles/manager").highRequestAt > 0, "a request of 3,000 or more marks the manager as a high requester");
+  harness.advance(2_100);
   const requested = await harness.act("manager", "request", { contractId, amount: 100, note: "今日の分。早く。" });
   const paid = await harness.act("payer", "tribute", {
     contractId,
@@ -433,9 +457,9 @@ test("requests and silent tributes respect per-tribute, per-day and total caps h
   assert.equal(paid.receipt.pairCount, 2);
   assert.equal(harness.balance("payer"), 4_890);
   assert.equal(harness.balance("manager"), 9 + 95);
-  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 150, clientRequestId: nextRequestId() }), /1回の上限/);
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 150, clientRequestId: nextRequestId() }), /1回の限度額/);
   await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 100, clientRequestId: nextRequestId() });
-  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 100, clientRequestId: nextRequestId() }), /今日の上限/);
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 100, clientRequestId: nextRequestId() }), /今日の限度額/);
   const state = await harness.act("payer", "state");
   const view = state.contracts.find((entry) => entry.contractId === contractId);
   assert.equal(view.todayTributed, 210);
@@ -453,7 +477,7 @@ test("requests and silent tributes respect per-tribute, per-day and total caps h
   harness.advance(DAY - 60_000);
   assert.equal(harness.contract(contractId).status, "active");
   await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 100, clientRequestId: nextRequestId() });
-  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 100, clientRequestId: nextRequestId() }), /合計上限/);
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 100, clientRequestId: nextRequestId() }), /契約合計の限度額/);
 });
 
 test("a repeated tribute request id replays without charging twice", async () => {
@@ -469,34 +493,102 @@ test("a repeated tribute request id replays without charging twice", async () =>
   assert.equal(harness.contract(contractId).tributeCount, 1);
 });
 
-test("only the payer can change caps: lowering is immediate and voids larger requests, raising waits for the next JST day", async () => {
+test("only the payer can change the hidden limits: lowering keeps unpaid requests, raising waits for the next JST day, and the manager never learns of it", async () => {
   const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
   const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
   const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  const limits = () => harness.firestore.read(`tributeContracts/${contractId}/private/limits`);
   await harness.act("manager", "request", { contractId, amount: 100 });
   harness.advance(2_000);
   await harness.act("manager", "request", { contractId, amount: 30 });
   await rejects(harness.act("manager", "set_caps", { contractId, caps: { perTribute: 1_000, perDay: 5_000, total: 30_000 } }), /この操作はできません/);
   await rejects(harness.act("manager", "terminate", { contractId }), /この操作はできません/);
+  const eventsBefore = harness.events(contractId).length;
 
   const lowered = await harness.act("payer", "set_caps", { contractId, caps: { perTribute: 50, perDay: 300, total: 1_000 } });
   assert.deepEqual(lowered.contract.caps, { perTribute: 50, perDay: 300, total: 1_000 });
-  assert.deepEqual(lowered.contract.pendingRequests.map((entry) => entry.amount), [30]);
-  assert.ok(harness.events(contractId).some((event) => event.type === "request_cancelled" && event.reason === "caps"));
+  assert.deepEqual(lowered.contract.pendingRequests.map((entry) => entry.amount), [100, 30], "a request above the lowered limit stays unpaid");
+  assert.deepEqual(limits().caps, { perTribute: 50, perDay: 300, total: 1_000 });
 
   const raised = await harness.act("payer", "set_caps", { contractId, caps: { perTribute: 300, perDay: 300, total: 1_000 } });
   assert.deepEqual(raised.contract.caps, { perTribute: 50, perDay: 300, total: 1_000 }, "raise does not apply today");
   assert.deepEqual(raised.contract.pendingCaps, { perTribute: 300, perDay: 300, total: 1_000 });
-  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 300, clientRequestId: nextRequestId() }), /1回の上限（50 Pay）/);
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 300, clientRequestId: nextRequestId() }), /1回の限度額（50 Pay）/);
   const midnight = Date.parse(`${raised.contract.pendingCapsEffectiveDateKey}T00:00:00+09:00`);
   harness.advance(midnight - harness.now() + 1);
   await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 300, clientRequestId: nextRequestId() });
-  assert.deepEqual(harness.contract(contractId).caps, { perTribute: 300, perDay: 300, total: 1_000 });
-  assert.ok(harness.events(contractId).some((event) => event.type === "caps_raised"));
+  assert.deepEqual(limits().caps, { perTribute: 300, perDay: 300, total: 1_000 });
+  assert.equal(harness.contract(contractId).caps, undefined, "limits never return to the shared contract record");
 
-  await harness.act("payer", "set_caps", { contractId, caps: { perTribute: 300, perDay: 1_000, total: 3_000 } });
+  // 1回の限度額を3,000以上にするのは、Google で保護した財布だけ。
+  await rejects(harness.act("payer", "set_caps", { contractId, caps: { perTribute: 3_000, perDay: 3_000, total: 3_000 } }), /Google で保護/);
+  await harness.act("payer", "set_caps", { contractId, caps: { perTribute: 3_000, perDay: 3_000, total: 3_000 } }, { googleProtected: true });
   const cancelled = await harness.act("payer", "cancel_raise", { contractId });
   assert.equal(cancelled.contract.pendingCaps, null);
+
+  // 限度額の変更は、管理人も読む出来事に残らない。管理人の画面にも出ない。
+  const shared = harness.events(contractId).slice(eventsBefore);
+  assert.ok(shared.every((event) => !String(event.type).startsWith("caps_") && event.caps === undefined && event.reason !== "caps"), JSON.stringify(shared.map((event) => event.type)));
+  const managerView = (await harness.act("manager", "state")).contracts.find((entry) => entry.contractId === contractId);
+  assert.equal(managerView.caps, null);
+  assert.equal(managerView.pendingCaps, null);
+});
+
+test("an old contract with limits on the shared record moves them to the payer's private limits on its next action", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  const path = `tributeContracts/${contractId}`;
+  // このリリースより前の契約: 限度額が契約の記録にあり、private/limits はない。
+  harness.firestore.write(path, { ...harness.contract(contractId), caps: { perTribute: 50, perDay: 100, total: 300 }, pendingCaps: null, pendingCapsEffectiveDateKey: "" });
+  harness.firestore.delete(`${path}/private/limits`);
+  const updatedAt = harness.contract(contractId).updatedAt;
+  harness.advance(1_000);
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 60, clientRequestId: nextRequestId() }), /1回の限度額（50 Pay）/);
+  await harness.act("manager", "message", { contractId, text: "まだ？" });
+  assert.equal(harness.contract(contractId).caps, null, "the shared record no longer holds the limits");
+  assert.deepEqual(harness.firestore.read(`${path}/private/limits`).caps, { perTribute: 50, perDay: 100, total: 300 });
+  assert.ok(harness.contract(contractId).updatedAt > updatedAt);
+});
+
+test("既読無視 starts when the manager reads an unanswered payer message, and ends with a reply", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  await harness.act("manager", "request", { contractId, amount: 5_000 });
+  harness.advance(2_100);
+  await harness.act("payer", "message", { contractId, text: "ごめんなさい、今月は厳しくて…" });
+  const seq = harness.contract(contractId).eventSeq;
+  assert.equal(harness.contract(contractId).ignoredSince || 0, 0, "not read yet");
+  harness.advance(60_000);
+  const readAt = harness.now();
+  await harness.act("manager", "mark_read", { contractId, seq });
+  assert.equal(harness.contract(contractId).ignoredSince, readAt);
+  harness.advance(60_000);
+  await harness.act("manager", "mark_read", { contractId, seq });
+  assert.equal(harness.contract(contractId).ignoredSince, readAt, "reading again keeps the start");
+  const payerView = (await harness.act("payer", "state")).contracts.find((entry) => entry.contractId === contractId);
+  assert.equal(payerView.ignoredSince, readAt);
+  assert.equal(payerView.peerReadSeq, seq);
+  harness.advance(2_100);
+  await harness.act("manager", "message", { contractId, text: "払ってから話しかけな。" });
+  assert.equal(harness.contract(contractId).ignoredSince, 0, "a reply ends it");
+});
+
+test("the manager's declaration reaches the board, the card and the manager's open contracts", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000, viewer: 0 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0, ignoreUnpaid: true });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  assert.equal(harness.contract(contractId).managerIgnoreUnpaid, true, "copied when applying");
+  await confirmAge(harness, "viewer");
+  const board = await harness.act("viewer", "board");
+  assert.equal(board.managers.find((card) => card.publicManagerId === publicManagerId).ignoreUnpaid, true);
+  const off = await harness.act("manager", "set_declaration", { ignoreUnpaid: false });
+  assert.equal(off.profile.card.ignoreUnpaid, false);
+  assert.equal(harness.contract(contractId).managerIgnoreUnpaid, false, "open contracts follow the switch");
+  const view = (await harness.act("payer", "state")).contracts.find((entry) => entry.contractId === contractId);
+  assert.equal(view.managerIgnoreUnpaid, false);
+  await rejects(harness.act("viewer", "set_declaration", { ignoreUnpaid: true }), /管理人カードを作ってから/);
 });
 
 test("escrow stays the payer's: deposits are capped, takes count as tributes, withdrawals need approval, and terminate returns everything", async () => {
@@ -510,7 +602,11 @@ test("escrow stays the payer's: deposits are capped, takes count as tributes, wi
   assert.equal(harness.balance("payer"), 1_600, "a repeated deposit id is not charged twice");
   assert.equal(harness.contract(contractId).escrowBalance, 400);
 
-  await rejects(harness.act("manager", "escrow_take", { contractId, amount: 150, clientRequestId: nextRequestId() }), /1回の上限/);
+  await assert.rejects(harness.act("manager", "escrow_take", { contractId, amount: 150, clientRequestId: nextRequestId() }), (error) => {
+    assert.match(error.message, /財布の限度額を超えるため/);
+    assert.doesNotMatch(error.message, /\d/, "the manager never sees the payer's limit");
+    return true;
+  });
   await harness.act("manager", "escrow_take", { contractId, amount: 100, clientRequestId: nextRequestId() });
   assert.equal(harness.balance("payer"), 1_600, "escrow take does not touch the payer wallet again");
   assert.equal(harness.balance("manager"), 95);
@@ -600,19 +696,21 @@ test("expiry ends applications after 48 hours and contracts after their duration
   assert.equal(harness.balance("payer"), 2_000);
 });
 
-test("a payer holds at most three open contracts", async () => {
+test("a payer holds at most five open contracts, and must accept that requests cannot be declined", async () => {
   const harness = createHarness({ balances: { payer: 1_000 } });
   const ids = [];
-  for (const uid of ["m1", "m2", "m3", "m4"]) ids.push(await openManager(harness, uid, { entryFee: 0 }));
+  for (const uid of ["m1", "m2", "m3", "m4", "m5", "m6"]) ids.push(await openManager(harness, uid, { entryFee: 0 }));
   await confirmAge(harness, "payer");
+  await rejects(harness.act("payer", "apply", { publicManagerId: ids[0], expectedEntryFee: 0, application: { ...BASE_APPLICATION, acceptNoDecline: false } }), /請求は断れず/);
+  await rejects(harness.act("payer", "apply", { publicManagerId: ids[0], expectedEntryFee: 0, application: { ...BASE_APPLICATION, caps: { perTribute: 3_000, perDay: 3_000, total: 3_000 } } }), /Google で保護/);
   await harness.act("payer", "apply", { publicManagerId: ids[0], expectedEntryFee: 0, application: BASE_APPLICATION });
   await rejects(harness.act("payer", "apply", { publicManagerId: ids[1], expectedEntryFee: 0, application: BASE_APPLICATION }), /30秒に1回/);
-  for (const id of ids.slice(1, 3)) {
+  for (const id of ids.slice(1, 5)) {
     harness.advance(30_000);
     await harness.act("payer", "apply", { publicManagerId: id, expectedEntryFee: 0, application: BASE_APPLICATION });
   }
   harness.advance(30_000);
-  await rejects(harness.act("payer", "apply", { publicManagerId: ids[3], expectedEntryFee: 0, application: BASE_APPLICATION }), /3件まで/);
+  await rejects(harness.act("payer", "apply", { publicManagerId: ids[5], expectedEntryFee: 0, application: BASE_APPLICATION }), /5件まで/);
 });
 
 test("the manager's daily receive cap applies across contracts", async () => {
@@ -622,9 +720,9 @@ test("the manager's daily receive cap applies across contracts", async () => {
   harness.firestore.write("tributeProfiles/manager", {
     ...harness.firestore.read("tributeProfiles/manager"),
     receiveDayKey: jstDateKey(harness.now()),
-    receiveDayTotal: 19_950,
+    receiveDayTotal: 99_950,
   });
-  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 100, clientRequestId: nextRequestId() }), /20,000 Pay/);
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "silent", amount: 100, clientRequestId: nextRequestId() }), /100,000 Pay/);
   await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 50, clientRequestId: nextRequestId() });
 });
 

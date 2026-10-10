@@ -31,10 +31,10 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-frame-color-v1"/);
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1"/);
+  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-kidoku-v1"/);
   assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-frame-color-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
@@ -238,7 +238,7 @@ test("templates are harsh but never cross the stated lines, and lowering or leav
 
 test("server wiring: App Check callable, 15-minute expiry, block cleanup, closed market and patron program", () => {
   assert.match(indexSource, /exports\.tributeAction = onCall\(callableOptions\("tributeAction"\)/);
-  assert.match(indexSource, /const TRIBUTE_GOOGLE_ACTIONS = new Set\(\["fund", "offer"\]\);/);
+  assert.match(indexSource, /const TRIBUTE_GOOGLE_ACTIONS = new Set\(\["fund", "offer", "apply", "set_caps"\]\);/);
   assert.match(indexSource, /exports\.expireTributeContracts = onSchedule\(\{\s*schedule: "every 15 minutes"/);
   assert.match(indexSource, /tributeService\.endContractsBetween\(context\.firstUid, context\.secondUid\)/);
   assert.match(indexSource, /resolveTributeTarget: \(uid, data\) => tributeService\.resolveSafetyTarget\(uid, data\)/);
@@ -251,7 +251,9 @@ test("rules let only contract participants read threads and keep every other tri
   const block = sourceBlock(firestoreRules, "match /tributeContracts/{contractId}", "match /tributeProfiles/{uid}");
   assert.match(block, /allow read: if request\.auth != null\s*&& request\.auth\.uid in resource\.data\.participants;/);
   assert.match(block, /match \/events\/\{eventId\}[\s\S]*?request\.auth\.uid in get\(\/databases\/\$\(database\)\/documents\/tributeContracts\/\$\(contractId\)\)\.data\.participants;/);
-  assert.equal((block.match(/allow write: if false;/g) || []).length, 2);
+  assert.equal((block.match(/allow write: if false;/g) || []).length, 3);
+  // 財布の限度額は、預ける側だけが読める（管理人には見せない）。
+  assert.match(block, /match \/private\/\{docId\} \{\s*allow read: if request\.auth != null\s*&& request\.auth\.uid == get\(\/databases\/\$\(database\)\/documents\/tributeContracts\/\$\(contractId\)\)\.data\.payerUid;\s*allow write: if false;/);
   for (const collection of ["tributeProfiles", "tributeReceipts", "tributePairs", "tributeManagerMonths", "tributeFund", "tributeHonors", "tributeReports"]) {
     assert.match(firestoreRules, new RegExp(`match /${collection}/\\{[^}]+\\} \\{\\s*allow read, write: if false;`), collection);
   }
@@ -273,7 +275,7 @@ test("rules let only contract participants read threads and keep every other tri
 
 test("the design note keeps the definition and is not published", () => {
   assert.match(design, /お貢ぎは、会わない前提で、金や残高の支配を権力交換の中心に置く遊びである。/);
-  assert.match(design, /この機能は、上限と離脱を払う側（預ける側）が保持しているか/);
+  assert.match(design, /この機能は、限度額と離脱を払う側（預ける側）が保持しているか/);
   assert.match(read("firebase.json"), /"TRIBUTE_DESIGN\.md"/);
   assert.match(read(".assetsignore"), /^TRIBUTE_DESIGN\.md$/m);
 });

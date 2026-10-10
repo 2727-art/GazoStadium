@@ -56,6 +56,7 @@ import {
   avatarId,
   avatarUrl,
   formatPay,
+  ignoreLabel,
   inviteFromUrl,
   inviteText,
   inviteUrl,
@@ -78,14 +79,14 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
   renderExcerptImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-frame-color-v1";
+} from "./tribute-share.mjs?v=ranch-kidoku-v1";
 import {
   CARD_FRAMES,
   DECORATION_FUND_PERCENT,
@@ -133,6 +134,8 @@ let active = false;
 let lifecycleGeneration = 0;
 let state = createState();
 let contractUnsubscribe = null;
+// 財布の限度額（private/limits）。財布として開いた契約だけ購読する。
+let limitsUnsubscribe = null;
 let eventsUnsubscribe = null;
 let walletUnsubscribe = null;
 let markReadTimer = null;
@@ -283,7 +286,7 @@ function setChrome(statusLabel = "OMITSUGI RANCH") {
   const privacy = document.querySelector(".privacy-badge");
   const footerItems = document.querySelectorAll(".site-footer span");
   if (status) status.innerHTML = `<i></i> ${escapeHtml(statusLabel)}`;
-  if (privacy) privacy.textContent = "会わない・換金できない・上限と解約は預ける側";
+  if (privacy) privacy.textContent = "会わない・換金できない・AnjuPayだけ";
   if (footerItems[0]) footerItems[0].textContent = "OMITSUGI RANCH / ANJUPAY ONLY";
   if (footerItems[1]) footerItems[1].textContent = "現金・外部決済・換金・連絡先の交換はありません";
 }
@@ -427,7 +430,7 @@ function renderStartGuide() {
     <ol>
       <li><b>見学する</b><span>受取印・ご褒美・首輪番号がどう届くかを、見本の契約で見られます。Payは動きません。</span><button class="button button-ghost button-small" type="button" data-t="open-demo">見学する</button></li>
       <li><b>管理人を選ぶ</b><span>掲示板から。入場料0 Payの管理人なら、入場料なしで始められます。</span></li>
-      <li><b>お試しで申し込む</b><span>申し込みの「お試しの設定」なら、${TRIAL_DURATION_DAYS}日・1回${trial.perTribute} Pay・合計${trial.total} Payから。上限を下げるのも解約も、いつでもあなたが決めます。</span></li>
+      <li><b>お試しで申し込む</b><span>申し込みの「お試しの設定」なら、${TRIAL_DURATION_DAYS}日・1回${trial.perTribute} Pay・合計${trial.total} Payから。限度額と解約は、いつでも自分で設定できます（管理人には見えません）。</span></li>
     </ol>
     <p class="tribute-note" data-start-guide-balance>${guideBalanceMarkup()}</p>
   </div>`;
@@ -530,7 +533,7 @@ function renderManagerCard(card, { compact = false, preview = false } = {}) {
     : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame, card.frameColor)}>`;
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
     ${face}
-      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
       ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
@@ -571,7 +574,7 @@ function renderManagerDetail() {
   }
   const { card, month, openContractId, myTotal, ranking } = entry.data;
   const welcome = entry.invited && !card.mine
-    ? `<div class="tribute-invite-welcome" role="note"><b>${escapeHtml(card.personaName)}の招待で来ました</b><span>初めてなら、見本の契約で流れを見てから「お試しの設定」で申し込めます。上限を下げるのも解約も、いつでもあなたが決めます。</span><button class="button button-ghost button-small" type="button" data-t="open-demo">見学する</button></div>`
+    ? `<div class="tribute-invite-welcome" role="note"><b>${escapeHtml(card.personaName)}の招待で来ました</b><span>初めてなら、見本の契約で流れを見てから「お試しの設定」で申し込めます。限度額と解約は、いつでも自分で設定できます（管理人には見えません）。</span><button class="button button-ghost button-small" type="button" data-t="open-demo">見学する</button></div>`
     : "";
   const fundHonor = state.fund.data?.me?.honor;
   const canRecommend = !card.mine && fundHonor?.tier;
@@ -586,7 +589,7 @@ function renderManagerDetail() {
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
     <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame, card.frameColor)}>
-      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}</div></div></div>
+      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${declarationTags(card)}</div></div></div>
       ${cardAchievementsMarkup(card.achievements, " is-large")}
       ${wordBubble(card.word, " is-large")}
       <p class="tribute-profile-intro">${escapeHtml(card.intro || "（紹介文なし）")}</p>
@@ -624,9 +627,9 @@ function renderApply() {
   const defaults = firstTime ? trial : { perTribute: Math.max(30, minPerTribute), perDay: 100, total: 300 };
   const perTribute = defaults.perTribute;
   return frame(`<form class="tribute-panel tribute-apply" data-form="apply">
-    <div class="tribute-apply-head">${sigil(target)}<div><span class="tribute-eyebrow">管理を申し込む</span><h1>${escapeHtml(target.personaName)}</h1>${disclosureTag(target.disclosure)}</div></div>
-    <p class="tribute-hold-note">上限と解約は、あなたが握ります。管理人は上限・期間・言葉の設定・解約に触れられません。</p>
-    <fieldset><legend>上限（1回 ≦ 1日 ≦ 契約合計）</legend>
+    <div class="tribute-apply-head">${sigil(target)}<div><span class="tribute-eyebrow">管理を申し込む</span><h1>${escapeHtml(target.personaName)}</h1>${disclosureTag(target.disclosure)}${declarationTags(target)}</div></div>
+    <p class="tribute-note">${target.ignoreUnpaid ? `${escapeHtml(target.personaName)}は「未払いは既読無視」を宣言しています。` : ""}請求は断れません。払うか、解約するかです。</p>
+    <fieldset><legend>あなたの限度額（管理人には見えません・1回 ≦ 1日 ≦ 契約合計）</legend>
       <div class="tribute-three">
         <label><span>1回</span><select name="perTribute">${optionList(PER_TRIBUTE_OPTIONS, perTribute)}</select></label>
         <label><span>1日</span><select name="perDay">${optionList(PER_DAY_OPTIONS, defaults.perDay)}</select></label>
@@ -634,7 +637,7 @@ function renderApply() {
       </div>
       <div class="tribute-trial"><button class="button button-ghost button-small" type="button" data-t="apply-trial">お試しの設定にする（${TRIAL_DURATION_DAYS}日・1回${trial.perTribute}・1日${trial.perDay}・合計${trial.total} Pay）</button>
         ${firstTime ? "<small>初めての申し込みなので、お試しの設定にしています。</small>" : ""}</div>
-      <small>下げる変更はいつでも即時。上げる変更は日本時間の翌日0時から効きます。</small>
+      <small>下げる変更はいつでも即時。上げる変更は日本時間の翌日0時から効きます。1回の限度額を${escapeHtml(formatPay(LIMITS.googleCapThreshold))}以上にできるのは、AnjuPayウォレットを Google で保護したアカウントだけです。</small>
     </fieldset>
     <fieldset><legend>期間</legend><div class="tribute-radio-row">${DURATION_DAYS_OPTIONS.map((days, index) => `<label><input type="radio" name="durationDays" value="${days}" ${index === 0 ? "checked" : ""} /><span>${days}日</span></label>`).join("")}</div></fieldset>
     <fieldset><legend>言葉の強さ</legend><div class="tribute-radio-row">${Object.entries(TONE_LABELS).map(([tone, label]) => `<label><input type="radio" name="tone" value="${tone}" ${tone === "normal" ? "checked" : ""} /><span>${escapeHtml(label)}</span></label>`).join("")}</div>
@@ -642,6 +645,7 @@ function renderApply() {
     <label class="tribute-field"><span>言われたくない言葉（最大${LIMITS.ngWordCount}語・各${LIMITS.ngWordLength}文字、読点区切り）</span><input name="ngWords" maxlength="80" placeholder="例：ブス、デブ" /></label>
     <label class="tribute-check"><input type="checkbox" name="allowReportRequests" /><span>残高報告を求められてもよい</span></label>
     <label class="tribute-check"><input type="checkbox" name="rankOptIn" /><span>この管理人の番付に財布名で載る</span></label>
+    <label class="tribute-check is-consent"><input type="checkbox" name="acceptNoDecline" required /><span>請求は断れず、払うか解約するかであることを確かめました<small>限度額を超える請求は、払えないまま残ります。限度額と解約は、いつでも自分で設定できます。</small></span></label>
     <label class="tribute-check is-sexual"><input type="checkbox" name="allowSexualPurposes" /><span>性的な名目（${escapeHtml(SEXUAL_PURPOSE_SUMMARY)}）で請求されてもよい<small>許すと、管理人はこの名目で請求でき、あなたも無言の献上に付けられます。契約の「名目の設定」でいつでも外せます。</small></span></label>
     <label class="tribute-field"><span>財布名</span><input name="walletName" maxlength="${LIMITS.walletName}" value="${escapeHtml(profile.walletName || "")}" /></label>
     <dl class="tribute-facts">
@@ -669,6 +673,9 @@ function renderCardEditor() {
     ${renderSealSettings(card)}
     <div data-deco-section>${renderDecorationSettings(card)}</div>
     <div data-achievement-section>${renderCardAchievementPicker(card)}</div>
+    <fieldset><legend>宣言</legend>
+      <label class="tribute-check"><input type="checkbox" name="ignoreUnpaid" ${card.ignoreUnpaid === true ? "checked" : ""} /><span>「未払いは既読無視」を宣言する<small>財布の画面と、掲示板のカードに札が出ます。返事をするかどうかは、いつでもあなたが決められます。</small></span></label>
+    </fieldset>
     <fieldset><legend>貢ぎ報告</legend>
       <label class="tribute-check"><input type="checkbox" name="reportConsent" ${(profile.card ? card.reportConsent === true : true) ? "checked" : ""} /><span>財布の貢ぎ報告の画像に、名前とアイコンを出してよい<small>外すと「管理人様」とシルエットになります。画像を作れるのは財布だけで、URLは入りません。</small></span></label>
     </fieldset>
@@ -998,6 +1005,7 @@ function updateCardPreview(form) {
     style: String(data.get("style") || "harsh"),
     entryFee: Number(data.get("entryFee") || 0),
     xHandle: normalizeXProfile(data.get("xProfile")).xHandle || "",
+    ignoreUnpaid: data.get("ignoreUnpaid") === "on",
     ...formDecorations(form),
     achievements: data.has("achievements") ? data.getAll("achievements").map(String).slice(0, CARD_ACHIEVEMENT_LIMIT) : state.profile?.card?.achievements || [],
   };
@@ -1081,10 +1089,12 @@ function renderEvent(event, view, statuses) {
   const system = (text, extra = "") => `<li class="tribute-event is-system ${extra}"><p>${text}</p>${time}</li>`;
   switch (event.type) {
     case "message":
+      // 財布の自分のメッセージには、管理人が読むと「既読」が付く（返事がなければ既読無視）。
       return `<li class="tribute-event is-message ${mine ? "is-mine" : "is-theirs"} is-${event.actor}">
-        <span class="tribute-bubble">${escapeHtml(event.text)}</span>${time}</li>`;
+        <span class="tribute-bubble">${escapeHtml(event.text)}</span>${mine && view.role === "payer" && view.peerReadSeq >= Number(event.seq) ? '<span class="tribute-read">既読</span>' : ""}${time}</li>`;
     case "applied":
-      return system(`申し込み：${escapeHtml(capsText(event.caps))} ・ ${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_LABELS[event.tone] || "普通")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}`);
+      // 限度額は出さない（管理人も読む出来事のため）。
+      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_LABELS[event.tone] || "普通")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}`);
     case "accepted": {
       const collarNo = Number(event.collarNo) || 0;
       const collar = collarNo
@@ -1095,14 +1105,15 @@ function renderEvent(event, view, statuses) {
     case "request": {
       const pendingNow = view.pendingRequests.find((entry) => entry.requestId === event.requestId);
       const status = pendingNow ? "pending" : statuses.get(event.requestId) || "closed";
-      const statusLabel = { paid: "差し出し済み", declined: "断りました", cancelled: "取り消し", voided: "上限の変更で無効", closed: "終了" }[status] || "";
+      const statusLabel = { paid: "差し出し済み", declined: "断りました", cancelled: "取り消し", voided: "無効", closed: "終了" }[status] || "";
       const purpose = purposeLabel(event.purpose, { allowSexual: view.allowSexualPurposes }) ? event.purpose : "";
-      const buttons = status === "pending" && view.status === "active"
+      const open = status === "pending" && view.status === "active";
+      const buttons = open
         ? view.role === "payer"
-          ? `<div class="tribute-row"><button class="button button-primary button-small" type="button" data-t="give-request" data-request="${escapeHtml(event.requestId)}" data-amount="${Number(event.amount)}" data-purpose="${escapeHtml(purpose)}">差し出す</button><button class="button button-ghost button-small" type="button" data-t="decline-request" data-request="${escapeHtml(event.requestId)}">断る</button></div>`
-          : `<div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="cancel-request" data-request="${escapeHtml(event.requestId)}">取り消す</button></div>`
+          ? renderPayableRequest(event, view, purpose)
+          : `<span class="tribute-chip is-pending">未払い ・ ${escapeHtml(elapsedLabel(event.createdAt))}</span><div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="cancel-request" data-request="${escapeHtml(event.requestId)}">取り消す</button></div>`
         : `<span class="tribute-chip is-${status}">${escapeHtml(statusLabel)}</span>`;
-      return `<li class="tribute-event is-request ${mine ? "is-mine" : "is-theirs"}"><div class="tribute-request-card"><span class="tribute-eyebrow">請求</span>${purposeTag(purpose, view)}<strong>${escapeHtml(formatPay(event.amount))}</strong>${event.note ? `<p>「${escapeHtml(event.note)}」</p>` : ""}${buttons}</div>${time}</li>`;
+      return `<li class="tribute-event is-request ${mine ? "is-mine" : "is-theirs"}"><div class="tribute-request-card${open && view.role === "payer" ? " is-owed" : ""}"><span class="tribute-eyebrow">請求</span>${purposeTag(purpose, view)}<strong>${escapeHtml(formatPay(event.amount))}</strong>${event.note ? `<p>「${escapeHtml(event.note)}」</p>` : ""}${buttons}</div>${time}</li>`;
     }
     case "tribute": {
       const receivable = RECEIVABLE_KINDS.includes(event.kind);
@@ -1138,17 +1149,15 @@ function renderEvent(event, view, statuses) {
       return system(`残高報告：財布 <b>${escapeHtml(formatPay(event.walletBalance))}</b> ・ 管理口座 <b>${escapeHtml(formatPay(event.escrowBalance))}</b>（サーバーが記入）`, "is-report");
     case "report_requested":
       return system(`${escapeHtml(managerName)}が残高報告を求めています。${view.role === "payer" && view.reportRequested && view.status === "active" ? ' <button class="button button-ghost button-small" type="button" data-t="report-balance">報告する</button>' : ""}`);
+    // 限度額の変更は、管理人も読む出来事には出さない（以前の記録も出さない）。
     case "caps_lowered":
-      return system(`上限を下げました（即時）：${escapeHtml(capsText(event.caps))}`, "is-caps");
     case "caps_raise_scheduled":
-      return system(`上限を上げる予約：${escapeHtml(capsText(event.caps))}（${escapeHtml(event.effectiveDateKey)} 0時から）`, "is-caps");
     case "caps_raised":
-      return system(`予約していた上限が効きました：${escapeHtml(capsText(event.caps))}`, "is-caps");
     case "caps_raise_cancelled":
-      return system("上限を上げる予約を取り消しました。", "is-caps");
+      return "";
     case "request_cancelled":
       if (event.reason === "purpose") return system("性的な名目の許可が外れたので、その名目の請求を無効にしました。");
-      return event.reason === "caps" ? system("上限の変更で、超えていた請求を無効にしました。") : system("請求が取り消されました。");
+      return event.reason === "caps" ? system("請求が無効になりました。") : system("請求が取り消されました。");
     case "request_declined":
       return system("請求を断りました。");
     case "escrow_deposit":
@@ -1162,7 +1171,7 @@ function renderEvent(event, view, statuses) {
     case "escrow_denied":
       return system(`使用許可は却下されました（${escapeHtml(formatPay(event.amount))}）。解約すれば、管理口座はいつでも全額戻ります。`, "is-escrow");
     case "escrow_returned":
-      return system(`上限の変更に合わせて、管理口座から ${escapeHtml(formatPay(event.amount))} を財布へ戻しました。`, "is-escrow");
+      return system(`管理口座から ${escapeHtml(formatPay(event.amount))} を財布へ戻しました。`, "is-escrow");
     case "ended":
       return system(`${escapeHtml(END_REASON_LABELS[event.reason] || "契約が終わりました")}。${event.escrowReturned ? `管理口座の ${escapeHtml(formatPay(event.escrowReturned))} は財布へ戻りました。` : ""}`, "is-ended");
     default:
@@ -1189,20 +1198,76 @@ function renderThreadHead(view) {
       <small>${view.status === "active" ? `${escapeHtml(remainingLabel(view.expiresAt))} ・ 言葉は${escapeHtml(TONE_LABELS[view.tone] || "普通")}` : view.status === "pending" ? `申し込みの期限 ${escapeHtml(formatDateTime(view.expiresAt))}` : escapeHtml(view.endReasonLabel)}</small></div>
       <div class="tribute-thread-end">${endButton}</div></div>
     ${renderTally(view)}
-    ${caps && view.status !== "ended" ? `<div class="tribute-meters">
+    ${renderIgnoreState(view)}
+    ${caps && view.status !== "ended" ? `<div class="tribute-limits"><small>あなたの限度額（${escapeHtml(view.manager.personaName)}には見えません）</small><div class="tribute-meters">
       ${meter(view.todayTributed, caps.perDay, "今日")}
       ${meter(view.totalTributed, caps.total, "契約合計")}
       <div class="tribute-meter is-plain"><span>1回</span><b>${escapeHtml(formatPay(caps.perTribute))}</b></div>
       <div class="tribute-meter is-plain"><span>管理口座</span><b>${escapeHtml(formatPay(view.escrowBalance))}</b></div>
-    </div>` : ""}
-    ${view.pendingCaps ? `<p class="tribute-caps-pending">上限を上げる予約：${escapeHtml(capsText(view.pendingCaps))}（${escapeHtml(view.pendingCapsEffectiveDateKey)} 0時から）${view.role === "payer" ? ' <button class="button button-ghost button-small" type="button" data-t="cancel-raise">予約を取り消す</button>' : ""}</p>` : ""}
+    </div></div>` : view.role === "manager" && view.status === "active" && view.escrowBalance
+      ? `<div class="tribute-meters"><div class="tribute-meter is-plain"><span>管理口座</span><b>${escapeHtml(formatPay(view.escrowBalance))}</b></div></div>`
+      : ""}
+    ${view.pendingCaps ? `<p class="tribute-caps-pending">限度額を上げる予約：${escapeHtml(capsText(view.pendingCaps))}（${escapeHtml(view.pendingCapsEffectiveDateKey)} 0時から）${view.role === "payer" ? ' <button class="button button-ghost button-small" type="button" data-t="cancel-raise">予約を取り消す</button>' : ""}</p>` : ""}
     ${view.ngWords.length && view.role === "manager" ? `<p class="tribute-ng">言われたくない言葉：${view.ngWords.map((word) => `<span>${escapeHtml(word)}</span>`).join("")}</p>` : ""}`;
+}
+
+// 宣言の札と既読無視。財布: 管理人の札と、未払いの請求がある間の「既読無視 ○日目」。管理人: 宣言のスイッチと未払いの合計。
+function renderIgnoreState(view) {
+  if (view.status !== "active") return "";
+  const owed = view.pendingRequests.reduce((sum, request) => sum + request.amount, 0);
+  if (view.role === "manager") {
+    const on = state.profile?.card?.ignoreUnpaid === true;
+    return `<label class="tribute-declaration-toggle"><span><b>未払いは既読無視</b><small>財布の画面と、掲示板のあなたのカードに出ます</small></span><input type="checkbox" data-t="toggle-declaration" ${on ? "checked" : ""} ${state.busy || state.thread.demo ? "disabled" : ""} /><i aria-hidden="true"></i></label>
+      ${owed ? `<div class="tribute-owed"><span>未払いの請求</span><b>${escapeHtml(formatPay(owed))}</b></div>` : ""}`;
+  }
+  const oath = view.managerIgnoreUnpaid ? `<div><span class="tribute-oath">未払いは既読無視</span></div>` : "";
+  const label = owed && view.ignoredSince ? ignoreLabel(view.ignoredSince) : "";
+  return `${oath}${label ? `<div class="tribute-ignored" role="status"><strong>${escapeHtml(label)}</strong><span>未払い <b>${escapeHtml(formatPay(owed))}</b></span></div>` : ""}`;
+}
+
+// 管理人の宣言と「高額請求」の札（掲示板・詳細・申し込み）。
+function declarationTags(card) {
+  return `${card?.ignoreUnpaid ? '<span class="tribute-oath">未払いは既読無視</span>' : ""}${card?.highRequest ? '<span class="tribute-high">高額請求</span>' : ""}`;
+}
+
+// 経った時間（請求の未払い）。
+function elapsedLabel(since, now = Date.now()) {
+  const elapsed = Math.max(0, now - (Number(since) || now));
+  if (elapsed < 3_600_000) return `${Math.max(1, Math.floor(elapsed / 60_000))}分`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}時間`;
+  return `${Math.floor(elapsed / 86_400_000)}日`;
+}
+
+// 財布だけに見える、請求が限度額で払えない理由（管理人には見えない）。
+function requestLimitProblem(amount, view) {
+  const caps = view.caps;
+  if (!caps) return "";
+  if (amount > caps.perTribute) return `1回の限度額（${formatPay(caps.perTribute)}）より大きいので、いまは払えません。`;
+  if (amount > caps.perDay - view.todayTributed) return `今日の限度額の残り（${formatPay(Math.max(0, caps.perDay - view.todayTributed))}）を超えるので、今日は払えません。`;
+  if (amount > caps.total - view.totalTributed) return `契約合計の限度額の残り（${formatPay(Math.max(0, caps.total - view.totalTributed))}）を超えるので、いまは払えません。`;
+  return "";
+}
+
+// 財布の側の請求。断るボタンはなく、払うか解約するか。あと何 Pay か、限度額が足りるか、Payの貯め方を出す。
+function renderPayableRequest(event, view, purpose) {
+  const amount = Number(event.amount) || 0;
+  const demo = state.thread.demo === true;
+  const balance = demo ? Math.max(amount, Number(state.walletBalance) || 0) : state.walletBalance;
+  const short = balance === null ? 0 : Math.max(0, amount - balance);
+  const problem = requestLimitProblem(amount, view);
+  const payable = !problem && balance !== null && short === 0;
+  const ratio = balance === null || !amount ? 0 : Math.min(100, Math.round((balance / amount) * 100));
+  return `${balance === null ? "" : `<div class="tribute-request-progress"><i style="--ratio:${ratio}%"></i><span>${short ? `財布 ${escapeHtml(formatPay(balance))} ・ あと <b>${escapeHtml(formatPay(short))}</b>` : "財布で払えます"}</span></div>`}
+    ${problem ? `<div class="tribute-limit-warn"><b>限度額が足りません。</b>${escapeHtml(problem)}限度額を上げると、日本時間の翌日0時から効きます。<button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="caps">限度額を変える</button></div>` : ""}
+    ${short && !demo ? `<div class="tribute-earn"><small>Payを貯める</small><button type="button" data-t="earn" data-mode="missions">デイリーミッション</button><button type="button" data-t="earn" data-mode="ai">文字コラトレーニング</button><button type="button" data-t="earn" data-mode="roulette">ルーレットの台本</button></div>` : ""}
+    <button class="button button-primary button-small" type="button" data-t="give-request" data-request="${escapeHtml(event.requestId)}" data-amount="${amount}" data-purpose="${escapeHtml(purpose)}" ${payable ? "" : "disabled"}>差し出す（${escapeHtml(formatPay(amount))}）</button>
+    <small class="tribute-request-two">払うか、解約するか。請求を断ることはできません。</small>`;
 }
 
 function renderThreadActions(view) {
   if (state.thread.demo) {
     return `<div class="tribute-actions"><button class="button button-primary tribute-give-button" type="button" data-t="sheet" data-sheet="give" ${view.allowance ? "" : "disabled"}>差し出す（見本）</button></div>
-      <p class="tribute-note">見本では、差し出す・請求に応える・断る・画像で保存を試せます。Payは動きません。</p>`;
+      <p class="tribute-note">見本では、差し出す・請求に応える・画像で保存を試せます。Payは動きません。</p>`;
   }
   if (view.status === "pending") {
     return view.role === "manager"
@@ -1218,7 +1283,7 @@ function renderThreadActions(view) {
     return `<div class="tribute-actions">
       <button class="button button-primary tribute-give-button" type="button" data-t="sheet" data-sheet="give" ${view.allowance ? "" : "disabled"}>差し出す${view.allowance ? "" : "（今日の枠なし）"}</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="escrow">管理口座</button>
-      <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="caps">上限を変える</button>
+      <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="caps">限度額を変える</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button>
       <button class="button button-ghost button-small" type="button" data-t="report-balance">残高を報告</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button>
@@ -1227,8 +1292,8 @@ function renderThreadActions(view) {
     ${withdraw ? `<p class="tribute-note">使用許可を申請中：${escapeHtml(formatPay(withdraw.amount))} <button class="button button-ghost button-small" type="button" data-t="cancel-withdraw">取り下げる</button></p>` : ""}`;
   }
   return `<div class="tribute-actions">
-    <button class="button button-primary" type="button" data-t="sheet" data-sheet="request" ${view.allowance && view.pendingRequests.length < LIMITS.pendingRequests ? "" : "disabled"}>請求する</button>
-    <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="take" ${view.escrowBalance && view.allowance ? "" : "disabled"}>管理口座から徴収</button>
+    <button class="button button-primary" type="button" data-t="sheet" data-sheet="request" ${view.pendingRequests.length < LIMITS.pendingRequests ? "" : "disabled"}>請求する</button>
+    <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="take" ${view.escrowBalance ? "" : "disabled"}>管理口座から徴収</button>
     ${view.allowReportRequests ? `<button class="button button-ghost button-small" type="button" data-t="request-report" ${view.reportRequested ? "disabled" : ""}>${view.reportRequested ? "報告待ち" : "報告を求める"}</button>` : ""}
     <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button>
     ${previewScreen ? "" : renderBlockButton({ mode: "tribute", contractId: view.contractId }, "ブロック")}
@@ -1344,10 +1409,11 @@ function renderSheet() {
       </form>`);
     }
     case "request": {
-      const maximum = Math.min(view.caps.perTribute, view.allowance);
+      // 請求は財布の限度額に関係なく10,000 Payまで。払われない請求は、取り消すまで残る。
+      const maximum = LIMITS.requestMax;
       return wrap("請求する", `<form class="tribute-sheet-form" data-form="request">
-        <p>${escapeHtml(view.payer.walletName)}の上限の範囲でだけ請求できます（いま最大 ${escapeHtml(formatPay(maximum))}）。未払いの請求は3件まで。</p>
-        ${amountChips(maximum)}
+        <div class="tribute-amount-chips">${[100, 300, 500, 1_000, 3_000, 5_000, 10_000].map((value) => `<button type="button" class="${value >= 3_000 ? "is-high" : ""}" data-t="pick-amount" data-name="amount" data-amount="${value}">${escapeHtml(formatPay(value))}</button>`).join("")}</div>
+        <small class="tribute-request-two">財布の限度額は見えません。払われない請求は、取り消すまで残ります（未払いの請求は${LIMITS.pendingRequests}件まで）。</small>
         <label class="tribute-field"><span>金額（Pay）</span><input name="amount" type="number" inputmode="numeric" min="1" max="${maximum}" step="1" required /></label>
         ${purposeChoices({ allowSexual: view.allowSexualPurposes, role: "manager" })}
         <label class="tribute-field"><span>一言（${LIMITS.requestNote}文字まで）</span><input name="note" maxlength="${LIMITS.requestNote}" /></label>
@@ -1357,9 +1423,9 @@ function renderSheet() {
       </form>`);
     }
     case "take": {
-      const maximum = Math.min(view.escrowBalance, view.allowance);
+      const maximum = view.escrowBalance;
       return wrap("管理口座から徴収", `<form class="tribute-sheet-form" data-form="take">
-        <p>管理口座 ${escapeHtml(formatPay(view.escrowBalance))} から、上限の範囲で徴収します（いま最大 ${escapeHtml(formatPay(maximum))}）。献上として数え、相手にレシートが出ます。</p>
+        <p>管理口座 ${escapeHtml(formatPay(view.escrowBalance))} から徴収します。財布の限度額を超える分は徴収できません。献上として数え、相手にレシートが出ます。</p>
         ${amountChips(maximum)}
         <label class="tribute-field"><span>金額（Pay）</span><input name="amount" type="number" inputmode="numeric" min="1" max="${maximum}" step="1" required /></label>
         <p class="tribute-form-error" data-form-error role="alert"></p>
@@ -1371,7 +1437,7 @@ function renderSheet() {
         <p>管理口座のPayは、まだあなたのものです。使いたい時は使用許可を申請します。<b>解約すれば、いつでも全額すぐ戻ります。</b></p>
         <dl class="tribute-facts"><div><dt>管理口座</dt><dd>${escapeHtml(formatPay(view.escrowBalance))}</dd></div><div><dt>あと預けられる</dt><dd>${escapeHtml(formatPay(view.escrowRoom))}</dd></div></dl>
         <form class="tribute-sheet-form" data-form="escrow-deposit">
-          <label class="tribute-field"><span>預け入れ（契約合計の上限 − 献上済み まで）</span><input name="amount" type="number" inputmode="numeric" min="1" max="${view.escrowRoom}" step="1" ${view.escrowRoom ? "" : "disabled"} /></label>
+          <label class="tribute-field"><span>預け入れ（契約合計の限度額 − 献上済み まで）</span><input name="amount" type="number" inputmode="numeric" min="1" max="${view.escrowRoom}" step="1" ${view.escrowRoom ? "" : "disabled"} /></label>
           <button class="button button-primary button-small" type="submit" ${view.escrowRoom && !state.busy ? "" : "disabled"}>預ける</button>
         </form>
         <form class="tribute-sheet-form" data-form="escrow-withdraw">
@@ -1381,8 +1447,9 @@ function renderSheet() {
         <p class="tribute-form-error" data-form-error role="alert"></p>
       </div>`);
     case "caps":
-      return wrap("上限を変える", `<form class="tribute-sheet-form" data-form="caps">
-        <p>下げる変更はすぐ効きます。上げる変更は日本時間の翌日0時から効き、それまで取り消せます。下げた上限を超える請求は無効になり、管理口座の超えた分は財布へ戻ります。</p>
+      return wrap("限度額を変える", `<form class="tribute-sheet-form" data-form="caps">
+        <p>限度額は管理人には見えません。下げる変更はすぐ効きます。上げる変更は日本時間の翌日0時から効き、それまで取り消せます。下げても、払えない請求は未払いのまま残ります。管理口座の超えた分は財布へ戻ります。</p>
+        <small>1回の限度額を${escapeHtml(formatPay(LIMITS.googleCapThreshold))}以上にできるのは、AnjuPayウォレットを Google で保護したアカウントだけです。</small>
         <div class="tribute-three">
           <label><span>1回</span><select name="perTribute">${optionList(PER_TRIBUTE_OPTIONS, view.caps.perTribute)}</select></label>
           <label><span>1日</span><select name="perDay">${optionList(PER_DAY_OPTIONS, view.caps.perDay)}</select></label>
@@ -1675,6 +1742,8 @@ function recruitData(card, month) {
       styleLabel: STYLE_LABELS[card.style] || "",
     },
     honorLabel: card.honor?.label || "",
+    ignoreUnpaid: card.ignoreUnpaid === true,
+    highRequest: card.highRequest === true,
     ...look,
     word: card.word?.text || "",
     intro: card.intro || "",
@@ -1730,7 +1799,7 @@ function renderRecruitSheet(sheet, wrap) {
       <div class="tribute-share-options"><p class="tribute-note">あなたの管理人カード（枠・中の人の札・入場料・管理中の人数・今日のひとこと・実績）を1枚の画像にします。受取印の形と朱肉で「募集中」を押します。</p>
         ${state.profile?.accepting ? "" : '<p class="tribute-note">いまは受付を止めています。受付を始めてから告知してください。</p>'}</div>
     </div>
-    <p class="tribute-note">画像にURLは入りません。招待リンクは投稿の文に付き、文には中の人の札が必ず入ります。「上限と解約は財布が握る」「AnjuPayだけ・現金なし」の表記も必ず入ります。</p>
+    <p class="tribute-note">画像にURLは入りません。招待リンクは投稿の文に付き、文には中の人の札が必ず入ります。「AnjuPayだけ・現金なし」の表記も必ず入ります。</p>
     <div class="tribute-row"><button class="button button-primary" type="button" data-t="recruit-send" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>共有（X など）</button><button class="button button-ghost" type="button" data-t="recruit-save" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>画像で保存</button><button class="button button-ghost" type="button" data-t="post-invite">Xの投稿画面を開く</button></div>
     <small>スマホは共有から、画像と告知の文をまとめてXへ送れます。PCは画像を保存してから「Xの投稿画面を開く」で文とリンクを入れ、画像を添付します。</small>
   </div>`);
@@ -2084,8 +2153,10 @@ function stopThread() {
   threadGeneration += 1;
   contractUnsubscribe?.();
   eventsUnsubscribe?.();
+  limitsUnsubscribe?.();
   contractUnsubscribe = null;
   eventsUnsubscribe = null;
+  limitsUnsubscribe = null;
   window.clearTimeout(markReadTimer);
   markReadTimer = null;
 }
@@ -2114,7 +2185,17 @@ function openThread(contractId) {
     if (!current()) return;
     if (!snapshot.exists()) return;
     state.thread.raw = snapshot.data();
-    state.thread.view = viewContract(state.thread.raw, state.uid);
+    state.thread.view = viewContract(withThreadLimits(state.thread.raw), state.uid);
+    // 財布として開いた時だけ、管理人には読めない限度額を購読する。
+    if (state.thread.raw?.payerUid === uid && !limitsUnsubscribe) {
+      limitsUnsubscribe = onSnapshot(doc(firestore, "tributeContracts", contractId, "private", "limits"), (limits) => {
+        if (!current()) return;
+        state.thread.limits = limits.exists() ? limits.data() : null;
+        if (!state.thread.raw) return;
+        state.thread.view = viewContract(withThreadLimits(state.thread.raw), state.uid);
+        updateThreadParts();
+      }, () => {});
+    }
     applyReadAcknowledgement(contractId, markReadProgress.get(contractId)?.acknowledgedSeq || 0);
     state.thread.status = "ready";
     updateThreadParts();
@@ -2131,6 +2212,18 @@ function openThread(contractId) {
     if (state.thread.view) updateThreadParts();
     scheduleMarkRead();
   }, () => {});
+}
+
+// 財布の限度額は private/limits にある（移す前の古い契約は、契約の記録に残っている）。財布の画面だけ足す。
+function withThreadLimits(raw) {
+  const limits = state.thread.limits;
+  if (!limits || raw?.payerUid !== state.uid) return raw;
+  return {
+    ...raw,
+    caps: limits.caps ?? null,
+    pendingCaps: limits.pendingCaps ?? null,
+    pendingCapsEffectiveDateKey: String(limits.pendingCapsEffectiveDateKey || ""),
+  };
 }
 
 function isCurrentThread(generation, currentThreadGeneration, targetThread, uid) {
@@ -2375,6 +2468,7 @@ async function handleSubmit(form) {
           ...formDecorations(form),
           achievements: data.getAll("achievements").map(String).slice(0, CARD_ACHIEVEMENT_LIMIT),
           reportConsent: data.get("reportConsent") === "on",
+          ignoreUnpaid: data.get("ignoreUnpaid") === "on",
         },
         accepting: data.get("accepting") === "on",
       }, {
@@ -2405,8 +2499,8 @@ async function handleSubmit(form) {
       const target = state.applyTarget;
       const data = new FormData(form);
       const caps = normalizeCaps({ perTribute: data.get("perTribute"), perDay: data.get("perDay"), total: data.get("total") });
-      if (!caps) return setFormError(form, "上限は「1回 ≦ 1日 ≦ 合計」になるように選んでください。");
-      if (target.entryFee > caps.perTribute) return setFormError(form, "入場料が1回の上限を超えています。1回の上限を上げてください。");
+      if (!caps) return setFormError(form, "限度額は「1回 ≦ 1日 ≦ 合計」になるように選んでください。");
+      if (target.entryFee > caps.perTribute) return setFormError(form, "入場料が1回の限度額を超えています。1回の限度額を上げてください。");
       const result = await mutate("apply", {
         publicManagerId: target.publicManagerId,
         expectedEntryFee: target.entryFee,
@@ -2418,6 +2512,7 @@ async function handleSubmit(form) {
           allowReportRequests: data.get("allowReportRequests") === "on",
           rankOptIn: data.get("rankOptIn") === "on",
           allowSexualPurposes: data.get("allowSexualPurposes") === "on",
+          acceptNoDecline: data.get("acceptNoDecline") === "on",
           walletName: String(data.get("walletName") || ""),
         },
       }, { form, success: "申し込みました。受理を待ちます。" });
@@ -2494,10 +2589,10 @@ async function handleSubmit(form) {
     }
     case "caps": {
       const caps = normalizeCaps({ perTribute: form.elements.perTribute.value, perDay: form.elements.perDay.value, total: form.elements.total.value });
-      if (!caps) return setFormError(form, "上限は「1回 ≦ 1日 ≦ 合計」になるように選んでください。");
+      if (!caps) return setFormError(form, "限度額は「1回 ≦ 1日 ≦ 合計」になるように選んでください。");
       const result = await mutate("set_caps", contractPayload({ caps }), { form });
       if (result) {
-        showToast(result.unchanged ? "上限は変わっていません。" : result.contract?.pendingCaps ? "下げた分はすぐ、上げた分は翌日0時から効きます。" : "上限を変更しました。");
+        showToast(result.unchanged ? "限度額は変わっていません。" : result.contract?.pendingCaps ? "下げた分はすぐ、上げた分は翌日0時から効きます。" : "限度額を変更しました。");
         closeSheet();
       }
       return;
@@ -2554,6 +2649,32 @@ async function handleClick(target) {
       state.board.nekamaOnly = target.checked;
       loadBoard();
       return;
+    case "toggle-declaration":
+      await mutate("set_declaration", { ignoreUnpaid: target.checked }, {
+        success: target.checked ? "「未払いは既読無視」を宣言しました。" : "宣言を外しました。",
+        after: (result) => {
+          if (result?.profile) state.profile = result.profile;
+          if (state.screen === "thread") updateThreadParts();
+        },
+      });
+      return;
+    // Payを貯める近道。ホームへ戻ってから、それぞれのモードを開く。
+    case "earn": {
+      const mode = target.dataset.mode;
+      requestHome();
+      window.setTimeout(() => {
+        if (mode === "missions") {
+          const open = window.HariaiOnline?.openDailyMissions;
+          if (typeof open === "function") open();
+          else showToast("デイリーミッションを開けませんでした。ホームから開いてください。");
+          return;
+        }
+        const button = document.querySelector(mode === "ai" ? "#aiTextTrainingButton" : "#rouletteTrainingButton");
+        if (button) button.click();
+        else showToast("開けませんでした。ホームから開いてください。");
+      }, 0);
+      return;
+    }
     case "open-manager":
       openManager(target.dataset.id);
       return;
@@ -2733,9 +2854,6 @@ async function handleClick(target) {
       }
       return;
     }
-    case "decline-request":
-      await mutate("decline_request", contractPayload({ requestId: target.dataset.request }));
-      return;
     case "cancel-request":
       await mutate("cancel_request", contractPayload({ requestId: target.dataset.request }));
       return;
@@ -2831,10 +2949,10 @@ function bindRoot(root) {
 
   root.addEventListener("change", (event) => {
     if (!active) return;
-    const target = event.target.closest?.('input[data-t="toggle-nekama"]');
+    const target = event.target.closest?.('input[data-t="toggle-nekama"], input[data-t="toggle-declaration"]');
     if (target) handleClick(target);
     const cardForm = event.target.closest?.('form[data-form="card"]');
-    if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee"].includes(event.target.name)) updateCardPreview(cardForm);
+    if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee", "ignoreUnpaid"].includes(event.target.name)) updateCardPreview(cardForm);
     if (cardForm && ["frame", "frameColor", "sealShape", "sealInk"].includes(event.target.name)) {
       if (event.target.name === "frame") refreshFrameColors(cardForm);
       updateDecorations(cardForm);
@@ -3008,7 +3126,7 @@ async function start({ initialScreen = "", inviteManager = "" } = {}) {
     window.clearInterval(tickTimer);
     tickTimer = window.setInterval(() => {
       if (active && state.screen === "thread" && state.thread.raw) {
-        state.thread.view = viewContract(state.thread.raw, state.uid);
+        state.thread.view = viewContract(withThreadLimits(state.thread.raw), state.uid);
         updateThreadParts();
       }
     }, 60_000);
@@ -3188,6 +3306,8 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   sigil: 0,
   avatar: 7,
   seals: ["yoku", "zako", "kakunin"],
+  ignoreUnpaid: true,
+  highRequest: true,
   frame: "gyokuza",
   frameColor: "pink",
   sealShape: "heart",
@@ -3236,10 +3356,12 @@ function previewRaw(role, status = "active") {
     todayTributed: 110,
     escrowBalance: 200,
     escrowWithdrawRequest: role === "manager" ? { amount: 50, requestedAt: now - 60_000 } : null,
-    pendingRequests: { abcdef0123456789: { amount: 100, note: "イきたいなら払え。", purpose: "release", createdAt: now - 120_000 } },
+    pendingRequests: { abcdef0123456789: { amount: 10_000, note: "払えないなら黙ってな。", purpose: "release", createdAt: now - 3 * 86_400_000 } },
+    managerIgnoreUnpaid: true,
+    ignoredSince: now - 2 * 86_400_000 - 3_600_000,
     reportRequestedAt: role === "payer" ? now - 30_000 : 0,
     eventSeq: 16,
-    readSeq: { manager: 14, payer: 14 },
+    readSeq: { manager: 16, payer: 14 },
   };
 }
 
@@ -3265,7 +3387,7 @@ function previewEvents(raw) {
     { seq: 13, type: "message", actor: "manager", text: "中身が男だって知ってて貢ぐんだ。救いようがないね。", createdAt: at(3) },
     { seq: 14, type: "tribute", actor: "payer", kind: "silent", amount: 50, purpose: "edging", receiptId: "e".repeat(40), createdAt: at(2) },
     { seq: 15, type: "message", actor: "payer", text: "寸止め料です。", createdAt: at(2) },
-    { seq: 16, type: "request", actor: "manager", requestId: "abcdef0123456789", amount: 100, note: "イきたいなら払え。", purpose: "release", createdAt: at(1) },
+    { seq: 16, type: "request", actor: "manager", requestId: "abcdef0123456789", amount: 10_000, note: "払えないなら黙ってな。", purpose: "release", createdAt: Date.now() - 3 * 86_400_000 },
   ];
 }
 
@@ -3474,6 +3596,11 @@ function previewCall(action, payload) {
     }
     case "age_confirm":
       return Promise.resolve({ ok: true });
+    case "set_declaration": {
+      const profile = { ...state.profile, card: { ...state.profile?.card, ignoreUnpaid: payload.ignoreUnpaid === true } };
+      previewSavedProfile = profile;
+      return Promise.resolve({ ok: true, profile });
+    }
     case "decorations":
       // 見本: 黒革・ハート・桜を持っていて、実績は牧場と対戦のものを解除している。
       return Promise.resolve({

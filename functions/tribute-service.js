@@ -49,6 +49,7 @@ const {
   todayUsed,
   tributeAllowance,
   capViolation,
+  capsNeedGoogle,
   pairId,
 } = require("./tribute-rules");
 const {
@@ -90,6 +91,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "share_info",
   "set_word",
   "decorations",
+  "set_declaration",
   "mark_read",
   "report_user",
   "receipts",
@@ -198,6 +200,7 @@ function readProfile(snapshot) {
     recommendedCount: integer(data.recommendedCount, 0, 1_000_000, 0),
     honorMonthKey: String(data.honorMonthKey || ""),
     honorTierId: String(data.honorTierId || ""),
+    highRequestAt: integer(data.highRequestAt, 0, Number.MAX_SAFE_INTEGER, 0),
     severeReportMonthKey: String(data.severeReportMonthKey || ""),
     severeReportCount: integer(data.severeReportCount, 0, 1_000_000, 0),
   };
@@ -245,6 +248,9 @@ function publicCard(profile, monthKey, now) {
     ...normalizeDecorations(card),
     achievements: cardAchievements(card.achievements),
     reportConsent: card.reportConsent === true,
+    // 管理人の宣言「未払いは既読無視」と、直近30日に3,000 Pay以上を請求した「高額請求」の札。
+    ignoreUnpaid: card.ignoreUnpaid === true,
+    highRequest: profile.highRequestAt > 0 && now - profile.highRequestAt < LIMITS.highRequestWindowMs,
     word: activeWord(profile, now),
     xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
     accepting: profile.accepting,
@@ -306,13 +312,14 @@ function purposeCountsView(contract) {
   return view;
 }
 
+// 限度額（caps）は財布だけに返す。管理人には、限度額も、そこから分かる残り枠も返さない。
 function viewContract(contract, uid, now) {
   const role = contract.managerUid === uid ? "manager" : "payer";
   const status = String(contract.status || "ended");
-  const { caps } = effectiveCaps(contract, now);
+  const caps = role === "payer" ? effectiveCaps(contract, now).caps : null;
   const pending = normalizeCaps(contract.pendingCaps);
   const pendingKey = String(contract.pendingCapsEffectiveDateKey || "");
-  const pendingStillScheduled = Boolean(pending && pendingKey && jstDateKey(now) < pendingKey);
+  const pendingStillScheduled = role === "payer" && Boolean(pending && pendingKey && jstDateKey(now) < pendingKey);
   const readSeq = integer(object(contract.readSeq)[role], 0, Number.MAX_SAFE_INTEGER, 0);
   const peerReadSeq = integer(object(contract.readSeq)[role === "manager" ? "payer" : "manager"], 0, Number.MAX_SAFE_INTEGER, 0);
   const eventSeq = integer(contract.eventSeq, 0, Number.MAX_SAFE_INTEGER, 0);
@@ -361,12 +368,44 @@ function viewContract(contract, uid, now) {
         - integer(contract.escrowBalance, 0, Number.MAX_SAFE_INTEGER, 0))
       : 0,
     escrowWithdrawRequest: withdrawRequest && withdrawRequest.amount > 0 ? withdrawRequest : null,
+    // 既読無視: 管理人が、まだ返していない財布のメッセージを読んだ時刻（返すと 0）。
+    ignoredSince: integer(contract.ignoredSince, 0, Number.MAX_SAFE_INTEGER, 0),
+    managerIgnoreUnpaid: contract.managerIgnoreUnpaid === true,
     pendingRequests: pendingRequestList(contract),
     reportRequested: Number(contract.reportRequestedAt || 0) > 0,
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
     peerReadSeq: Math.min(eventSeq, peerReadSeq),
   };
+}
+
+// 限度額は契約の記録ではなく、財布だけが読める tributeContracts/{id}/private/limits に置く。
+const LIMIT_FIELDS = Object.freeze(["caps", "pendingCaps", "pendingCapsEffectiveDateKey"]);
+
+function limitsOf(source) {
+  return {
+    caps: normalizeCaps(source?.caps),
+    pendingCaps: normalizeCaps(source?.pendingCaps),
+    pendingCapsEffectiveDateKey: String(source?.pendingCapsEffectiveDateKey || ""),
+  };
+}
+
+// 移す前の古い契約は、契約の記録に残っている限度額を使う。
+function withLimits(contract, limitsSnapshot) {
+  const source = limitsSnapshot?.exists ? object(limitsSnapshot.data()) : contract;
+  return { ...contract, ...limitsOf(source) };
+}
+
+function hasLegacyLimits(contract) {
+  return Boolean(contract?.caps || contract?.pendingCaps || contract?.pendingCapsEffectiveDateKey);
+}
+
+// 既読無視の始まり。管理人が、まだ返していない財布のメッセージまで読んだ時刻を残す。
+function ignoreStart(contract, role, nextReadSeq, now) {
+  if (role !== "manager" || integer(contract.ignoredSince, 0, Number.MAX_SAFE_INTEGER, 0) > 0) return {};
+  const payerSeq = integer(contract.lastPayerMessageSeq, 0, Number.MAX_SAFE_INTEGER, 0);
+  const replySeq = integer(contract.lastManagerReplySeq, 0, Number.MAX_SAFE_INTEGER, 0);
+  return payerSeq > replySeq && nextReadSeq >= payerSeq ? { ignoredSince: now } : {};
 }
 
 function fundPolicy(fund) {
@@ -417,6 +456,7 @@ function createTributeService(deps) {
 
   const profileRef = (uid) => firestore.collection("tributeProfiles").doc(uid);
   const contractRef = (contractId) => firestore.collection("tributeContracts").doc(contractId);
+  const limitsRef = (contractId) => contractRef(contractId).collection("private").doc("limits");
   const eventRef = (contractId, seq) => contractRef(contractId).collection("events").doc(eventId(seq));
   const receiptRef = (uid, receiptId) => firestore.collection("tributeReceipts").doc(uid).collection("items").doc(receiptId);
   const pairRef = (managerUid, payerUid) => firestore.collection("tributePairs").doc(pairId(managerUid, payerUid));
@@ -496,6 +536,7 @@ function createTributeService(deps) {
       payerWalletSnapshot,
       ledgerConfigSnapshot,
       pairSnapshot,
+      limitsSnapshot,
     ] = await Promise.all([
       transaction.get(profileRef(managerUid)),
       transaction.get(profileRef(payerUid)),
@@ -503,6 +544,7 @@ function createTributeService(deps) {
       transaction.get(walletRef(payerUid)),
       transaction.get(anjuPayLedgerConfigRef()),
       transaction.get(pairRef(managerUid, payerUid)),
+      transaction.get(limitsRef(contractId)),
     ]);
     const blocked = playerSafety ? await playerSafety.isBlocked(managerUid, payerUid, transaction) === true : false;
     return {
@@ -512,8 +554,9 @@ function createTributeService(deps) {
       monthKey: jstMonthKey(now),
       contractId,
       contractRef: contractReference,
-      contract,
+      contract: withLimits(contract, limitsSnapshot),
       original: { ...contract },
+      limits: { ref: limitsRef(contractId), exists: limitsSnapshot.exists, legacy: hasLegacyLimits(contract) },
       patch: {},
       events: [],
       seq: integer(contract.eventSeq, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -648,6 +691,16 @@ function createTributeService(deps) {
     for (const event of ctx.events) {
       transaction.create(eventRef(ctx.contractId, event.seq), event);
     }
+    // 限度額は財布だけが読める場所へ書き、契約の記録には残さない（移す前の契約は、ここで消す）。
+    const limitChanged = LIMIT_FIELDS.some((key) => key in ctx.patch);
+    for (const key of LIMIT_FIELDS) delete ctx.patch[key];
+    if (limitChanged || (ctx.limits.legacy && !ctx.limits.exists)) {
+      transaction.set(ctx.limits.ref, { ...limitsOf(ctx.contract), contractId: ctx.contractId, payerUid: ctx.payerUid, updatedAt: ctx.now }, { merge: true });
+    }
+    if (ctx.limits.legacy) {
+      if (!ctx.events.length && !Object.keys(ctx.patch).length) ctx.quiet = true;
+      Object.assign(ctx.patch, { caps: null, pendingCaps: null, pendingCapsEffectiveDateKey: "" });
+    }
     if (ctx.events.length || Object.keys(ctx.patch).length) {
       transaction.set(ctx.contractRef, {
         ...ctx.patch,
@@ -686,10 +739,8 @@ function createTributeService(deps) {
 
   function settleCaps(ctx) {
     const { caps, applied } = effectiveCaps(ctx.contract, ctx.now);
-    if (applied) {
-      setContract(ctx, { caps, pendingCaps: null, pendingCapsEffectiveDateKey: "" });
-      pushEvent(ctx, { type: "caps_raised", actor: "system", caps });
-    }
+    // 限度額の変更は、管理人も読む出来事には残さない。
+    if (applied) setContract(ctx, { caps, pendingCaps: null, pendingCapsEffectiveDateKey: "" });
     ctx.caps = caps;
   }
 
@@ -786,7 +837,7 @@ function createTributeService(deps) {
     const readSeq = object(contract.readSeq);
     const previous = integer(readSeq[role], 0, Number.MAX_SAFE_INTEGER, 0);
     const next = Math.max(previous, Math.min(eventSeq, integer(data?.seq, 0, Number.MAX_SAFE_INTEGER, 0)));
-    if (next > previous) transaction.set(reference, { readSeq: { ...readSeq, [role]: next } }, { merge: true });
+    if (next > previous) transaction.set(reference, { readSeq: { ...readSeq, [role]: next }, ...ignoreStart(contract, role, next, now) }, { merge: true });
     return { ok: true, contractId, readSeq: next, eventSeq };
   }
 
@@ -946,11 +997,12 @@ function createTributeService(deps) {
     const contract = ctx.contract;
     const caps = ctx.caps || effectiveCaps(contract, ctx.now).caps;
     const violation = capViolation(amount, contract, caps, ctx.now);
-    if (violation) fail("failed-precondition", violation);
+    // 管理人（管理口座からの徴収）には、財布の限度額の数字を見せない。
+    if (violation) fail("failed-precondition", ctx.role === "manager" ? "財布の限度額を超えるため、いまは徴収できません。" : violation);
     const managerProfile = ctx.profiles.manager.value;
     const receivedToday = managerProfile.receiveDayKey === ctx.dateKey ? managerProfile.receiveDayTotal : 0;
     if (receivedToday + amount > LIMITS.managerDailyReceive) {
-      fail("failed-precondition", "相手が今日受け取れる上限（全契約で20,000 Pay）に達しています。");
+      fail("failed-precondition", `相手が今日受け取れる上限（全契約で${LIMITS.managerDailyReceive.toLocaleString("ja-JP")} Pay）に達しています。`);
     }
     const fromEscrow = kind === "escrow_take";
     const escrow = integer(contract.escrowBalance, 0, Number.MAX_SAFE_INTEGER, 0);
@@ -1236,7 +1288,14 @@ function createTributeService(deps) {
         .limit(40)
         .get();
     }
-    const contracts = snapshot.docs.map((document) => viewContract(object(document.data()), uid, now));
+    // 財布として持つ契約だけ、財布だけが読める限度額を足して返す。
+    const raw = snapshot.docs.map((document) => object(document.data()));
+    const limits = await Promise.all(raw.map((contract) => (
+      contract.payerUid === uid && OPEN_STATUSES.includes(contract.status) && CONTRACT_ID_PATTERN.test(String(contract.contractId || ""))
+        ? limitsRef(contract.contractId).get()
+        : Promise.resolve(null)
+    )));
+    const contracts = raw.map((contract, index) => viewContract(withLimits(contract, limits[index]), uid, now));
     let achievements = null;
     try {
       const achievementState = await ensureAchievementState(uid);
@@ -1289,6 +1348,7 @@ function createTributeService(deps) {
   async function saveProfileAction(uid, data) {
     const now = currentTime();
     let saved = null;
+    let declarationChanged = false;
     await firestore.runTransaction(async (transaction) => {
       const profile = readProfile(await transaction.get(profileRef(uid)));
       requireAge(profile);
@@ -1331,7 +1391,9 @@ function createTributeService(deps) {
       }
       transaction.set(profileRef(uid), patch, { merge: true });
       saved = { ...profile, ...patch, card };
+      declarationChanged = Boolean(patch.card) && (profile.card?.ignoreUnpaid === true) !== (card?.ignoreUnpaid === true);
     });
+    if (declarationChanged) await syncDeclaration(uid, saved.card?.ignoreUnpaid === true);
     const monthKey = jstMonthKey(now);
     const profile = readProfile({ exists: true, data: () => saved });
     return { ok: true, profile: ownProfileView(profile, monthKey, now) };
@@ -1354,6 +1416,43 @@ function createTributeService(deps) {
       .filter((id) => ACHIEVEMENT_BY_ID.has(id))
       .sort((left, right) => unlocked[right] - unlocked[left] || left.localeCompare(right));
     return { ok: true, owned: [...new Set(owned)].sort(), achievements };
+  }
+
+  // 宣言「未払いは既読無視」を、管理人の申込中・進行中の契約へ写す（財布のスレッドに札を出すため）。
+  // 失敗しても次の切り替えで写し直せるので、まとめて書くだけにする。
+  async function syncDeclaration(uid, ignoreUnpaid) {
+    const snapshot = await firestore.collection("tributeContracts")
+      .where("participants", "array-contains", uid)
+      .orderBy("updatedAt", "desc")
+      .limit(200)
+      .get();
+    const targets = snapshot.docs.filter((document) => {
+      const contract = object(document.data());
+      return contract.managerUid === uid && OPEN_STATUSES.includes(contract.status)
+        && (contract.managerIgnoreUnpaid === true) !== ignoreUnpaid;
+    });
+    await Promise.all(targets.map((document) => document.ref.set({ managerIgnoreUnpaid: ignoreUnpaid }, { merge: true })));
+    return targets.length;
+  }
+
+  // 管理人の宣言の切り替え（スレッドの札のスイッチ）。カードを丸ごと保存し直さずに変える。
+  async function setDeclarationAction(uid, data) {
+    const ignoreUnpaid = data?.ignoreUnpaid === true;
+    const now = currentTime();
+    let saved = null;
+    await firestore.runTransaction(async (transaction) => {
+      saved = null;
+      const snapshot = await transaction.get(profileRef(uid));
+      const profile = readProfile(snapshot);
+      requireAge(profile);
+      if (!profile.card) fail("failed-precondition", "宣言は、管理人カードを作ってから出せます。");
+      const card = { ...profile.card, ignoreUnpaid };
+      transaction.set(profileRef(uid), { card, updatedAt: now }, { merge: true });
+      saved = { ...object(snapshot.data()), card };
+    });
+    await syncDeclaration(uid, ignoreUnpaid);
+    const profile = readProfile({ exists: true, data: () => saved });
+    return { ok: true, profile: ownProfileView(profile, jstMonthKey(now), now) };
   }
 
   // 今日のひとこと。管理人カードのある人だけ、30文字まで・24時間・日本時間の1日3回まで。
@@ -1490,7 +1589,7 @@ function createTributeService(deps) {
     };
   }
 
-  async function applyAction(uid, data) {
+  async function applyAction(uid, data, context = {}) {
     const publicManagerId = requirePublicManagerId(data?.publicManagerId);
     const { uid: managerUid } = await findManagerByPublicId(publicManagerId);
     if (managerUid === uid) fail("failed-precondition", "自分の管理人カードには申し込めません。");
@@ -1523,6 +1622,9 @@ function createTributeService(deps) {
       const normalized = normalizeApplication(data?.application, { entryFee });
       if (normalized.error) fail("invalid-argument", normalized.error);
       const application = normalized.application;
+      if (capsNeedGoogle(application.caps) && context?.googleProtected !== true) {
+        fail("failed-precondition", "1回の限度額を3,000 Pay以上にするには、AnjuPayウォレットを Google で保護してください。");
+      }
       if (openContractSnapshot?.exists && OPEN_STATUSES.includes(openContractSnapshot.get("status"))) {
         fail("failed-precondition", "この管理人とは、申込中か進行中の契約があります。");
       }
@@ -1531,7 +1633,7 @@ function createTributeService(deps) {
         fail("resource-exhausted", "申し込みは30秒に1回までです。少し待ってからお試しください。");
       }
       if (payer.counts.payerOpen >= LIMITS.payerOpenContracts) {
-        fail("failed-precondition", "申込中・進行中の契約は3件までです。どれかを終えてから申し込んでください。");
+        fail("failed-precondition", `申込中・進行中の契約は${LIMITS.payerOpenContracts}件までです。どれかを終えてから申し込んでください。`);
       }
       if (manager.counts.managerPending >= LIMITS.managerPendingContracts) {
         fail("failed-precondition", "この管理人は受付待ちがいっぱいです。時間をおいてください。");
@@ -1548,9 +1650,7 @@ function createTributeService(deps) {
         managerCard: cardSnapshot(manager.card),
         entryFee,
         payerWalletName: application.walletName,
-        caps: application.caps,
-        pendingCaps: null,
-        pendingCapsEffectiveDateKey: "",
+        managerIgnoreUnpaid: manager.card.ignoreUnpaid === true,
         durationDays: application.durationDays,
         tone: application.tone,
         ngWords: application.ngWords,
@@ -1583,11 +1683,13 @@ function createTributeService(deps) {
         updatedAt: now,
       };
       transaction.create(contractRef(contractId), contract);
+      // 限度額は財布だけが読める場所へ。管理人も読む「申し込み」の出来事には入れない。
+      const limits = { caps: application.caps, pendingCaps: null, pendingCapsEffectiveDateKey: "" };
+      transaction.create(limitsRef(contractId), { ...limits, contractId, payerUid: uid, updatedAt: now });
       transaction.create(eventRef(contractId, 1), {
         seq: 1,
         type: "applied",
         actor: "payer",
-        caps: application.caps,
         durationDays: application.durationDays,
         tone: application.tone,
         entryFee,
@@ -1611,7 +1713,7 @@ function createTributeService(deps) {
         ...(pairSnapshot.exists ? {} : { total: 0, count: 0, createdAt: now }),
         updatedAt: now,
       }, { merge: true });
-      created = viewContract(contract, uid, now);
+      created = viewContract({ ...contract, ...limits }, uid, now);
     });
     return { ok: true, contract: created };
   }
@@ -1672,7 +1774,7 @@ function createTributeService(deps) {
       write(ctx, extra) {
         const manager = ctx.profiles.manager.value;
         if (manager.counts.managerActive >= LIMITS.managerActiveContracts) {
-          fail("failed-precondition", "進行中の契約は30件までです。");
+          fail("failed-precondition", `進行中の契約は${LIMITS.managerActiveContracts}件までです。`);
         }
         const durationDays = integer(ctx.contract.durationDays, 1, 7, 1);
         setContract(ctx, {
@@ -1713,6 +1815,9 @@ function createTributeService(deps) {
           text: normalized.text,
           ...(data?.template === true ? { template: true } : {}),
         });
+        // 既読無視の数え方: 財布の最後のメッセージと、管理人の最後の返事。返事をすると既読無視は終わる。
+        if (ctx.role === "payer") setContract(ctx, { lastPayerMessageSeq: ctx.seq });
+        else setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
         markManagerActive(ctx);
         return { ok: true, seq: ctx.seq };
       },
@@ -1721,9 +1826,9 @@ function createTributeService(deps) {
       roles: ["manager"],
       statuses: ["active"],
       write(ctx, _extra, data) {
+        // 請求は財布の限度額に関係なく、1回10,000 Payまで。限度額を超える請求は、払えないまま残る。
         const amount = requireAmount(data?.amount);
-        const violation = capViolation(amount, ctx.contract, ctx.caps, ctx.now);
-        if (violation) fail("failed-precondition", violation);
+        if (amount > LIMITS.requestMax) fail("invalid-argument", `請求は1回 ${LIMITS.requestMax.toLocaleString("ja-JP")} Pay までです。`);
         const pending = pendingRequestList(ctx.contract);
         if (pending.length >= LIMITS.pendingRequests) fail("failed-precondition", "未払いの請求は3件までです。");
         const note = cleanLine(data?.note, LIMITS.requestNote);
@@ -1740,6 +1845,7 @@ function createTributeService(deps) {
           },
         });
         pushEvent(ctx, { type: "request", actor: "manager", requestId, amount, ...(note ? { note } : {}), ...(purpose ? { purpose } : {}) });
+        if (amount >= LIMITS.highRequest) patchProfile(ctx, "manager", { highRequestAt: ctx.now });
         markManagerActive(ctx);
         return { ok: true, requestId };
       },
@@ -1757,17 +1863,12 @@ function createTributeService(deps) {
         return { ok: true };
       },
     },
+    // 請求は断れない。払うか、契約を解約するか（古い画面からの「断る」もここで止める）。
     decline_request: {
       roles: ["payer"],
       statuses: ["active"],
-      write(ctx, _extra, data) {
-        const requestId = String(data?.requestId || "");
-        const requests = { ...object(ctx.contract.pendingRequests) };
-        if (!requests[requestId]) fail("not-found", "その請求は残っていません。");
-        delete requests[requestId];
-        setContract(ctx, { pendingRequests: requests });
-        pushEvent(ctx, { type: "request_declined", actor: "payer", requestId });
-        return { ok: true };
+      write() {
+        fail("failed-precondition", "請求は断れません。払うか、契約を解約してください。");
       },
     },
     tribute: {
@@ -1822,7 +1923,10 @@ function createTributeService(deps) {
       statuses: ["active"],
       write(ctx, _extra, data) {
         const next = normalizeCaps(data?.caps);
-        if (!next) fail("invalid-argument", "上限は「1回 ≦ 1日 ≦ 合計」になるように選んでください。");
+        if (!next) fail("invalid-argument", "限度額は「1回 ≦ 1日 ≦ 合計」になるように選んでください。");
+        if (capsNeedGoogle(next) && !capsNeedGoogle(ctx.caps) && ctx.context?.googleProtected !== true) {
+          fail("failed-precondition", "1回の限度額を3,000 Pay以上にするには、AnjuPayウォレットを Google で保護してください。");
+        }
         const current = ctx.caps;
         const immediate = {
           perTribute: Math.min(next.perTribute, current.perTribute),
@@ -1832,19 +1936,10 @@ function createTributeService(deps) {
         const lowered = !capsAreLowerOrEqual(current, immediate);
         const raising = !capsAreLowerOrEqual(next, immediate);
         if (!lowered && !raising) return { ok: true, contract: view(ctx), unchanged: true };
+        // 限度額の変更は管理人に知らせない（出来事に残さない）。下げても、払えない請求は未払いのまま残る。
         if (lowered) {
           setContract(ctx, { caps: immediate });
           ctx.caps = immediate;
-          pushEvent(ctx, { type: "caps_lowered", actor: "payer", caps: immediate });
-          // 下げた上限を超える請求は、その場で無効にする。
-          const requests = { ...object(ctx.contract.pendingRequests) };
-          for (const [requestId, request] of Object.entries(requests)) {
-            if (integer(request?.amount, 0, 1_000_000, 0) > immediate.perTribute) {
-              delete requests[requestId];
-              pushEvent(ctx, { type: "request_cancelled", actor: "system", requestId, reason: "caps" });
-            }
-          }
-          setContract(ctx, { pendingRequests: requests });
           // 管理口座が新しい合計上限の残りを超えた分は、すぐ財布へ戻す。
           const escrow = integer(ctx.contract.escrowBalance, 0, Number.MAX_SAFE_INTEGER, 0);
           const room = Math.max(0, immediate.total - integer(ctx.contract.totalTributed, 0, Number.MAX_SAFE_INTEGER, 0));
@@ -1854,10 +1949,8 @@ function createTributeService(deps) {
         if (raising) {
           const effectiveDateKey = nextJstDateKey(ctx.now);
           setContract(ctx, { pendingCaps: next, pendingCapsEffectiveDateKey: effectiveDateKey });
-          pushEvent(ctx, { type: "caps_raise_scheduled", actor: "payer", caps: next, effectiveDateKey });
         } else if (ctx.contract.pendingCaps) {
           setContract(ctx, { pendingCaps: null, pendingCapsEffectiveDateKey: "" });
-          pushEvent(ctx, { type: "caps_raise_cancelled", actor: "payer" });
         }
         return { ok: true, contract: view(ctx) };
       },
@@ -1868,7 +1961,6 @@ function createTributeService(deps) {
       write(ctx) {
         if (!ctx.contract.pendingCaps) return { ok: true, contract: view(ctx) };
         setContract(ctx, { pendingCaps: null, pendingCapsEffectiveDateKey: "" });
-        pushEvent(ctx, { type: "caps_raise_cancelled", actor: "payer" });
         return { ok: true, contract: view(ctx) };
       },
     },
@@ -2079,6 +2171,8 @@ function createTributeService(deps) {
           seal,
           ...(reward ? { reward } : {}),
         });
+        // ご褒美の一言は返事なので、既読無視を終える。
+        if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
         markManagerActive(ctx);
         return { ok: true, contract: view(ctx) };
       },
@@ -2092,7 +2186,7 @@ function createTributeService(deps) {
         const readSeq = object(ctx.contract.readSeq);
         if (seq > integer(readSeq[ctx.role], 0, Number.MAX_SAFE_INTEGER, 0)) {
           ctx.quiet = true;
-          setContract(ctx, { readSeq: { ...readSeq, [ctx.role]: seq } });
+          setContract(ctx, { readSeq: { ...readSeq, [ctx.role]: seq }, ...ignoreStart(ctx.contract, ctx.role, seq, ctx.now) });
         }
         return { ok: true, contractId: ctx.contractId, readSeq: integer(object(ctx.contract.readSeq)[ctx.role], 0, Number.MAX_SAFE_INTEGER, 0), eventSeq: ctx.seq };
       },
@@ -2155,12 +2249,15 @@ function createTributeService(deps) {
     if (reason === "caps") pushEvent(ctx, { type: "escrow_returned", actor: "system", amount, reason });
   }
 
-  async function runNamedContractAction(uid, action, data) {
+  async function runNamedContractAction(uid, action, data, context = {}) {
     const spec = contractActions[action];
     return runContract(uid, data, {
       ...spec,
       read: spec.read ? (transaction, ctx) => spec.read(transaction, ctx, data) : null,
-      write: (ctx, extra) => spec.write(ctx, extra, data),
+      write: (ctx, extra) => {
+        ctx.context = context;
+        return spec.write(ctx, extra, data);
+      },
     });
   }
 
@@ -2588,7 +2685,8 @@ function createTributeService(deps) {
       case "decorations": return decorationsAction(uid);
       case "board": return boardAction(uid, data);
       case "manager": return managerAction(uid, data);
-      case "apply": return applyAction(uid, data);
+      case "apply": return applyAction(uid, data, context);
+      case "set_declaration": return setDeclarationAction(uid, data);
       case "receipts": return receiptsAction(uid, data);
       case "share_info": return shareInfoAction(uid, data);
       case "set_word": return setWordAction(uid, data);
@@ -2599,7 +2697,7 @@ function createTributeService(deps) {
       case "vote": return voteAction(uid, data);
       case "recommend": return recommendAction(uid, data, true);
       case "unrecommend": return recommendAction(uid, data, false);
-      default: return runNamedContractAction(uid, action, data);
+      default: return runNamedContractAction(uid, action, data, context);
     }
   }
 

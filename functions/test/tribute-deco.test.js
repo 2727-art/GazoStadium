@@ -91,8 +91,8 @@ test("the manager card accepts decorations and up to three achievements, and the
   assert.match(save, /requiredDecorationProducts\(cardValues\)\.map\(\(productId\) => transaction\.get\(purchaseRef\(uid, productId\)\)\)/);
   assert.match(save, /持っていない飾りは保存できません/);
   assert.match(save, /!unlocked\[id\] \|\| !ACHIEVEMENT_BY_ID\.has\(id\)/);
-  assert.match(sourceBlock(service, "async function decorationsAction", "// 今日のひとこと"), /\.where\("productId", "in", \[\.\.\.DECORATION_PRODUCT_IDS\]\)/);
-  assert.doesNotMatch(sourceBlock(service, "async function decorationsAction", "// 今日のひとこと"), /\.set\(|\.update\(|\.create\(/, "reading decorations never writes");
+  assert.match(sourceBlock(service, "async function decorationsAction", "// 宣言「未払いは既読無視」を"), /\.where\("productId", "in", \[\.\.\.DECORATION_PRODUCT_IDS\]\)/);
+  assert.doesNotMatch(sourceBlock(service, "async function decorationsAction", "// 宣言「未払いは既読無視」を"), /\.set\(|\.update\(|\.create\(/, "reading decorations never writes");
   assert.match(service, /const marks = \{ receivedAt: ctx\.now, seal, \.\.\.sealLook\(ctx\.profiles\.manager\.value\.card\)/, "the seal look is stamped when it is pressed");
 
   // 購入: 飾りの売上の20%を、同じトランザクションでその月の牧場基金へ。対戦の装備には付けない。
@@ -188,8 +188,10 @@ test("the recruit image is drawn on the manager's device with the disclosure, th
   assert.doesNotMatch(recruit, /new Image\(|drawImage\(svg|data:image\/svg/, "frames are drawn on the canvas, not from SVG images");
   assert.match(recruit, /manager\.disclosureLabel/);
   assert.match(recruit, /\/\/ 中の人の札（最初の札）は必ず入れる。/);
-  assert.match(recruit, /\["上限と解約は", false\], \["財布が握る", true\]/);
-  assert.match(recruit, /\["現金なし", true\]/);
+  // 「財布が握る」とは書かない（力関係は管理人の側）。AnjuPay だけ・現金なしの表記は必ず入れる。
+  assert.doesNotMatch(recruit, /財布が握る|上限と解約/);
+  assert.match(recruit, /\["AnjuPay（アプリ内ポイント）だけ・", false\], \["現金なし", true\]/);
+  assert.match(recruit, /data\.ignoreUnpaid \? OATH : ""/, "the manager's declaration is on the image");
   assert.match(recruit, /paintFooter\(ctx\);/, "the AnjuPay notice is on every image");
   for (const id of rules.CARD_FRAMES) assert.match(recruit, new RegExp(`frame === "${id}"`), id);
 

@@ -1081,3 +1081,55 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
   }
   .shop-ranch-category .shop-card { scroll-snap-align: start; }
 }
+
+/* ───────────── 既読無視・宣言・見えない限度額 ───────────── */
+/* 管理人の宣言「未払いは既読無視」と「高額請求」の札 */
+.tribute-oath,
+.tribute-high { display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px 2px 0; padding: 1px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+.tribute-oath { border: 1px solid rgba(255, 107, 138, 0.6); background: rgba(255, 60, 100, 0.12); color: #ffb3c6; }
+.tribute-oath::before { content: "既読"; padding: 0 4px; border-radius: 4px; background: #ff6b8a; color: #2a0510; font-size: 0.56rem; font-weight: 900; }
+.tribute-high { border: 1px solid rgba(232, 194, 122, 0.7); background: rgba(232, 194, 122, 0.12); color: #f6dfa6; }
+/* 財布の側の「既読無視 ○日目」 */
+.tribute-ignored { display: grid; gap: 2px; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(255, 90, 120, 0.5); background: linear-gradient(135deg, rgba(255, 60, 100, 0.18), rgba(60, 0, 30, 0.35)); }
+.tribute-ignored strong { color: #ffd0dc; font-size: 1.2rem; font-weight: 900; letter-spacing: 0.04em; }
+.tribute-ignored span { color: rgba(244, 236, 246, 0.85); font-size: 0.8rem; }
+.tribute-ignored b { color: #ffb3c6; }
+/* 財布だけに見える限度額 */
+.tribute-limits { display: grid; gap: 6px; padding: 10px; border-radius: 12px; border: 1px dashed rgba(127, 230, 180, 0.45); background: rgba(61, 220, 151, 0.06); }
+.tribute-limits > small { color: #9ff0c9; font-size: 0.7rem; font-weight: 700; }
+/* 財布のメッセージの既読 */
+.tribute-read { color: #8fe3ff; font-size: 0.66rem; font-weight: 700; }
+.tribute-event.is-mine .tribute-read { justify-self: end; }
+/* 財布の側の請求（払うか、解約するか） */
+.tribute-request-card.is-owed { border-color: rgba(255, 107, 138, 0.6); background: linear-gradient(160deg, rgba(255, 60, 100, 0.14), var(--tr-panel) 60%); }
+.tribute-request-progress { display: grid; gap: 4px; }
+.tribute-request-progress i { display: block; height: 8px; border-radius: 999px; background: linear-gradient(90deg, #ff4fa3, #ffb36b) 0 0 / var(--ratio, 0%) 100% no-repeat, rgba(255, 255, 255, 0.08); }
+.tribute-request-progress span { font-size: 0.78rem; }
+.tribute-request-progress b { color: #ffd38f; }
+.tribute-limit-warn { display: grid; gap: 6px; justify-items: start; padding: 8px 10px; border-radius: 10px; border: 1px dashed rgba(127, 230, 180, 0.45); background: rgba(61, 220, 151, 0.08); color: #c9f5df; font-size: 0.74rem; line-height: 1.6; }
+.tribute-limit-warn b { color: #9ff0c9; }
+.tribute-earn { display: flex; flex-wrap: wrap; gap: 6px; }
+.tribute-earn small { width: 100%; color: var(--tr-mist); font-size: 0.68rem; }
+.tribute-earn button { padding: 5px 10px; border: 1px solid rgba(255, 211, 143, 0.5); border-radius: 999px; background: rgba(255, 211, 143, 0.08); color: #ffe2b0; font: inherit; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+.tribute-request-two { display: block; color: var(--tr-mist); font-size: 0.7rem; }
+.tribute-amount-chips .is-high { border-color: rgba(255, 107, 138, 0.6); color: #ffb3c6; }
+/* 管理人の宣言のスイッチと未払いの合計 */
+.tribute-declaration-toggle { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255, 107, 138, 0.45); background: rgba(255, 60, 100, 0.08); cursor: pointer; }
+.tribute-declaration-toggle span { display: grid; gap: 2px; }
+.tribute-declaration-toggle b { font-size: 0.86rem; }
+.tribute-declaration-toggle small { color: var(--tr-mist); font-size: 0.68rem; }
+.tribute-declaration-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.tribute-declaration-toggle i { position: relative; flex: 0 0 auto; width: 44px; height: 26px; border-radius: 999px; background: rgba(255, 255, 255, 0.16); transition: background 0.2s; }
+.tribute-declaration-toggle i::after { content: ""; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform 0.2s; }
+.tribute-declaration-toggle input:checked + i { background: var(--tr-accent); }
+.tribute-declaration-toggle input:checked + i::after { transform: translateX(18px); }
+.tribute-declaration-toggle input:focus-visible + i { outline: 2px solid var(--tr-accent); outline-offset: 2px; }
+.tribute-owed { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); font-size: 0.8rem; }
+.tribute-owed b { color: #ff8fa8; font-size: 1rem; }
+/* 申し込みの「請求は断れない」の確認 */
+.tribute-check.is-consent { padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255, 107, 138, 0.45); background: rgba(255, 60, 100, 0.06); }
+.tribute-check.is-consent small { display: block; margin-top: 3px; font-size: 0.74rem; font-weight: 400; }
+@media (prefers-reduced-motion: reduce) {
+  .tribute-declaration-toggle i,
+  .tribute-declaration-toggle i::after { transition: none; }
+}

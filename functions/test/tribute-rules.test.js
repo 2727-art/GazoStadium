@@ -65,8 +65,13 @@ test("caps must be chosen options in order and the entry fee must fit one tribut
   assert.deepEqual(rules.normalizeCaps({ perTribute: 100, perDay: 300, total: 1_000 }), { perTribute: 100, perDay: 300, total: 1_000 });
   assert.equal(rules.normalizeCaps({ perTribute: 300, perDay: 100, total: 1_000 }), null);
   assert.equal(rules.normalizeCaps({ perTribute: 99, perDay: 300, total: 1_000 }), null);
-  const base = { caps: { perTribute: 10, perDay: 30, total: 100 }, durationDays: 1, tone: "harsh" };
+  const base = { caps: { perTribute: 10, perDay: 30, total: 100 }, durationDays: 1, tone: "harsh", acceptNoDecline: true };
   assert.match(rules.normalizeApplication(base, { entryFee: 30 }).error, /入場料/);
+  assert.match(rules.normalizeApplication({ ...base, acceptNoDecline: undefined }).error, /請求は断れず/, "the payer must accept that requests cannot be declined");
+  assert.match(rules.normalizeApplication({ ...base, acceptNoDecline: "true" }).error, /請求は断れず/);
+  assert.deepEqual(rules.normalizeCaps({ perTribute: 10_000, perDay: 30_000, total: 100_000 }), { perTribute: 10_000, perDay: 30_000, total: 100_000 });
+  assert.equal(rules.capsNeedGoogle({ perTribute: 3_000 }), true);
+  assert.equal(rules.capsNeedGoogle({ perTribute: 1_000 }), false);
   const ok = rules.normalizeApplication({ ...base, walletName: "LINE交換したい財布" }, { entryFee: 10 });
   assert.equal(ok.application.walletName, "名無しの財布", "forbidden wallet names fall back");
   assert.equal(ok.application.allowReportRequests, false);
@@ -128,7 +133,7 @@ test("raised caps apply from the next JST day and allowances combine all three c
   const later = Date.parse("2026-10-06T00:00:01+09:00");
   assert.equal(rules.effectiveCaps(contract, later).applied, true);
   assert.equal(rules.tributeAllowance(contract, rules.effectiveCaps(contract, later).caps, later), 100, "today resets but the total cap remains");
-  assert.match(rules.capViolation(101, contract, rules.effectiveCaps(contract, later).caps, later), /合計上限/);
+  assert.match(rules.capViolation(101, contract, rules.effectiveCaps(contract, later).caps, later), /契約合計の限度額/);
   assert.equal(rules.capViolation(100, contract, rules.effectiveCaps(contract, later).caps, later), "");
 });
 
@@ -187,7 +192,7 @@ test("named fees: sexual names only with the payer's consent, and hidden again w
     assert.equal(rules.visiblePurpose(purpose, { allowSexual: true }), purpose);
   }
   assert.equal(rules.visiblePurpose("<script>"), "");
-  const base = { caps: { perTribute: 100, perDay: 300, total: 1_000 }, durationDays: 3, tone: "harsh" };
+  const base = { caps: { perTribute: 100, perDay: 300, total: 1_000 }, durationDays: 3, tone: "harsh", acceptNoDecline: true };
   assert.equal(rules.normalizeApplication(base).application.allowSexualPurposes, false, "consent is off unless the payer ticks it");
   assert.equal(rules.normalizeApplication({ ...base, allowSexualPurposes: "true" }).application.allowSexualPurposes, false);
   assert.equal(rules.normalizeApplication({ ...base, allowSexualPurposes: true }).application.allowSexualPurposes, true);

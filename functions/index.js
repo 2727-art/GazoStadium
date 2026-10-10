@@ -16227,7 +16227,7 @@ const tributeService = createTributeService({
   syncAchievementPublicSurfaces,
 });
 
-const TRIBUTE_GOOGLE_ACTIONS = new Set(["fund", "offer"]);
+const TRIBUTE_GOOGLE_ACTIONS = new Set(["fund", "offer", "apply", "set_caps"]);
 
 exports.tributeAction = onCall(callableOptions("tributeAction"), async (request) => {
   const uid = requireUid(request);

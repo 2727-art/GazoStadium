@@ -566,6 +566,13 @@ service cloud.firestore {
           && request.auth.uid in get(/databases/$(database)/documents/tributeContracts/$(contractId)).data.participants;
         allow write: if false;
       }
+
+      // 財布の限度額。管理人には見せないため、預ける側だけが読める。
+      match /private/{docId} {
+        allow read: if request.auth != null
+          && request.auth.uid == get(/databases/$(database)/documents/tributeContracts/$(contractId)).data.payerUid;
+        allow write: if false;
+      }
     }
 
     match /tributeProfiles/{uid} {
