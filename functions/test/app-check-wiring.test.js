@@ -97,6 +97,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "aiTextTrainingAction",
     "rouletteTrainingAction",
     "tributeAction",
+    "stadiumAction",
     "aiTextTrainingPublicStats",
     "valueMarketQueue",
     "valueMarketAction",
