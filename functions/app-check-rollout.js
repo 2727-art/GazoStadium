@@ -44,6 +44,8 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   rouletteTrainingAction: true,
   // お貢ぎ牧場は残高の移動・自由入力・ブロック・通報を扱う新規境界のため、初日から強制します。
   tributeAction: true,
+  // マイスタジアムはAnjuPayを発行・消費する新規境界のため、初日から強制します。
+  stadiumAction: true,
   // トップ向けの仲間人数も、生の実績セッションを読ませず集計境界だけを公開します。
   aiTextTrainingPublicStats: true,
   // 貼り合い自由卓は公開ID・承認・ブロック・通報を扱う新規サーバー境界のため、初日から強制します。

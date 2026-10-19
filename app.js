@@ -943,6 +943,7 @@
           <button class="vl-tile vl-tile-market vl-tile-tribute" id="tributeButton" type="button"><small>会わない前提で、AnjuPayを差し出す</small><span>お貢ぎ牧場</span></button>
           <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>AIと対戦しよう</small><span>文字コラトレーニング</span></button>
           <button class="vl-tile vl-tile-roulette" id="rouletteTrainingButton" type="button"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
+          <button class="vl-tile vl-tile-stadium" id="stadiumButton" type="button"><small>完走した数だけ観客が増える</small><span>マイスタジアム</span></button>
         </div>
       </section>
       <nav class="vl-tabbar" aria-label="ランキングとAnjuPay">
@@ -991,6 +992,7 @@
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#rouletteTrainingButton")?.addEventListener("click", startRouletteTraining);
     document.querySelector("#tributeButton")?.addEventListener("click", () => startTribute());
+    document.querySelector("#stadiumButton")?.addEventListener("click", () => startStadium());
     document.querySelector("#tributeRankingButton")?.addEventListener("click", () => startTribute({ initialScreen: "ranking" }));
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
     document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
@@ -1971,6 +1973,19 @@
     );
   }
 
+  function startStadium() {
+    if (window.HariaiStadium?.start) {
+      window.HariaiStadium.start();
+      return;
+    }
+    showToast("マイスタジアムを読み込んでいます…");
+    window.addEventListener(
+      "hariai-stadium-ready",
+      () => window.HariaiStadium?.start?.(),
+      { once: true },
+    );
+  }
+
 
   // retire-free-table-v1: legacy links and external callers stay entirely local.
   function clearRetiredFreeTableInvite() {
@@ -2409,6 +2424,10 @@
     }
     if (window.HariaiTribute?.isActive?.()) {
       window.HariaiTribute.requestHome();
+      return;
+    }
+    if (window.HariaiStadium?.isActive?.()) {
+      window.HariaiStadium.requestHome();
       return;
     }
     if (window.HariaiAiTextTraining?.isActive?.()) {

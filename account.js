@@ -82,6 +82,15 @@ const ANJU_PAY_LABELS = Object.freeze({
   anju_pay_tribute_escrow_return: "お貢ぎ牧場の管理口座から返還",
   tribute_offering: "お貢ぎ牧場で牧場基金へ上納",
   anju_pay_tribute_offering: "お貢ぎ牧場で牧場基金へ上納",
+  stadium_revenue: "マイスタジアムの売上を回収",
+  anju_pay_stadium_revenue: "マイスタジアムの売上を回収",
+  stadium_build: "マイスタジアムの施設を建設",
+  anju_pay_stadium_build: "マイスタジアムの施設を建設",
+});
+const STADIUM_FACILITY_LABELS = Object.freeze({
+  stand: "スタンド",
+  shop: "売店",
+  vault: "金庫",
 });
 const ANJU_PAY_STATUS_LABELS = Object.freeze({
   posted: "反映済み",
@@ -281,6 +290,8 @@ function normalizeHistoryEntry(value, index = 0) {
         counterpartyName: String(source.details.counterpartyName || "").slice(0, 40),
         publicSellerId: String(source.details.publicSellerId || "").slice(0, 40),
         listingTitle: String(source.details.listingTitle || "").slice(0, 80),
+        facility: String(source.details.facility || "").slice(0, 16),
+        facilityLevel: finiteInteger(source.details.facilityLevel, null),
       }
       : {},
     delta,
@@ -334,6 +345,10 @@ function historyDetail(entry) {
   if (details.role === "buyer") parts.push("購入側");
   if (entry.labelKey === "anju_pay_tribute_escrow_take" && entry.nominalAmount > 0) {
     parts.push(`管理口座（預け済み）から ${formatAnjuPay(entry.nominalAmount)}`);
+  }
+  if (details.mode === "stadium" && STADIUM_FACILITY_LABELS[details.facility]) {
+    const level = Number.isSafeInteger(details.facilityLevel) ? ` Lv${details.facilityLevel}` : "";
+    parts.push(`${STADIUM_FACILITY_LABELS[details.facility]}${level}`);
   }
   if (details.mode === "tribute" && details.role === "payer") parts.push("預ける側");
   if (details.mode === "tribute" && details.role === "manager") parts.push("管理する側");

@@ -88,6 +88,7 @@
   --vs-icon-drum: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><rect x='6' y='2.5' width='12' height='19' rx='3'/><path d='M6 8.5h12M6 15.5h12M9.5 12h5'/><path d='M20.5 9v6' stroke-linecap='round'/></svg>");
   --vs-icon-lotus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><path d='M12 19c-2.6-2.2-3.6-5.4-2.4-9.6.9.9 1.9 2.2 2.4 3.6.5-1.4 1.5-2.7 2.4-3.6 1.2 4.2.2 7.4-2.4 9.6z'/><path d='M12 19c-4.2 0-7.6-2.2-8.6-5.6 2.8-.2 5.4.8 7.2 2.7M12 19c4.2 0 7.6-2.2 8.6-5.6-2.8-.2-5.4.8-7.2 2.7'/></svg>");
   --vs-icon-bars: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><path d='M4 20V13h4v7M10 20V8h4v12M16 20v-9h4v9'/></svg>");
+  --vs-icon-stadium: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><ellipse cx='12' cy='15' rx='6' ry='2.6'/><path d='M3 15c0-3.9 4-6.8 9-6.8s9 2.9 9 6.8v2.4c0 2.2-4 3.9-9 3.9s-9-1.7-9-3.9z'/><path d='M5 3.5v5M19 3.5v5' stroke-linecap='round'/></svg>");
 
   /* 既存の色トークンを夜の舞台へ寄せる。個別に書かれた色はそのまま残る。 */
   --bg: #07050a;
@@ -1585,6 +1586,11 @@ a:focus-visible,
 .vl-tile-danwaku {
   --tile-accent: 176, 214, 150;
   --tile-icon: var(--vs-icon-lotus);
+}
+
+.vl-tile-stadium {
+  --tile-accent: 143, 216, 255;
+  --tile-icon: var(--vs-icon-stadium);
 }
 
 /* ランキングとAnjuPayの入口。スマホでは画面下のタブ、PCでは横並び。 */

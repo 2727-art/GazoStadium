@@ -154,6 +154,7 @@ const {
   createRouletteTrainingService,
 } = require("./roulette-training-service");
 const { createTributeService } = require("./tribute-service");
+const { createStadiumService } = require("./stadium-service");
 const { throwRetiredCommunityMode } = require("./retired-community-modes");
 const { cleanupRetiredFreeTableHistory } = require("./free-table-retention");
 const {
@@ -16258,6 +16259,39 @@ exports.expireTributeContracts = onSchedule({
   } catch (error) {
     console.error("expireTributeContracts failed", { error });
     throw error;
+  }
+});
+
+// マイスタジアム: 観客は推しカードの成長と同じ正本（検証済みの正式完走数）から読み直す。
+const stadiumService = createStadiumService({
+  firestore,
+  HttpsError,
+  ensureWallet,
+  walletRef,
+  anjuPayLedgerConfigRef,
+  walletData,
+  walletCreditCapacity,
+  debitPoints,
+  creditPoints,
+  stageAnjuPayOpening,
+  appendAnjuPayEntry,
+  anjuPayWalletMetadataPatch,
+  anjuPayEntryId,
+  mirrorWallet,
+  bestEffort,
+  economyProgressRef,
+  totalVerifiedMatches: (progress) => normalizeEconomyProgress(progress).achievementStats.totalMatches,
+});
+
+exports.stadiumAction = onCall(callableOptions("stadiumAction"), async (request) => {
+  const uid = requireUid(request);
+  const action = cleanText(request.data?.action, 16);
+  try {
+    return await stadiumService.performAction(uid, request.data);
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("stadiumAction failed", { uid, action, error });
+    throw new HttpsError("internal", "マイスタジアムの処理を完了できませんでした。");
   }
 });
 

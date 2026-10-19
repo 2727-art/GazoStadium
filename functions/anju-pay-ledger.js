@@ -89,6 +89,7 @@ function sanitizeDetails(value) {
     counterpartyName: 16,
     publicSellerId: 32,
     listingTitle: 30,
+    facility: 16,
   };
   for (const [field, maximumLength] of Object.entries(textFields)) {
     const text = cleanText(source[field], maximumLength);
@@ -96,6 +97,9 @@ function sanitizeDetails(value) {
   }
   if (Number.isSafeInteger(Number(source.targetTier))) {
     details.targetTier = boundedInteger(source.targetTier, 0, 100, 0);
+  }
+  if (Number.isSafeInteger(Number(source.facilityLevel))) {
+    details.facilityLevel = boundedInteger(source.facilityLevel, 0, 100, 0);
   }
   if (Array.isArray(source.tierIds)) {
     const tierIds = [...new Set(source.tierIds
