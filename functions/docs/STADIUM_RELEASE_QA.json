@@ -7,7 +7,20 @@
   "baseCommit": "7309508",
   "branch": "feature/my-stadium",
   "pullRequest": 2,
-  "mergedToMain": false,
+  "mergedToMain": true,
+  "mergeCommit": "b19a448",
+  "mergedAt": "2026-10-19T12:39:05Z",
+  "postMergeCheck": {
+    "mainTreeEquals": "323cae1",
+    "workersBuildCompletedAt": "2026-10-19T12:39:37Z",
+    "routesMatchingMain": [
+      "gazostadium.web.app",
+      "gazostadium.firebaseapp.com",
+      "gazostadium.anjugames.workers.dev"
+    ],
+    "privateFilesNotFound": true,
+    "stadiumActionUnauthenticatedProbe": 401
+  },
   "scope": {
     "functions": [
       "stadiumAction",
@@ -112,7 +125,14 @@
     "workersBuildCompletedAt": "2026-10-19T12:06:22Z",
     "resolvedAt": "about 2026-10-19T12:30Z (stadiumAction created)",
     "userImpact": "the stadium tile on workers.dev opened to an error screen; no data written; web.app unaffected",
-    "branchControlChanged": false
+    "cause": "non-production branch builds used `npx wrangler deploy` as the version command",
+    "branchControlChanged": true,
+    "branchControlNow": {
+      "productionBranch": "main",
+      "productionDeployCommand": "npx wrangler deploy",
+      "previewBranchBuilds": false,
+      "verifiedByBranchPush": false
+    }
   },
   "notVerified": [
     "emulator: two simultaneous collects, client read of stadiums denied",

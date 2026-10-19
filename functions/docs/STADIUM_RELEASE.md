@@ -7,7 +7,7 @@
 - 「開業する」を押した時点の正式完走数を記録し、全員が観客0人から始める。開業前の完走は数えない（ユーザー決定）
 - 観客は開業後の検証済み1on1（通常型・戦略型）の完走1回で30人。入場者（観客と収容人数の少ない方）が売上を落とし、金庫（12〜24時間）に貯まる。回収は日本時間1日200 Payまで
 - 施設はスタンド・売店・金庫の3つをPayで1段ずつ建てる（全部で25,800 Pay、満席で8 Pay/時）。代金は消却
-- 詳細は [`STADIUM_DESIGN.md`](../../STADIUM_DESIGN.md)。実装コミット: `a754e75`（ブランチ `feature/my-stadium`、PR #2。`main` へは未マージ）
+- 詳細は [`STADIUM_DESIGN.md`](../../STADIUM_DESIGN.md)。実装コミット: `a754e75`、リリース記録: `323cae1`（ブランチ `feature/my-stadium`）。PR #2 をユーザーが GitHub でマージ（マージコミット `b19a448`、12:39:05Z）
 
 ## 配信対象
 
@@ -29,7 +29,7 @@
 - `feature/my-stadium` を push しただけで（`main` は `7309508` のまま）、Workers Builds がこのブランチを本番の workers.dev に出した（チェック「Workers Builds: gazostadium」完了 12:06:22Z）。それまでは `main` だけが本番に出ると思っていた
 - その間 workers.dev ではトップに「マイスタジアム」のタイルが出たが、`stadiumAction` が未配備（404）のため、開くと「開けませんでした」の画面になった。データの書き込みはない。web.app と firebaseapp.com は `main` の画面のままだった
 - 12:30Z 頃に `stadiumAction` を配備して解消（約24分間）。ロールバックではなく、そのまま公開する方針はユーザーの決定
-- Cloudflare の Workers Builds の Branch control（本番ブランチ・ほかのブランチのデプロイコマンド）は変えていない。変えるまでは、どのブランチの push も本番の workers.dev に出る
+- 原因は Cloudflare の Workers Builds の設定で、非本番ブランチのビルドの「バージョン コマンド」が `npx wrangler deploy` だった。同じ日にユーザーが設定を変え、「プロダクション」は `main` と `npx wrangler deploy` のまま、「プレビューのベース」の「プレビューブランチのビルド」をオフにした。以後 `main` 以外の push はビルドもデプロイもしない（実際のブランチの push ではまだ確かめていない）。`main` 以外の PR には「Workers Builds」のチェックが付かなくなる
 
 ## 本番反映結果
 
@@ -39,10 +39,10 @@
 - Hosting: 110ファイルを公開（新しくアップロードしたのは7ファイル）
 - 3経路（web.app・firebaseapp.com・workers.dev）すべてで、`index.html`・`stadium.js`・`stadium.css`・`stadium-core.mjs`・`app.js`・`account.js`・`velvet.css` が `a754e75` と一致（改行を揃えて比較）。`STADIUM_DESIGN.md`・`README.md`・`functions/stadium-rules.js`・`functions/stadium-service.js` は404
 - 本番（web.app）の内蔵ブラウザ: トップの「マイスタジアム」から、`stadiumAction` の `get` を通って開業の画面が出た（App Check と匿名ログインを通過）。コンソールのエラーは0件。「開業する」・回収・建設は本番では行っていない（記録を作らないため）
+- マージの後: `main`（`b19a448`）の中身は `323cae1` と同じ。workers.dev は `main` から組み直され（12:39:37Z success）、3経路すべてで同じ7ファイルが `origin/main` と一致し、設計書・README・サーバーのコード・リリースの記録は404のまま。`stadiumAction` は認証なしで401
 
 ## 互換性と限界
 
 - 本番の HTML は `Cache-Control: max-age=3600` のため、公開前に開いていた人は最大1時間ほどタイルが出ない。読み直せば出る
-- `main` にはまだマイスタジアムが入っていない。PR #2 をマージする前に、ほかのブランチや `main` が push されると workers.dev はその版に戻り、ほかのセッションが `main` から Hosting を出すと web.app からもタイルが消える（`stadiumAction` は残るので、開いている画面は動く）
 - エミュレータでの確認（同時に2回回収しても二重にならないこと、ブラウザから `stadiums` を読めないこと）は行っていない。どちらも Firestore のトランザクションと全拒否ルールに任せている
 - 本番での開業・回収・建設の通し、iPhone／Android 実機・Safari での確認は行っていない
