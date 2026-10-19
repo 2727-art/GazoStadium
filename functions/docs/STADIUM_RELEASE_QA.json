@@ -1,0 +1,122 @@
+{
+  "checkedAt": "2026-10-19T12:31:00Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "a754e75",
+  "releaseHead": "a754e75",
+  "baseCommit": "7309508",
+  "branch": "feature/my-stadium",
+  "pullRequest": 2,
+  "mergedToMain": false,
+  "scope": {
+    "functions": [
+      "stadiumAction",
+      "economyAction"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 110,
+    "newPublicFiles": [
+      "stadium.js",
+      "stadium.css",
+      "stadium-core.mjs"
+    ],
+    "changedPublicFiles": [
+      "index.html",
+      "app.js",
+      "account.js",
+      "velvet.css"
+    ],
+    "serverCodeChanged": true,
+    "dataMigration": null
+  },
+  "decisions": {
+    "concept": "idle stadium inside 貼り合いスタジアム, not part of the ranch",
+    "fans": "30 per verified 1on1 completion after opening, win or lose",
+    "startFromZero": "opening records baselineMatches; completions before opening never count",
+    "numbers": {
+      "fansPerMatch": 30,
+      "standCapacity": [1000, 1500, 2000, 3000, 4000, 5000],
+      "shopMilliPayPerThousandPerHour": [1000, 1200, 1400, 1600],
+      "vaultHours": [12, 16, 20, 24],
+      "totalBuildCost": 25800,
+      "maxPayPerHour": 8,
+      "dailyCollectLimit": 200
+    },
+    "excluded": ["gacha", "login streaks", "notifications", "time-limited loss", "visiting other stadiums", "rankings", "training completions as fans"],
+    "releaseInsteadOfRollback": "user chose to deploy stadiumAction rather than roll workers.dev back"
+  },
+  "tests": {
+    "total": 2028,
+    "passed": 1997,
+    "failed": 0,
+    "skipped": 31
+  },
+  "functions": {
+    "listedBefore": 36,
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs22"
+    ],
+    "changedSincePreviousRelease": [
+      {
+        "id": "economyAction",
+        "previousSourceHash": "81a2b70c15c8271140837122632b6aeb0395b372",
+        "sourceHash": "18155dbd5ee2e0c14f2ffec61857bde61bb2eeb2",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      },
+      {
+        "id": "stadiumAction",
+        "previousSourceHash": null,
+        "sourceHash": "18155dbd5ee2e0c14f2ffec61857bde61bb2eeb2",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      }
+    ],
+    "unauthenticatedProbe": "stadiumAction POST without auth -> 401 UNAUTHENTICATED"
+  },
+  "routes": {
+    "checked": [
+      "gazostadium.web.app",
+      "gazostadium.firebaseapp.com",
+      "gazostadium.anjugames.workers.dev"
+    ],
+    "matchingHead": [
+      "index.html",
+      "stadium.js",
+      "stadium.css",
+      "stadium-core.mjs",
+      "app.js",
+      "account.js",
+      "velvet.css"
+    ],
+    "notFound": [
+      "STADIUM_DESIGN.md",
+      "README.md",
+      "functions/stadium-rules.js",
+      "functions/stadium-service.js"
+    ],
+    "lineEndingsNormalized": true
+  },
+  "browserSmoke": {
+    "origin": "https://gazostadium.web.app",
+    "result": "stadium tile opened the unopened screen through stadiumAction get; 0 console errors",
+    "writes": "none (open, collect and build were not performed in production)"
+  },
+  "incident": {
+    "summary": "pushing feature/my-stadium deployed it to production workers.dev before stadiumAction existed",
+    "workersBuildCompletedAt": "2026-10-19T12:06:22Z",
+    "resolvedAt": "about 2026-10-19T12:30Z (stadiumAction created)",
+    "userImpact": "the stadium tile on workers.dev opened to an error screen; no data written; web.app unaffected",
+    "branchControlChanged": false
+  },
+  "notVerified": [
+    "emulator: two simultaneous collects, client read of stadiums denied",
+    "production open/collect/build end to end",
+    "iPhone / Android / Safari"
+  ]
+}
