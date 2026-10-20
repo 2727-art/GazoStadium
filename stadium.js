@@ -13,6 +13,7 @@ import {
 import { formatAnjuPay } from "./anju-pay-format.mjs?v=anju-pay-format-v1";
 import {
   DAILY_COLLECT_LIMIT,
+  FACILITIES,
   FANS_PER_MATCH,
   HOUR_MS,
   MILLI_PER_PAY,
@@ -30,6 +31,14 @@ const appRoot = document.querySelector("#app");
 const stadiumActionCallable = httpsCallable(functions, "stadiumAction");
 const PREVIEW_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const TICK_MS = 5_000;
+// 箱庭ジオラマの絵（tools/stadium-art/build_stadium.py で Blender から描き出したもの）。
+const ART_BASE = "assets/stadium/";
+const ART_VERSION = "diorama-v1";
+const ART_WIDTH = 1600;
+const ART_HEIGHT = 1200;
+const BUILD_SCAFFOLD_MS = 1_200;
+const BUILD_REVEAL_MS = 1_300;
+const STAND_CROP = Object.freeze({ x: 0.1, y: 0.0, w: 0.8, h: 0.74 });
 
 const previewScenario = (() => {
   try {
@@ -44,6 +53,9 @@ const previewScenario = (() => {
 let active = false;
 let lifecycleGeneration = 0;
 let tickTimer = null;
+let buildTimers = [];
+let artMeta = null;
+let artPromise = null;
 let state = createState();
 
 function createState() {
@@ -55,7 +67,10 @@ function createState() {
     busy: "",
     confirm: "",
     arrival: 0,
+    arrivalShown: false,
     notice: null,
+    buildFx: null,
+    entered: false,
   };
 }
 
@@ -249,11 +264,243 @@ function stadiumSvg(view, { empty = false } = {}) {
   </svg>`;
 }
 
+// ───────────── 箱庭ジオラマ（Blender の絵を重ねる） ─────────────
+
+function validArt(meta) {
+  if (!meta || typeof meta !== "object" || !meta.stand || !meta.shop || !meta.vault) return false;
+  return Object.keys(FACILITIES).every((id) => FACILITIES[id].levels.every((row) => {
+    const entry = meta[id]?.[String(row.level)];
+    return entry && typeof entry.image === "string" && (id !== "stand" || Array.isArray(entry.seats));
+  }));
+}
+
+function loadArt() {
+  if (!artPromise) {
+    artPromise = fetch(`${ART_BASE}stadium-art.json?v=${ART_VERSION}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .catch(() => null)
+      .then((meta) => {
+        artMeta = validArt(meta) ? meta : null;
+        return artMeta;
+      });
+  }
+  return artPromise;
+}
+
+function artUrl(file) {
+  return `${ART_BASE}${file}?v=${ART_VERSION}`;
+}
+
+function facilityImage(facility, level) {
+  if (facility === "stand") return artUrl(`base-stand-${level}.webp`);
+  return artUrl(`${facility}-${level}.webp`);
+}
+
+function levelOf(view, facility) {
+  return view?.facilities?.find((row) => row.id === facility)?.level || 1;
+}
+
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+// 決まった順で客席を埋める（7919 は素数なので、席の数がそれより少なければ並べ替えになる）。
+function seatRank(index, total) {
+  return (index * 7919) % total;
+}
+
+function anchorStyle(anchor) {
+  const x = Math.max(0, anchor.x);
+  const y = Math.max(0, anchor.y);
+  const w = Math.min(1 - x, anchor.w);
+  const h = Math.min(1 - y, anchor.h);
+  return `left:${(x * 100).toFixed(2)}%;top:${(y * 100).toFixed(2)}%;width:${(w * 100).toFixed(2)}%;height:${(h * 100).toFixed(2)}%`;
+}
+
+function crowdSvg(level, fans, { animateFrom = null } = {}) {
+  const seats = artMeta.stand[String(level)]?.seats || [];
+  if (!seats.length) return "";
+  const capacity = FACILITIES.stand.levels[level - 1].value;
+  const filled = Math.round(seats.length * Math.min(1, fans / capacity));
+  const before = animateFrom === null ? filled : Math.round(seats.length * Math.min(1, animateFrom / capacity));
+  const radius = (Number(artMeta.seatRadius) || 0.0034) * ART_WIDTH;
+  const fresh = Math.max(1, filled - before);
+  const dots = [];
+  seats.forEach(([x, y], index) => {
+    const rank = seatRank(index, seats.length);
+    if (rank >= filled) return;
+    const isNew = rank >= before;
+    const delay = isNew ? Math.round(((rank - before) / fresh) * 1_100) : 0;
+    dots.push(`<circle class="stadium-fan is-tone-${index % 3}${isNew ? " is-new" : ""}"${isNew ? ` style="animation-delay:${delay}ms"` : ""} cx="${(x * ART_WIDTH).toFixed(1)}" cy="${(y * ART_HEIGHT).toFixed(1)}" r="${radius.toFixed(1)}" />`);
+  });
+  return `<svg class="stadium-crowd" viewBox="0 0 ${ART_WIDTH} ${ART_HEIGHT}" preserveAspectRatio="none" aria-hidden="true">${dots.join("")}</svg>`;
+}
+
+function sparkles(anchor) {
+  const cx = anchor.x + anchor.w / 2;
+  const cy = anchor.y + anchor.h / 2;
+  return Array.from({ length: 10 }, (_, index) => {
+    const angle = (index / 10) * Math.PI * 2;
+    const distance = 0.35 + (index % 3) * 0.12;
+    const x = cx + Math.cos(angle) * anchor.w * distance;
+    const y = cy + Math.sin(angle) * anchor.h * distance * 0.8;
+    return `<i class="stadium-sparkle" style="left:${(x * 100).toFixed(2)}%;top:${(y * 100).toFixed(2)}%;animation-delay:${index * 60}ms"></i>`;
+  }).join("");
+}
+
+function anchorFor(facility) {
+  const anchor = artMeta.anchors?.[facility];
+  if (!anchor) return { x: 0.1, y: 0.05, w: 0.8, h: 0.7 };
+  if (facility === "stand") return { x: 0.12, y: 0.04, w: 0.76, h: 0.62 };
+  return anchor;
+}
+
+function dioramaLabel(view, { empty }) {
+  if (empty) return "まだ開業していない箱庭のスタジアムの絵";
+  const stand = view.facilities.find((row) => row.id === "stand");
+  const shop = view.facilities.find((row) => row.id === "shop");
+  const vault = view.facilities.find((row) => row.id === "vault");
+  return `箱庭のスタジアムの絵。${stand.name}に収容${count(view.capacity)}人のうち${count(view.seated)}人が入場${view.waiting ? `、外で${count(view.waiting)}人が待っています` : ""}。${shop.name}と${vault.name}`;
+}
+
+// 絵のまとまり。建設の演出中は、演出の段階に合わせて古い段・足場・新しい段を出し分ける。
+function stadiumArt(view, { empty = false } = {}) {
+  if (!artMeta) return stadiumSvg(view, { empty });
+  const fx = empty ? null : state.buildFx;
+  const shown = {
+    stand: empty ? 1 : levelOf(view, "stand"),
+    shop: empty ? 1 : levelOf(view, "shop"),
+    vault: empty ? 1 : levelOf(view, "vault"),
+  };
+  if (fx && fx.phase === "scaffold") shown[fx.facility] = fx.from;
+  const fans = empty ? 0 : view.fans;
+  const animateFrom = !empty && state.arrival > 0 && !state.arrivalShown ? Math.max(0, fans - state.arrival) : null;
+  const capacity = FACILITIES.stand.levels[shown.stand - 1].value;
+  const full = !empty && fans >= capacity && capacity > 0;
+  const lights = full ? (artMeta.stand[String(shown.stand)]?.lights || []) : [];
+  const fxClass = fx && fx.phase !== "done" ? ` is-${fx.phase} fx-${fx.facility}` : "";
+  const anchor = fx ? anchorFor(fx.facility) : null;
+  const layers = [
+    `<img class="stadium-layer${fx?.facility === "stand" && fx.phase === "reveal" ? " is-new-facility" : ""}" src="${facilityImage("stand", shown.stand)}" alt="" width="${ART_WIDTH}" height="${ART_HEIGHT}" decoding="async" />`,
+    crowdSvg(shown.stand, fans, { animateFrom }),
+    `<img class="stadium-layer${fx?.facility === "shop" && fx.phase === "reveal" ? " is-new-facility" : ""}" src="${facilityImage("shop", shown.shop)}" alt="" width="${ART_WIDTH}" height="${ART_HEIGHT}" decoding="async" />`,
+    `<img class="stadium-layer${fx?.facility === "vault" && fx.phase === "reveal" ? " is-new-facility" : ""}" src="${facilityImage("vault", shown.vault)}" alt="" width="${ART_WIDTH}" height="${ART_HEIGHT}" decoding="async" />`,
+  ];
+  if (fx && fx.phase === "scaffold") {
+    layers.push(`<img class="stadium-layer stadium-scaffold" src="${artUrl(`scaffold-${fx.facility}.webp`)}" alt="" width="${ART_WIDTH}" height="${ART_HEIGHT}" decoding="async" />`);
+    layers.push(`<span class="stadium-dust" style="${anchorStyle(anchor)}" aria-hidden="true"></span>`);
+  }
+  if (fx && fx.phase === "reveal") {
+    layers.push(`<span class="stadium-flash" style="${anchorStyle(anchor)}" aria-hidden="true"></span>`);
+    layers.push(`<span class="stadium-sparkles" aria-hidden="true">${sparkles(anchor)}</span>`);
+  }
+  if (lights.length) {
+    layers.push(`<span class="stadium-glow" aria-hidden="true">${lights.map(([x, y], index) => `<i style="left:${(x * 100).toFixed(2)}%;top:${(y * 100).toFixed(2)}%;animation-delay:${index * 180}ms"></i>`).join("")}</span>`);
+    layers.push('<span class="stadium-full-badge">満席</span>');
+  }
+  if (!empty && view.vault) {
+    const vaultAnchor = anchorFor("vault");
+    const vaultPay = Math.floor(liveVaultMilli(view) / MILLI_PER_PAY);
+    // 吹き出しは金庫の区画の少し上（段が低いうちは建物が小さいので、区画の中ほどに寄せる）。
+    const lift = [0.42, 0.36, 0.22, 0.12][shown.vault - 1] ?? 0.2;
+    layers.push(`<span class="stadium-bubble${view.vault.full ? " is-full" : ""}" style="left:${((vaultAnchor.x + vaultAnchor.w / 2) * 100).toFixed(2)}%;top:${(Math.max(0.04, vaultAnchor.y + vaultAnchor.h * lift) * 100).toFixed(2)}%"><b data-stadium-vault-pay>${count(vaultPay)}</b> Pay</span>`);
+  }
+  const classes = `stadium-diorama${empty ? " is-closed" : ""}${full ? " is-full" : ""}${fxClass}`;
+  return `<div class="${classes}" data-stadium-diorama role="img" aria-label="${escapeHtml(dioramaLabel(view, { empty }))}">${layers.join("")}</div>`;
+}
+
+// 施設の今の見た目の切り抜き（カードの小さな絵）。
+function facilityThumb(facility, level, extraClass = "") {
+  if (!artMeta) return "";
+  let crop = facility === "stand" ? STAND_CROP : anchorFor(facility);
+  if (facility !== "stand") {
+    // 低い段の売店・金庫は小さいので、区画の下の方へ寄せて大きく切り抜く。
+    const zoom = [0.5, 0.62, 0.84, 1][level - 1] ?? 1;
+    const w = crop.w * zoom;
+    const h = crop.h * zoom;
+    crop = { x: crop.x + (crop.w - w) / 2, y: crop.y + (crop.h - h) * 0.82, w, h };
+  }
+  const x = Math.max(0, crop.x);
+  const y = Math.max(0, crop.y);
+  const w = Math.min(1 - x, crop.w);
+  const h = Math.min(1 - y, crop.h);
+  const sizeX = (100 / w).toFixed(2);
+  const posX = w >= 1 ? 0 : ((x / (1 - w)) * 100).toFixed(2);
+  const posY = h >= 1 ? 0 : ((y / (1 - h)) * 100).toFixed(2);
+  const aspect = ((w * ART_WIDTH) / (h * ART_HEIGHT)).toFixed(3);
+  return `<span class="stadium-thumb${extraClass ? ` ${extraClass}` : ""}" style="aspect-ratio:${aspect};background-image:url('${facilityImage(facility, level)}');background-size:${sizeX}% auto;background-position:${posX}% ${posY}%" aria-hidden="true"></span>`;
+}
+
+function preloadImage(url, timeout = 2_500) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    const done = () => resolve();
+    const timer = window.setTimeout(done, timeout);
+    image.addEventListener("load", () => { window.clearTimeout(timer); done(); }, { once: true });
+    image.addEventListener("error", () => { window.clearTimeout(timer); done(); }, { once: true });
+    image.src = url;
+  });
+}
+
+function clearBuildFx() {
+  buildTimers.forEach((timer) => window.clearTimeout(timer));
+  buildTimers = [];
+}
+
+function renderDiorama() {
+  const node = appRoot?.querySelector("[data-stadium-diorama]");
+  if (!node || !state.view) {
+    render();
+    return;
+  }
+  node.outerHTML = stadiumArt(state.view);
+}
+
+// 建てた瞬間の演出: 足場（古い段）→ 光って新しい段 → 完成のカード。動きを減らす設定では完成のカードだけ出す。
+// 呼んだ直後（同期）に足場の段階へ入るので、続く画面の描き直しでも古い段と足場が出る。
+function playBuild(facility, from, to, generation) {
+  clearBuildFx();
+  if (!artMeta || prefersReducedMotion()) {
+    state.buildFx = null;
+    return;
+  }
+  const notice = state.notice;
+  const startedAt = Date.now();
+  state.buildFx = { facility, from, to, phase: "scaffold" };
+  state.notice = null;
+  window.requestAnimationFrame?.(() => {
+    appRoot.querySelector("[data-stadium-diorama]")?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  });
+  Promise.all([preloadImage(facilityImage(facility, to)), preloadImage(artUrl(`scaffold-${facility}.webp`))])
+    .then(() => {
+      if (!isCurrent(generation)) return;
+      const wait = Math.max(300, BUILD_SCAFFOLD_MS - (Date.now() - startedAt));
+      buildTimers.push(window.setTimeout(() => {
+        if (!isCurrent(generation) || !state.buildFx) return;
+        state.buildFx = { ...state.buildFx, phase: "reveal" };
+        renderDiorama();
+      }, wait));
+      buildTimers.push(window.setTimeout(() => {
+        if (!isCurrent(generation)) return;
+        state.buildFx = null;
+        state.notice = notice;
+        render();
+      }, wait + BUILD_REVEAL_MS));
+    });
+}
+
 // ───────────── 画面 ─────────────
 
 function frame(content) {
   const balance = state.view?.walletBalance;
-  return `<section class="screen stadium-screen" aria-busy="${state.busy ? "true" : "false"}">
+  // 画面の入場の動きは最初の一度だけ。描き直しのたびに薄く点滅しないようにする。
+  const settled = state.entered ? " is-settled" : "";
+  state.entered = true;
+  return `<section class="screen stadium-screen${settled}" aria-busy="${state.busy ? "true" : "false"}">
     <header class="stadium-header">
       <div class="stadium-brand"><span class="stadium-brand-mark" aria-hidden="true"></span><div><small>MY STADIUM${previewScenario ? " / PREVIEW" : ""}</small><strong>マイスタジアム</strong></div></div>
       ${balance === null || balance === undefined ? "" : `<span class="stadium-wallet-chip">残高 <b>${escapeHtml(formatAnjuPay(balance))}</b></span>`}
@@ -275,7 +522,7 @@ function renderError() {
 function renderUnopened() {
   const busy = state.busy === "open";
   return frame(`<div class="stadium-panel stadium-intro">
-    <figure class="stadium-figure">${stadiumSvg(null, { empty: true })}</figure>
+    <figure class="stadium-figure">${stadiumArt(null, { empty: true })}</figure>
     <div class="stadium-intro-copy">
       <p class="stadium-eyebrow">開業の前に</p>
       <h1>あなたのスタジアムを開業する</h1>
@@ -328,7 +575,7 @@ function facilityNextEffect(facility, view) {
 
 function renderFacility(facility, view) {
   const balance = Number(view.walletBalance) || 0;
-  const head = `<div class="stadium-facility-head"><span class="stadium-facility-label">${escapeHtml(facility.label)}</span><strong>Lv${facility.level} ${escapeHtml(facility.name)}</strong><small>${escapeHtml(facilityEffect(facility))}</small></div>`;
+  const head = `<div class="stadium-facility-head">${facilityThumb(facility.id, facility.level)}<div class="stadium-facility-title"><span class="stadium-facility-label">${escapeHtml(facility.label)}</span><strong>Lv${facility.level} ${escapeHtml(facility.name)}</strong><small>${escapeHtml(facilityEffect(facility))}</small><span class="stadium-level-pips" aria-label="${escapeHtml(`全${facility.maxLevel}段のうち${facility.level}段`)}">${Array.from({ length: facility.maxLevel }, (_, index) => `<i class="${index < facility.level ? "is-on" : ""}"></i>`).join("")}</span></div></div>`;
   if (!facility.next) {
     return `<li class="stadium-facility is-complete">${head}<p class="stadium-complete">完成</p></li>`;
   }
@@ -379,6 +626,18 @@ function renderCollect(view) {
 function renderNotice() {
   const notice = state.notice;
   if (!notice) return "";
+  if (notice.build && artMeta) {
+    const { facility, from, to } = notice.build;
+    return `<div class="stadium-notice stadium-built" role="status">
+      <p class="stadium-built-title"><span>完成</span><b>${escapeHtml(notice.title)}</b></p>
+      <div class="stadium-built-compare" aria-hidden="true">
+        <figure>${facilityThumb(facility, from, "is-before")}<figcaption>Lv${from}</figcaption></figure>
+        <i class="stadium-built-arrow"></i>
+        <figure>${facilityThumb(facility, to, "is-after")}<figcaption>Lv${to}</figcaption></figure>
+      </div>
+      ${notice.body ? `<span>${escapeHtml(notice.body)}</span>` : ""}
+    </div>`;
+  }
   return `<div class="stadium-notice" role="status"><b>${escapeHtml(notice.title)}</b>${notice.body ? `<span>${escapeHtml(notice.body)}</span>` : ""}</div>`;
 }
 
@@ -390,7 +649,7 @@ function renderMain() {
   return frame(`
     ${state.arrival > 0 ? `<div class="stadium-arrival" role="status">前回から <b>+${count(state.arrival)}人</b> 来場</div>` : ""}
     ${renderNotice()}
-    <figure class="stadium-figure">${stadiumSvg(view)}<figcaption>Lv${stand.level} ${escapeHtml(stand.name)}</figcaption></figure>
+    <figure class="stadium-figure">${stadiumArt(view)}<figcaption>Lv${stand.level} ${escapeHtml(stand.name)}${view.fans >= view.capacity && view.capacity > 0 ? "・満席" : ""}</figcaption></figure>
     <dl class="stadium-stats">
       <div><dt>観客</dt><dd>${count(view.fans)}人</dd><small>入場 ${count(view.seated)}人 / 収容 ${count(view.capacity)}人${view.waiting ? `・外で待つ ${count(view.waiting)}人` : ""}</small></div>
       <div><dt>時給</dt><dd>${formatRate(view.rateMilliPerHour)} Pay</dd><small>入場者 × 売店の単価</small></div>
@@ -417,7 +676,11 @@ function render() {
   }
   if (state.screen === "error") appRoot.innerHTML = renderError();
   else if (state.screen === "unopened") appRoot.innerHTML = renderUnopened();
-  else appRoot.innerHTML = renderMain();
+  else {
+    appRoot.innerHTML = renderMain();
+    // 来場した観客が席に入る動きは、開いた最初の一度だけ見せる。
+    if (state.arrival > 0) state.arrivalShown = true;
+  }
 }
 
 // 金庫の数字・ゲージ・回収ボタンだけを書き換える（画面全体は描き直さない）。
@@ -449,7 +712,10 @@ function applyView(view, { keepArrival = false } = {}) {
     return;
   }
   state.screen = "main";
-  if (!keepArrival) state.arrival = Number(view.newFans) || 0;
+  if (!keepArrival) {
+    state.arrival = Number(view.newFans) || 0;
+    state.arrivalShown = false;
+  }
 }
 
 async function refresh(generation = lifecycleGeneration) {
@@ -543,8 +809,13 @@ async function handleClick(target) {
       state.confirm = "";
       const built = view.facilities?.find((row) => row.id === facility);
       state.notice = built
-        ? { title: `${built.label}を Lv${built.level} ${built.name} にしました`, body: `残高 ${formatAnjuPay(view.walletBalance)}` }
+        ? {
+          title: `${built.label} Lv${built.level} ${built.name}`,
+          body: `残高 ${formatAnjuPay(view.walletBalance)}`,
+          build: { facility, from: Math.max(1, built.level - 1), to: built.level },
+        }
         : null;
+      if (built && !view.replayed) playBuild(facility, Math.max(1, built.level - 1), built.level, generation);
     });
   }
 }
@@ -568,7 +839,15 @@ async function openStadiumScreen() {
   state.fatalError = "";
   render();
   try {
+    // 絵の位置情報は並行して読み、3秒で間に合わなければ簡単な絵で始めて、届いたら描き直す。
+    const art = loadArt().then(() => {
+      if (isCurrent(generation) && !state.busy && !state.buildFx && ["main", "unopened"].includes(state.screen)) {
+        render();
+      }
+    });
     if (!previewScenario) await ensureUser();
+    if (!isCurrent(generation)) return;
+    await Promise.race([art, new Promise((resolve) => { window.setTimeout(resolve, 3_000); })]);
     if (!isCurrent(generation)) return;
     await refresh(generation);
     if (isCurrent(generation)) setChrome();
@@ -608,6 +887,7 @@ function requestHome() {
   if (!active) return;
   active = false;
   lifecycleGeneration += 1;
+  clearBuildFx();
   window.clearInterval(tickTimer);
   tickTimer = null;
   state = createState();
@@ -615,13 +895,16 @@ function requestHome() {
 }
 
 window.addEventListener("visibilitychange", () => {
-  if (!active || document.visibilityState !== "visible" || state.screen !== "main" || state.busy) return;
+  if (!active || document.visibilityState !== "visible" || state.screen !== "main" || state.busy || state.buildFx) {
+    return;
+  }
   refresh().catch(() => {});
 });
 
 window.addEventListener("beforeunload", () => {
   active = false;
   lifecycleGeneration += 1;
+  clearBuildFx();
   window.clearInterval(tickTimer);
 });
 
