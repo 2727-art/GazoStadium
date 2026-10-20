@@ -29,6 +29,10 @@
   box-sizing: border-box;
 }
 
+.stadium-screen.is-settled {
+  animation: none;
+}
+
 .stadium-screen h1,
 .stadium-screen h2 {
   margin: 0;
@@ -318,9 +322,38 @@
 
 .stadium-facility-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
+  align-items: center;
+  gap: 12px;
+}
+
+.stadium-facility-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  justify-items: start;
+}
+
+.stadium-facility-head .stadium-thumb {
+  width: 96px;
+  flex: none;
+}
+
+.stadium-level-pips {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.stadium-level-pips i {
+  width: 14px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.stadium-level-pips i.is-on {
+  background: var(--st-gold);
+  box-shadow: 0 0 6px rgba(232, 194, 122, 0.55);
 }
 
 .stadium-facility-label {
@@ -353,6 +386,305 @@
 
 .stadium-error h2 { color: #ff8a8a; }
 
+/* ───── 箱庭ジオラマ（Blender の絵を重ねる） ───── */
+
+.stadium-diorama {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 16px;
+  isolation: isolate;
+  background:
+    radial-gradient(60% 50% at 50% 46%, rgba(143, 216, 255, 0.14), transparent 70%),
+    radial-gradient(90% 70% at 50% 100%, rgba(232, 194, 122, 0.08), transparent 70%),
+    #0a1222;
+  box-shadow: inset 0 0 0 1px var(--st-line);
+}
+
+.stadium-diorama > * {
+  position: absolute;
+}
+
+.stadium-diorama .stadium-layer,
+.stadium-diorama .stadium-crowd {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.stadium-diorama img.stadium-layer {
+  object-fit: contain;
+}
+
+.stadium-diorama.is-closed img.stadium-layer {
+  filter: saturate(0.55) brightness(0.72);
+}
+
+.stadium-diorama.is-full img.stadium-layer:first-child {
+  filter: brightness(1.1) saturate(1.06);
+}
+
+.stadium-crowd .stadium-fan {
+  animation: none;
+  opacity: 0.96;
+}
+
+.stadium-crowd .stadium-fan.is-tone-0 { fill: #ff8cbf; }
+.stadium-crowd .stadium-fan.is-tone-1 { fill: #ffd98a; }
+.stadium-crowd .stadium-fan.is-tone-2 { fill: #a6e1ff; }
+
+.stadium-crowd .stadium-fan.is-new {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: stadium-fan-in 560ms cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+@keyframes stadium-fan-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0); }
+  to { opacity: 0.96; transform: none; }
+}
+
+.stadium-glow {
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.stadium-glow i {
+  position: absolute;
+  width: 13%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 226, 170, 0.42), rgba(255, 214, 150, 0.12) 40%, transparent 70%);
+  animation: stadium-glow 2.6s ease-in-out infinite;
+}
+
+@keyframes stadium-glow {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+.stadium-full-badge,
+.stadium-diorama.is-scaffold::after {
+  top: 10px;
+  left: 12px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.stadium-full-badge {
+  color: #1c1405;
+  background: linear-gradient(135deg, #fff0c8, var(--st-gold));
+  box-shadow: 0 0 20px rgba(232, 194, 122, 0.6);
+  animation: stadium-badge 2.4s ease-in-out infinite;
+}
+
+@keyframes stadium-badge {
+  0%, 100% { box-shadow: 0 0 12px rgba(232, 194, 122, 0.45); }
+  50% { box-shadow: 0 0 26px rgba(232, 194, 122, 0.9); }
+}
+
+.stadium-bubble {
+  transform: translate(-50%, -100%);
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--st-gold);
+  font-size: 0.74rem;
+  font-weight: 800;
+  background: rgba(8, 12, 24, 0.86);
+  box-shadow: inset 0 0 0 1px rgba(232, 194, 122, 0.45);
+}
+
+.stadium-bubble::after {
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  border: 5px solid transparent;
+  border-bottom: 0;
+  border-top-color: rgba(8, 12, 24, 0.86);
+  transform: translateX(-50%);
+  content: "";
+}
+
+.stadium-bubble.is-full {
+  color: #1c1405;
+  background: linear-gradient(135deg, #fff0c8, var(--st-gold));
+  animation: stadium-badge 2s ease-in-out infinite;
+}
+
+.stadium-bubble.is-full::after {
+  border-top-color: var(--st-gold);
+}
+
+/* 建てた瞬間: 足場が降りてきて土ぼこり → 光って新しい段が現れる。 */
+.stadium-diorama.is-scaffold::after {
+  position: absolute;
+  color: #1c1405;
+  background: #f2c14e;
+  content: "工事中…";
+  animation: stadium-badge 1.2s ease-in-out infinite;
+}
+
+.stadium-scaffold {
+  animation: stadium-scaffold-in 520ms cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+
+@keyframes stadium-scaffold-in {
+  from { opacity: 0; transform: translateY(-4%); }
+  to { opacity: 1; transform: none; }
+}
+
+.stadium-dust {
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(28% 22% at 30% 78%, rgba(255, 236, 205, 0.4), transparent 70%),
+    radial-gradient(30% 24% at 70% 82%, rgba(255, 236, 205, 0.35), transparent 70%),
+    radial-gradient(22% 18% at 50% 70%, rgba(255, 246, 225, 0.45), transparent 70%);
+  animation: stadium-dust 1.1s ease-out infinite;
+}
+
+@keyframes stadium-dust {
+  0% { opacity: 0; transform: translateY(6%) scale(0.9); }
+  40% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-4%) scale(1.15); }
+}
+
+.stadium-flash {
+  pointer-events: none;
+  mix-blend-mode: screen;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 252, 240, 0.95), rgba(255, 236, 190, 0.4) 55%, transparent 78%);
+  animation: stadium-flash 1s ease-out both;
+}
+
+@keyframes stadium-flash {
+  0% { opacity: 0; transform: scale(0.6); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+
+/* スタンドは範囲が広いので、光を弱めて白飛びさせない。 */
+.stadium-diorama.fx-stand .stadium-flash {
+  background: radial-gradient(closest-side, rgba(255, 246, 225, 0.55), rgba(255, 230, 180, 0.2) 55%, transparent 78%);
+}
+
+.stadium-diorama.fx-stand.is-reveal .stadium-glow {
+  opacity: 0.4;
+}
+
+.stadium-diorama img.stadium-layer.is-new-facility {
+  animation: stadium-pop 900ms ease-out both;
+}
+
+@keyframes stadium-pop {
+  0% { filter: brightness(2.3) saturate(0.5); }
+  100% { filter: none; }
+}
+
+.stadium-sparkles {
+  inset: 0;
+  pointer-events: none;
+}
+
+.stadium-sparkle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #fff4cf;
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  transform: translate(-50%, -50%);
+  animation: stadium-sparkle 1s ease-out both;
+}
+
+@keyframes stadium-sparkle {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.2) rotate(0deg); }
+  35% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -120%) scale(1.2) rotate(90deg); }
+}
+
+/* 完成のカード（建てる前と後を並べる）。 */
+.stadium-built {
+  display: grid;
+  gap: 10px;
+  box-shadow: inset 0 0 0 1px rgba(232, 194, 122, 0.55), 0 0 28px rgba(232, 194, 122, 0.12);
+  animation: stadium-built-in 420ms cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+
+@keyframes stadium-built-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.stadium-built-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.stadium-built-title span {
+  padding: 2px 10px;
+  border-radius: 999px;
+  color: #1c1405;
+  font-weight: 900;
+  background: linear-gradient(135deg, #fff0c8, var(--st-gold));
+}
+
+.stadium-built-compare {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stadium-built-compare figure {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  max-width: 180px;
+  margin: 0;
+}
+
+.stadium-built-compare figcaption {
+  color: var(--st-mist);
+  font-size: 0.74rem;
+  text-align: center;
+}
+
+.stadium-built-arrow {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  background: var(--st-gold);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12h14M13 6l6 6-6 6'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12h14M13 6l6 6-6 6'/></svg>") center / contain no-repeat;
+}
+
+.stadium-thumb {
+  display: block;
+  width: 100%;
+  border-radius: 10px;
+  background-color: #0b1222;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 0 0 1px var(--st-line);
+}
+
+.stadium-thumb.is-before {
+  filter: saturate(0.6) brightness(0.78);
+}
+
+.stadium-thumb.is-after {
+  box-shadow: inset 0 0 0 1px rgba(232, 194, 122, 0.6), 0 0 16px rgba(232, 194, 122, 0.2);
+}
+
 @media (min-width: 720px) {
   .stadium-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .stadium-intro { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: center; }
@@ -363,4 +695,9 @@
 @media (prefers-reduced-motion: reduce) {
   .stadium-fan { animation: none; }
   .stadium-meter i { transition: none; }
+  .stadium-crowd .stadium-fan.is-new,
+  .stadium-glow i,
+  .stadium-full-badge,
+  .stadium-bubble.is-full,
+  .stadium-built { animation: none; }
 }

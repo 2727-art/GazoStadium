@@ -369,6 +369,9 @@ Googleを利用できない場合だけ、補助手段として16文字の使い
 - 金額・観客数は`stadiumAction`（App Check必須）がすべて計算し、端末からは操作の種類と、建設なら施設と目標の段だけを受け取る。ガチャ・確率・連続ログインボーナス・通知・時間切れで失う仕組みはない。施設の代金は消却する
 - 利用履歴は回収が「マイスタジアムの売上を回収」（`stadium_revenue`）、建設が「マイスタジアムの施設を建設」（`stadium_build`）。`?stadiumPreview=unopened|new|growing|full-outside|vault-full|daily-cap|maxed`（localhostだけ）で、Firebaseへ接続せずに各状態と回収・建設を画面の上で試せる
 
+- 画面の絵は、夜の箱庭ジオラマ（斜め上から見下ろすミニチュア）。スタンド6段・売店4段・金庫4段の見た目と、建設中の足場を Blender で描き出した画像（`assets/stadium/`、計約1MB、スタジアムを開いた時だけ読む）を重ねる。客席は入場者の割合だけ観客の点で埋まり、開いた時に前回からの来場者が席に入る動きを出す。満席になると照明が強まり「満席」を出す。建てた瞬間は足場→光って新しい段→「完成」のカード（建てる前と後の比較）を出す。動きを減らす設定では演出を省き、絵を読めない時は簡単な絵に切り替える
+- 絵を描き直す時は `blender -b --factory-startup -P tools/stadium-art/build_stadium.py -- --mode final --out assets/stadium`（Blender 5.2 で確認、GPU で約1分半）。見える客席と照明の位置も `assets/stadium/stadium-art.json` に書き直す。`tools/` は公開しない
+
 数値の狙い、精算の式、データ、リリース手順は[`STADIUM_DESIGN.md`](STADIUM_DESIGN.md)に固定しています。
 
 ## オンライン機能
@@ -675,6 +678,8 @@ GitHub Pagesにはフロントエンドの静的ファイルだけを配置で�
 - `functions/stadium-rules.js` / `functions/stadium-service.js`: マイスタジアムの数値の表、精算・回収・建設の純粋関数と、`stadiumAction`のトランザクション（ウォレット・台帳・`stadiums/{uid}`）
 - `stadium.js` / `stadium-core.mjs` / `stadium.css`: マイスタジアムの画面・スタジアムの絵・プレビューと、サーバーと同じ表と計算（`stadium-parity.test.js`で一致を確認）
 - `STADIUM_DESIGN.md`: マイスタジアムの設計（観客・施設・数値の狙い・入れないもの・データ・リリース）
+- `assets/stadium/`: マイスタジアムの箱庭ジオラマの画像（段ごとの土台とスタンド、売店・金庫、足場）と、見える客席・照明・施設の位置（`stadium-art.json`）
+- `tools/stadium-art/build_stadium.py`: 箱庭ジオラマを Blender で組み立てて描き出すスクリプト（公開しない）
 - `free-table.js` / `free-table-media.mjs` / `free-table.css`: 自由卓の画面、文字同期、専用P2Pメディア経路、休憩場所のしつらえ
 - `online-p2p-hardening.mjs`: 接続timeout、1回のICE restart、cleanup後の安全な自動再検索
 - `online-session-guard.mjs`: タブ別セッション、多重起動防止、V2シグナル消費判定
