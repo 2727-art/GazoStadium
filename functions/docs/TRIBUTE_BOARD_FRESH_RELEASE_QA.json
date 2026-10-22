@@ -1,0 +1,298 @@
+{
+  "checkedAt": "2026-10-22T07:36:40.617Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "7968766",
+  "releaseHead": "751e65d",
+  "baseCommit": "7b171d8",
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 128,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "serverCodeChanged": true,
+    "dataMigration": false
+  },
+  "decisions": {
+    "boardWindowDays": 7,
+    "noticeFromDaysLeft": 2,
+    "activity": [
+      "start accepting",
+      "today's word",
+      "manager card save (new)",
+      "contract actions"
+    ],
+    "notActivity": [
+      "opening the ranch",
+      "reading (既読) only"
+    ],
+    "cards": "kept; hidden from the board only; invite links still open them",
+    "recommendedShelf": "unchanged (monthly)",
+    "index": "existing accepting + lastActiveAt (desc)"
+  },
+  "tests": {
+    "total": 2036,
+    "passed": 2005,
+    "failed": 0,
+    "skipped": 31
+  },
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs22"
+    ],
+    "changedSincePreviousRelease": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "dca3fae69913869c5d110d53b8bcaee2b9d52312",
+        "sourceHash": "543b1b2f80ff92cae864588216bc79740b12ea6a",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      }
+    ]
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-22T07:36:29Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-board-fresh-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-board-fresh-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-board-fresh.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-board-fresh-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-board-fresh.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-board-fresh-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-board-fresh.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "cacheKeys": {
+      "tribute.js": "…-ranch-kidoku-v1-ranch-board-fresh-v1",
+      "tribute.css": "…-ranch-kidoku-v1-ranch-board-fresh-v1"
+    },
+    "modules": [
+      "tribute-core.mjs (…-ranch-kidoku-v1-ranch-board-fresh-v1)",
+      "tribute-share.mjs (ranch-kidoku-v1)",
+      "tribute-deco.mjs (ranch-frame-color-v1)"
+    ],
+    "consoleErrors": "one 403 without a URL, as in earlier releases (automated browser)",
+    "ranchActionsInProduction": false
+  },
+  "limits": [
+    "The number of managers removed from the board at release was not counted (reading production data is left to the user).",
+    "Clients loaded before the release (HTML max-age 3600) show the previous hub status until reloaded; the board itself is filtered on the server.",
+    "No two-player run, iPhone/Android device or Safari check in production."
+  ]
+}
