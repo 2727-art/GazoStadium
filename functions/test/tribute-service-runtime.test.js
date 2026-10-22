@@ -1233,6 +1233,49 @@ test("today's word shows on the board for 24 hours, lifts the card in the board 
   assert.equal((await harness.act("viewer", "board")).managers.find((card) => card.personaName === "ミオ様").word, null, "a word disappears after 24 hours");
 });
 
+test("the board lists only managers active in the last 7 days; a word, a card save or contract work brings a card back", async () => {
+  const harness = createHarness({ balances: { payer: 1_000 } });
+  await confirmAge(harness, "viewer");
+  const week = 7 * DAY;
+  const card = { personaName: "ミオ様", entryFee: 0 };
+  const publicManagerId = await openManager(harness, "m1", card);
+  await openManager(harness, "m2", { personaName: "サキ", entryFee: 0 });
+  const names = async () => (await harness.act("viewer", "board")).managers.map((entry) => entry.personaName);
+  const standing = async (uid) => (await harness.act(uid, "state")).profile;
+
+  const opened = await standing("m1");
+  assert.equal(opened.boardUntil, opened.card.lastActiveAt + week, "the manager learns until when the card stays on the board");
+  assert.deepEqual(await names(), ["サキ", "ミオ様"]);
+
+  // 7日ちょうど手前まではまだ並ぶ。ひとことを出したサキだけが延びる。
+  harness.advance(week - 60_000);
+  await harness.act("m2", "set_word", { text: "今夜は機嫌がいい。" });
+  assert.deepEqual(await names(), ["サキ", "ミオ様"]);
+  harness.advance(120_000);
+  assert.deepEqual(await names(), ["サキ"], "a card without any activity for 7 days leaves the board");
+  assert.ok((await standing("m1")).boardUntil < harness.now());
+  assert.equal((await harness.act("viewer", "manager", { publicManagerId })).card.personaName, "ミオ様", "the invite link still opens the card");
+
+  // カードを保存すると、掲示板の一番上に戻る。
+  await harness.act("m1", "save_profile", { card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 }, accepting: true });
+  assert.deepEqual(await names(), ["ミオ様", "サキ"]);
+  assert.equal((await standing("m1")).boardUntil, harness.now() + week);
+
+  // どちらも7日動かなければ、掲示板は空になる。契約の中で動くと戻る。
+  harness.advance(week + 60_000);
+  assert.deepEqual(await names(), []);
+  await startContract(harness, "m1", "payer", publicManagerId, {}, 0);
+  assert.deepEqual(await names(), ["ミオ様"], "accepting an application counts as activity");
+
+  // 受付を止めると掲示板の期限もなくなり、受付を始め直すと戻る。
+  harness.advance(2_100);
+  await harness.act("m2", "save_profile", { accepting: false });
+  assert.equal((await standing("m2")).boardUntil, 0);
+  harness.advance(2_100);
+  await harness.act("m2", "save_profile", { accepting: true });
+  assert.deepEqual(await names(), ["サキ", "ミオ様"]);
+});
+
 test("ranch decorations and card achievements need a purchase or an unlock, reach the board, and seal looks stay as pressed", async () => {
   const harness = createHarness({ balances: { manager: 0, payer: 1_000, viewer: 0 } });
   const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 };

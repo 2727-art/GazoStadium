@@ -138,6 +138,9 @@ const LIMITS = Object.freeze({
   // 直近30日に3,000 Pay以上を請求した管理人のカードに「高額請求」の札を出す。
   highRequest: 3_000,
   highRequestWindowMs: 30 * 24 * 60 * 60 * 1_000,
+  // 掲示板には、直近7日に動いた管理人だけを並べる（放置されたカードは読まない）。外れる2日前から管理人に知らせる。
+  boardActiveWindowMs: 7 * 24 * 60 * 60 * 1_000,
+  boardNoticeMs: 2 * 24 * 60 * 60 * 1_000,
   // 1回の限度額を3,000 Pay以上にできるのは、AnjuPayウォレットを Google で保護した財布だけ。
   googleCapThreshold: 3_000,
 });

@@ -35,6 +35,9 @@ export const LIMITS = Object.freeze({
   requestMax: 10_000,
   // 1回の限度額を3,000 Pay以上にできるのは、Google で保護した財布だけ。
   googleCapThreshold: 3_000,
+  // 掲示板には直近7日に動いた管理人だけが並ぶ。外れる2日前から管理人に知らせる。
+  boardActiveWindowMs: 7 * 24 * 60 * 60 * 1_000,
+  boardNoticeMs: 2 * 24 * 60 * 60 * 1_000,
 });
 
 export const TONE_LABELS = Object.freeze({ sweet: "甘め", normal: "普通", harsh: "辛口" });

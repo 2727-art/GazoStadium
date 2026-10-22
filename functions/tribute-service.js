@@ -273,6 +273,8 @@ function ownProfileView(profile, monthKey, now) {
     counts: profile.counts,
     receiptCount: profile.receiptCount,
     wordsToday: profile.word?.dayKey === jstDateKey(now) ? profile.word.dayCount : 0,
+    // 掲示板に出ていられる期限（受付中でカードがある時だけ）。過ぎると、動くまで掲示板に並ばない。
+    boardUntil: profile.accepting && profile.card ? profile.lastActiveAt + LIMITS.boardActiveWindowMs : 0,
   };
 }
 
@@ -1381,6 +1383,8 @@ function createTributeService(deps) {
         card = cardValues;
         patch.card = cardValues;
         patch.cardUpdatedAt = now;
+        // カードの保存も活動に数える（7日間動きがなく掲示板から外れたカードも、保存すると戻る）。
+        patch.lastActiveAt = now;
         if (!profile.publicManagerId) patch.publicManagerId = randomHex(12);
       }
       if (data?.accepting !== undefined) {
@@ -1500,9 +1504,12 @@ function createTributeService(deps) {
     requireAge(own);
     const now = currentTime();
     const monthKey = jstMonthKey(now);
+    // 直近7日に動いた管理人だけを読む。放置されたカードは条件で外れ、読み込みにも数えない。
+    const activeSince = now - LIMITS.boardActiveWindowMs;
     const [boardSnapshot, recommendedSnapshot] = await Promise.all([
       firestore.collection("tributeProfiles")
         .where("accepting", "==", true)
+        .where("lastActiveAt", ">=", activeSince)
         .orderBy("lastActiveAt", "desc")
         .limit(LIMITS.boardLimit * 2)
         .get(),
@@ -1519,7 +1526,7 @@ function createTributeService(deps) {
         && row.profile.ageConfirmedVersion === TRIBUTE_AGE_VERSION
         && !profileIsHidden(row.profile, monthKey));
     const nekamaOnly = data?.nekamaOnly === true;
-    const board = (await visibleRows(uid, toRows(boardSnapshot)))
+    const board = (await visibleRows(uid, toRows(boardSnapshot).filter((row) => row.profile.lastActiveAt >= activeSince)))
       .filter((row) => !nekamaOnly || row.profile.card?.disclosure === "nekama")
       .slice(0, LIMITS.boardLimit)
       .map((row) => ({ ...publicCard(row.profile, monthKey, now), mine: row.uid === uid }));

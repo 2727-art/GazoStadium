@@ -79,7 +79,7 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -386,11 +386,12 @@ function renderHub() {
       </div>
       <div class="tribute-me-manager">
         <span class="tribute-eyebrow">管理人として</span>
-        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${honorTag(profile.honor)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${profile.hidden ? "通報が重なったため、今月は掲示板に出ていません。" : profile.accepting ? "受付中（掲示板に出ています）" : "受付停止中"}</small></div></div>
+        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${honorTag(profile.honor)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${escapeHtml(boardStatusLabel(profile))}</small></div></div>
           <div class="tribute-row">
             <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
             <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
           </div>
+          ${renderBoardNotice(profile)}
           ${renderWordForm(profile)}
           ${renderInvite(profile)}`
     : `<p>管理する側になるには、管理人カードを作ります。印は12種のアイコンか、ペルソナ名の1文字から選べます。</p>
@@ -459,6 +460,41 @@ function renderInvite(profile) {
     <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="post-invite">Xで告知する</button><button class="button button-ghost button-small" type="button" data-t="recruit-open">財布募集の画像を作る</button></div>
     <small>告知の文には、中の人の札が必ず入ります。財布募集の画像は、飾った管理人カードを1枚にして X に貼れます。${profile.accepting ? "" : "いまは受付を止めているので、受付を始めてから告知してください。"}</small>
   </div>`;
+}
+
+// 掲示板に出ていられるか。受付中のカードは、直近7日に動いた時だけ掲示板に並ぶ（サーバーの boardUntil まで）。
+function boardStanding(profile, now = Date.now()) {
+  if (!profile?.card || !profile.accepting || profile.hidden) return { state: "none", left: 0 };
+  const until = Number(profile.boardUntil) || 0;
+  if (!until) return { state: "listed", left: 0 };
+  const left = until - now;
+  if (left <= 0) return { state: "stale", left: 0 };
+  return { state: left <= LIMITS.boardNoticeMs ? "ending" : "listed", left };
+}
+
+function boardLeftLabel(left) {
+  return left < 86_400_000 ? `${Math.max(1, Math.ceil(left / 3_600_000))}時間` : `${Math.ceil(left / 86_400_000)}日`;
+}
+
+function boardStatusLabel(profile) {
+  if (profile.hidden) return "通報が重なったため、今月は掲示板に出ていません。";
+  if (!profile.accepting) return "受付停止中";
+  const standing = boardStanding(profile);
+  if (standing.state === "stale") return "受付中（7日間動きがないため、掲示板に出ていません）";
+  if (standing.state === "ending") return `受付中（掲示板に出ています・あと${boardLeftLabel(standing.left)}で外れます）`;
+  return "受付中（掲示板に出ています）";
+}
+
+// 7日間動きがないと掲示板から外れることを、外れる2日前から管理人にだけ知らせる。
+function renderBoardNotice(profile) {
+  const standing = boardStanding(profile);
+  if (standing.state === "stale") {
+    return `<p class="tribute-note tribute-board-notice is-stale" role="status"><b>掲示板に出ていません</b>7日間動きがなかったため、掲示板から外れています。今日のひとことを出すか、カードを保存すると、掲示板の一番上に戻ります（契約での返事や受け取りでも戻ります）。招待リンクからは、これまでどおり開けます。</p>`;
+  }
+  if (standing.state === "ending") {
+    return `<p class="tribute-note tribute-board-notice" role="status"><b>あと${escapeHtml(boardLeftLabel(standing.left))}で掲示板から外れます</b>7日間動きがないと、掲示板に並ばなくなります。今日のひとことを出すか、カードを保存すると延びます（契約での返事や受け取りでも延びます）。</p>`;
+  }
+  return "";
 }
 
 // 今日のひとこと（管理人だけ）。掲示板のカードに24時間出て、出すとカードが上に並ぶ。
@@ -3415,6 +3451,7 @@ function previewCall(action, payload) {
           counts: { payerOpen: 1, managerActive: 1, managerPending: 1 },
           receiptCount: 3,
           wordsToday: 1,
+          boardUntil: previewBoardUntil(),
         },
         achievements: {
           stats: { managerPairDays: 12, walletPairDays: 4 },
@@ -3544,6 +3581,7 @@ function previewCall(action, payload) {
         }
         profile.card.word = { text: String(payload.text || "").trim(), at: now };
         profile.wordsToday = Number(profile.wordsToday || 0) + 1;
+        profile.boardUntil = profile.accepting ? now + LIMITS.boardActiveWindowMs : 0;
       }
       previewSavedProfile = profile;
       return Promise.resolve({ ok: true, profile });
@@ -3617,6 +3655,7 @@ function previewCall(action, payload) {
         profile.card = { ...profile.card, ...card, xHandle: xProfile || "", mine: true };
       }
       if (payload.accepting !== undefined) profile.accepting = payload.accepting === true;
+      if (payload.card || profile.accepting) profile.boardUntil = profile.accepting && profile.card ? Date.now() + LIMITS.boardActiveWindowMs : 0;
       previewSavedProfile = profile;
       return Promise.resolve({ ok: true, profile });
     }
@@ -3628,10 +3667,19 @@ function previewCall(action, payload) {
   }
 }
 
+// 見本: hub-board-ending は掲示板から外れる1日半前、hub-board-off は外れた後。
+function previewBoardUntil(now = Date.now()) {
+  if (previewScreen === "hub-board-off") return now - 3_600_000;
+  if (previewScreen === "hub-board-ending") return now + 36 * 3_600_000;
+  return now + 6 * 86_400_000;
+}
+
 function startPreview(screen) {
   state.walletBalance = screen === "newcomer" ? 0 : screen === "card" ? 18_420 : 1_000;
   const map = {
     hub: () => navigate("hub"),
+    "hub-board-ending": () => navigate("hub"),
+    "hub-board-off": () => navigate("hub"),
     newcomer: () => navigate("hub"),
     board: () => navigate("board"),
     manager: () => openManager(PREVIEW_MANAGER_CARD.publicManagerId),

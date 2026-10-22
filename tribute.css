@@ -1133,3 +1133,7 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
   .tribute-declaration-toggle i,
   .tribute-declaration-toggle i::after { transition: none; }
 }
+.tribute-board-notice { margin: 4px 0 0; padding: 9px 12px; border-radius: 12px; border: 1px solid rgba(255, 196, 92, 0.45); background: rgba(255, 180, 60, 0.08); line-height: 1.6; }
+.tribute-board-notice b { display: block; margin-bottom: 2px; color: #ffd38a; }
+.tribute-board-notice.is-stale { border-color: rgba(255, 107, 138, 0.5); background: rgba(255, 60, 100, 0.08); }
+.tribute-board-notice.is-stale b { color: #ffb3c6; }
