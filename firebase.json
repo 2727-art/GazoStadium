@@ -18,8 +18,7 @@
       ".env*",
       "test",
       "test/**",
-      "docs/security-audit-*",
-      "docs/security-audit-*/**"
+      "security-audit-*"
     ],
     "predeploy": [
       "npm --prefix functions run check"

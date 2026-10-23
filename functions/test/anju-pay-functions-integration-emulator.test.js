@@ -151,7 +151,8 @@ if (!RUN_REQUESTED) {
   async function concurrentReplay(callable, data, context) {
     // The Firestore emulator can close contending transactions, also reproduced
     // with the unchanged production dependencies. Wait for every attempt, then
-    // verify one explicit client retry is safe; never retry a permanent failure.
+    // verify one explicit client retry is safe. Auth/validation errors and a
+    // second failure are never retried or swallowed.
     const attempts = await Promise.allSettled(Array.from({ length: 6 }, () => invoke(callable, data)));
     assert.ok(attempts.some((attempt) => attempt.status === "fulfilled"), "at least one concurrent request must succeed");
     const results = [];
