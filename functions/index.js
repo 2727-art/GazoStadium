@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const { createEconomyInitializeRateLimiter } = require("./economy-rate-limit");
 const { createPlayerSafetyService } = require("./player-safety");
 const { createPlayerSafetyContextResolver } = require("./player-safety-context");
 const { createPlayerSafetyComments } = require("./player-safety-comments");
@@ -404,6 +405,7 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 
 const firestore = getFirestore();
 const realtime = getDatabase();
+const consumeEconomyInitializeRate = createEconomyInitializeRateLimiter({ realtime, HttpsError });
 const playerSafetyResolver = createPlayerSafetyContextResolver({ firestore, realtime, HttpsError,
   resolveNoteOwner: (id) => danwakuNoteService.resolvePublicEntryOwner(id),
   resolveTributeTarget: (uid, data) => tributeService.resolveSafetyTarget(uid, data) });
@@ -11279,7 +11281,10 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
   try {
-    if (action === "initialize") return await initializeEconomy(uid);
+    if (action === "initialize") {
+      await consumeEconomyInitializeRate(uid);
+      return await initializeEconomy(uid);
+    }
     if (action === "get_anju_pay_wallet") return await getAnjuPayWallet(uid, request.data);
     if (action === "claim_daily") return await claimDaily(uid, cleanText(request.data?.missionId, 40));
     if (action === "claim_daily_play") return await claimDailyPlayRewards(uid);

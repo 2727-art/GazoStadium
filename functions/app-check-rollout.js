@@ -1,7 +1,7 @@
 "use strict";
 
 // 変更するのはこの値だけです。関数間で不整合な強制設定を作らない段階定義です。
-const APP_CHECK_ROLLOUT_STAGE = "monitor";
+const APP_CHECK_ROLLOUT_STAGE = "economy_enforced";
 const APP_CHECK_ROLLOUT_STAGES = Object.freeze([
   "monitor",
   "rankings_enforced",

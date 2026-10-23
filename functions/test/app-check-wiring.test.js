@@ -106,6 +106,9 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   ];
 
   assert.ok(rollout.APP_CHECK_ROLLOUT_STAGES.includes(rollout.APP_CHECK_ROLLOUT_STAGE));
+  assert.equal(rollout.APP_CHECK_ROLLOUT_STAGE, "economy_enforced");
+  assert.ok(Object.values(rollout.APP_CHECK_ENFORCEMENT).every((value) => value === true),
+    "every callable must reject requests without verified App Check");
   assert.deepEqual(Object.keys(rollout.APP_CHECK_ENFORCEMENT).sort(), callableNames.toSorted());
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.accountTransfer, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.playerSafetyAction, true);

@@ -220,18 +220,23 @@ test("tribute cost guards preserve real Firestore transaction and lifecycle cont
     });
   }
 
-  await t.test("effective pending caps still settle as a lifecycle event, not as a quiet receipt", async () => {
+  await t.test("effective pending caps settle privately without publishing a limit-change event", async () => {
     const caps = { perTribute: 300, perDay: 1000, total: 3000 };
     const f = await fixture({ contractPatch: { pendingCaps: caps, pendingCapsEffectiveDateKey: jstDateKey(START) } });
+    const before = await f.read();
     await f.act(f.payerUid, "mark_read", { seq: 5 });
     const after = await f.read();
-    assert.deepEqual(after.caps, caps);
+    // Limits are migrated into the payer-only document when lifecycle work runs.
+    const limits = (await f.contractRef.collection("private").doc("limits").get()).data();
+    assert.deepEqual(limits.caps, caps);
+    assert.equal(limits.pendingCaps, null);
+    assert.equal(after.caps, null);
     assert.equal(after.pendingCaps, null);
-    assert.equal(after.eventSeq, 6);
-    assert.equal(after.updatedAt, START);
+    assert.equal(after.eventSeq, before.eventSeq);
+    assert.equal(after.lastEventAt, before.lastEventAt);
+    assert.equal(after.readSeq.payer, 5);
     const events = await f.contractRef.collection("events").get();
-    assert.equal(events.size, 1);
-    assert.equal(events.docs[0].get("type"), "caps_raised");
+    assert.equal(events.size, 0);
     assert.equal((await f.walletRef(f.payerUid).get()).get("balance"), 63);
   });
 

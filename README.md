@@ -586,6 +586,10 @@ App CheckはreCAPTCHA Enterpriseを使用します。`firebase-client.js`が全�
 
 Callableは`APP_CHECK_ROLLOUT_STAGE`の1値から関数別の強制設定を導出し、市場関数の片側だけを強制するような不整合な設定を作らない構成です。市場待機列と市場ルームには`appCheckVerified`を記録するため、移行前から作られた取引を判別できます。段階は必ず記載順に進め、各段階を低利用時間帯に行い、反映後15分以上のスモークテストと24時間程度の監視を挟みます。問題があればFirestore・Realtime Databaseはコンソールで監視へ戻し、Callableは段階を直前の値へ戻して対象関数だけ再デプロイします。
 
+2026-10-23のセキュリティ更新では、7日間のApp Check実績と未完了の旧市場ルームが0件であることを確認し、`economy_enforced`まで強制します。全CallableとFirestore・Realtime Databaseが対象です。Authentication単体のApp CheckはIdentity Platformへの移行が必要なため、現在のFirebase Authenticationプランでは強制対象に含めません。`economyAction.initialize`にはUIDごとに1分12回の上限を設け、複数タブ・複数FunctionsインスタンスでもRealtime Databaseのトランザクションで共有します。
+
+依存パッケージは`functions/package-lock.json`で固定します。`@grpc/grpc-js`はFirebase SDK経由の旧版も修正済み1.14.5に揃えるため`overrides`を設定しています。更新時は`npm audit`とNode.js 22の全テストに加え、demoプロジェクトのFunctions・DBエミュレーターでApp Check拒否、初期化上限、決済の同時実行を確認してください。HTMLには埋め込み・object・baseの制限を付け、Firebaseの認証用`/__/auth/`ヘルパーはフレーム拒否の対象から外しています。
+
 本番URL: `https://gazostadium.web.app`
 
 ローカルでAuthentication・Functions・Firestore・Realtime Databaseをまとめて検証する場合は、別ターミナルで次を起動し、`http://127.0.0.1:4173/?firebaseEmulators=1`を開きます。このクエリはlocalhostでだけ有効です。誤って本番データへ接続しないよう、必ず`demo-`で始まる架空プロジェクトIDを使用します。Database・Firestore Emulatorの起動にはJavaが必要です。

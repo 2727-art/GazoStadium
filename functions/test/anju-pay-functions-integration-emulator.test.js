@@ -87,6 +87,7 @@ if (!RUN_REQUESTED) {
     httpsCallable,
   } = require("firebase/functions");
   const PRODUCT_CATALOG = require("../product-catalog");
+  const { initializeAppCheck, CustomProvider } = require("firebase/app-check");
 
   const suiteId = crypto.randomUUID().replaceAll("-", "");
   const clientApps = [];
@@ -109,13 +110,24 @@ if (!RUN_REQUESTED) {
     await firestore.doc("systemConfig/anjuPayLedger").set(activeLedgerConfig());
   }
 
-  async function createCaller(label) {
+  async function createCaller(label, { verifiedApp = true } = {}) {
+    const appId = "1:1234567890:web:securityintegration";
     const app = initializeClientApp({
       apiKey: "demo-anju-pay-emulator-key",
       authDomain: `${target.projectId}.firebaseapp.com`,
       projectId: target.projectId,
+      appId,
     }, `anju-pay-client-${suiteId}-${label}`);
     clientApps.push(app);
+    if (verifiedApp) {
+      const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+      initializeAppCheck(app, { isTokenAutoRefreshEnabled: false, provider: new CustomProvider({ getToken: async () => {
+        const at = Math.floor(Date.now() / 1000);
+        return { token: [encode({ alg: "none", typ: "JWT" }), encode({ aud: [`projects/${target.projectId}`],
+          exp: at + 3600, iat: at, iss: `https://firebaseappcheck.googleapis.com/${target.projectId}`, sub: appId }), "emulator"].join("."),
+        expireTimeMillis: Date.now() + 3600000 };
+      } }) });
+    }
     const auth = getAuth(app);
     connectAuthEmulator(
       auth,
@@ -134,6 +146,15 @@ if (!RUN_REQUESTED) {
 
   async function invoke(callable, data) {
     return (await callable(data)).data;
+  }
+
+  async function authorizeMarketContact(roomId, sellerUid, buyerUid) {
+    const { createPlayerSafetyService } = require("../player-safety");
+    const { HttpsError } = require("firebase-functions/v2/https");
+    const service = createPlayerSafetyService({ firestore, realtime, HttpsError });
+    const grant = await service.ensureContact({ firstUid: sellerUid, secondUid: buyerUid,
+      mode: "market", roomId, attemptId: roomId, startedAt: Date.now() });
+    await firestore.doc(`valueMarketRooms/${roomId}`).update({ roomId, ...grant, appCheckVerified: true });
   }
 
   async function seedLegacyWallet(uid, balance) {
@@ -201,6 +222,25 @@ if (!RUN_REQUESTED) {
     after(async () => {
       await Promise.all(clientApps.map((app) => deleteClientApp(app)));
       await deleteAdminApp(adminApp);
+    });
+
+    test("App Check rejects authenticated unverified callers before creating wallets", async () => {
+      const caller = await createCaller("unverified", { verifiedApp: false });
+      await assert.rejects(invoke(caller.economyAction, { action: "initialize" }), { code: "functions/unauthenticated" });
+      assert.equal((await firestore.doc(`wallets/${caller.uid}`).get()).exists, false);
+    });
+
+    test("concurrent initialization budgets share RTDB state and stop the callable before wallet writes", async () => {
+      const { createEconomyInitializeRateLimiter, INITIALIZE_LIMIT } = require("../economy-rate-limit");
+      class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
+      const caller = await createCaller("rate-limited");
+      const first = createEconomyInitializeRateLimiter({ realtime, HttpsError });
+      const second = createEconomyInitializeRateLimiter({ realtime, HttpsError });
+      const results = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => (i % 2 ? first : second)(caller.uid)));
+      assert.equal(results.filter((r) => r.status === "fulfilled").length, INITIALIZE_LIMIT);
+      for (const result of results.filter((r) => r.status === "rejected")) assert.equal(result.reason.code, "resource-exhausted");
+      await assert.rejects(invoke(caller.economyAction, { action: "initialize" }), { code: "functions/resource-exhausted" });
+      assert.equal((await firestore.doc(`wallets/${caller.uid}`).get()).exists, false);
     });
 
     test("one normal 1on1 caller records both outcomes without occupying the opponent acknowledgement", async () => {
@@ -1225,6 +1265,7 @@ if (!RUN_REQUESTED) {
         }),
       ]);
 
+      await authorizeMarketContact(roomId, sellerUid, buyer.uid);
       const action = {
         action: "buy",
         actionId: `emulator-sale-${suiteId}`,
@@ -1336,6 +1377,7 @@ if (!RUN_REQUESTED) {
             updatedAt: now,
           }),
         ]);
+        await authorizeMarketContact(roomId, seller.uid, buyer.uid);
         const caller = scenario.actor === "seller" ? seller : buyer;
         const result = await invoke(caller.valueMarketAction, {
           action: scenario.action,
@@ -1418,6 +1460,7 @@ if (!RUN_REQUESTED) {
             updatedAt: now,
           }),
         ]);
+        await authorizeMarketContact(roomId, seller.uid, buyer.uid);
         const roomBefore = (await roomReference.get()).data();
         const caller = scenario.actor === "seller" ? seller : buyer;
 
@@ -1430,7 +1473,7 @@ if (!RUN_REQUESTED) {
           }),
           (error) => (
             error?.code === "functions/failed-precondition"
-            && error?.message === "延長内金の保留状態を確認できないため、取引を停止しました。"
+            && /^延長内金の保留状態を確認できないため、取引を停止しました。(?: \[400\])?$/.test(error?.message)
           ),
         );
 
