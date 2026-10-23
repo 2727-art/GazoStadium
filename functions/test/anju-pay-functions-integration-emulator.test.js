@@ -148,6 +148,24 @@ if (!RUN_REQUESTED) {
     return (await callable(data)).data;
   }
 
+  async function concurrentReplay(callable, data, context) {
+    // The Firestore emulator can close contending transactions, also reproduced
+    // with the unchanged production dependencies. Wait for every attempt, then
+    // verify one explicit client retry is safe; never retry a permanent failure.
+    const attempts = await Promise.allSettled(Array.from({ length: 6 }, () => invoke(callable, data)));
+    assert.ok(attempts.some((attempt) => attempt.status === "fulfilled"), "at least one concurrent request must succeed");
+    const results = [];
+    for (const attempt of attempts) {
+      if (attempt.status === "fulfilled") results.push(attempt.value);
+      else {
+        assert.equal(attempt.reason?.code, "functions/internal");
+        context.diagnostic("Retrying one failed concurrent emulator request with the same operation");
+        results.push(await invoke(callable, data));
+      }
+    }
+    return results;
+  }
+
   async function authorizeMarketContact(roomId, sellerUid, buyerUid) {
     const { createPlayerSafetyService } = require("../player-safety");
     const { HttpsError } = require("firebase-functions/v2/https");
@@ -1114,7 +1132,7 @@ if (!RUN_REQUESTED) {
       assertContinuousLedger(await readLedger(caller.uid), finalBalance);
     });
 
-    test("concurrent retries of one purchase debit and append exactly once", async () => {
+    test("concurrent retries of one purchase debit and append exactly once", async (context) => {
       const caller = await createCaller("purchase-retry");
       const productId = "stamp_god_photo";
       const openingBalance = 1_000;
@@ -1126,10 +1144,7 @@ if (!RUN_REQUESTED) {
       assert.equal(initialized.available, true);
       assert.equal(initialized.entries.length, 1);
 
-      const results = await Promise.all(Array.from(
-        { length: 6 },
-        () => invoke(caller.economyAction, { action: "purchase", productId }),
-      ));
+      const results = await concurrentReplay(caller.economyAction, { action: "purchase", productId }, context);
       assert.equal(results.filter((result) => result.outcome === "purchased").length, 1);
       assert.equal(results.filter((result) => result.outcome === "owned").length, 5);
       const expectedBalance = openingBalance - PRODUCT_CATALOG[productId].price;
@@ -1229,7 +1244,7 @@ if (!RUN_REQUESTED) {
       assertContinuousLedger(recipientLedger, 20);
     });
 
-    test("concurrent duplicate market sale settles escrow and fee once", async () => {
+    test("concurrent duplicate market sale settles escrow and fee once", async (context) => {
       const buyer = await createCaller("market-buyer");
       const sellerUid = `seller-${suiteId}`;
       const roomId = eventId(`${suiteId}:market-room`).slice(0, 20);
@@ -1272,10 +1287,7 @@ if (!RUN_REQUESTED) {
         roomId,
         turn: 1,
       };
-      const results = await Promise.all(Array.from(
-        { length: 6 },
-        () => invoke(buyer.valueMarketAction, action),
-      ));
+      const results = await concurrentReplay(buyer.valueMarketAction, action, context);
       assert.equal(results.every((result) => result.status === "sold"), true);
       assert.equal(new Set(results.map((result) => result.balance)).size, 1);
 

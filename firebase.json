@@ -8,7 +8,19 @@
   },
   "functions": {
     "source": "functions",
-    "runtime": "nodejs22",
+    "runtime": "nodejs24",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "firebase-debug.log",
+      "firebase-debug.*.log",
+      "*.local",
+      ".env*",
+      "test",
+      "test/**",
+      "docs/security-audit-*",
+      "docs/security-audit-*/**"
+    ],
     "predeploy": [
       "npm --prefix functions run check"
     ]

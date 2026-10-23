@@ -69,7 +69,7 @@ python -m http.server 4173 --bind 127.0.0.1
 - 同じページ内・同じ認証UID・同じ日本日付で初期化済みなら、対戦結果や結果再送のための`economyAction.initialize`を省きます。初回・日付変更・UID変更・初期化失敗後は実行し、準備画面の明示的な再取得は維持します。結果確定・報酬のサーバー検証と再試行は省きません。
 - `record_match`後の推しカード成長には、既に取得した実績と、対戦transactionで確定した最新の戦績を渡し、同じ参加者の実績をもう一度全取得しません。成長値は従来どおり単調増加で、残高・報酬・台帳・ランキングのルールは変更しません。
 
-Node.js 22とJava 21以上を使い、`functions`で`npm ci`後、リポジトリ直下で`node functions/test/run-firebase-cost-emulator.js`を実行すると、専用の`demo-gazostadium-cost`で移行・報酬重複・カード成長、実際のRTDBページ送り・世代競合・カーソル権限を検証します。起動用スクリプトはこのdemo専用の非秘密dotenvだけを一時作成し、自分で作ったファイルだけを終了時に除去します。既存の設定は上書きしません。
+Node.js 24とJava 21以上を使い、`functions`で`npm ci`後、リポジトリ直下で`node functions/test/run-firebase-cost-emulator.js`を実行すると、専用の`demo-gazostadium-cost`で移行・報酬重複・カード成長、実際のRTDBページ送り・世代競合・カーソル権限を検証します。起動用スクリプトはこのdemo専用の非秘密dotenvだけを一時作成し、自分で作ったファイルだけを終了時に除去します。既存の設定は上書きしません。
 
 リリースは`functions:economyAction,functions:cleanupSoloSessionV2Leases`だけを先に配備し、`ANJU_PAY_LEDGER_REQUIRED=true`を確認してからHostingを配備します。Rules、Firestore indexes、App Check、reCAPTCHA設定は変更しません。本番ログでは`deferredSkipped`、`marked`、`activeExamined`、`errors`と実行時間を比較します。`eligible`は今回から再確認待ちを除いた実処理候補数で、削減率を請求総額の削減率と同一視しません。
 
@@ -588,7 +588,7 @@ Callableは`APP_CHECK_ROLLOUT_STAGE`の1値から関数別の強制設定を導�
 
 2026-10-23のセキュリティ更新では、7日間のApp Check実績と未完了の旧市場ルームが0件であることを確認し、`economy_enforced`まで強制します。全CallableとFirestore・Realtime Databaseが対象です。Authentication単体のApp CheckはIdentity Platformへの移行が必要なため、現在のFirebase Authenticationプランでは強制対象に含めません。`economyAction.initialize`にはUIDごとに1分12回の上限を設け、複数タブ・複数FunctionsインスタンスでもRealtime Databaseのトランザクションで共有します。
 
-依存パッケージは`functions/package-lock.json`で固定します。`@grpc/grpc-js`はFirebase SDK経由の旧版も修正済み1.14.5に揃えるため`overrides`を設定しています。更新時は`npm audit`とNode.js 22の全テストに加え、demoプロジェクトのFunctions・DBエミュレーターでApp Check拒否、初期化上限、決済の同時実行を確認してください。HTMLには埋め込み・object・baseの制限を付け、Firebaseの認証用`/__/auth/`ヘルパーはフレーム拒否の対象から外しています。
+依存パッケージは`functions/package-lock.json`で固定します。`@grpc/grpc-js`は1.14.5、`uuid`は11.1.1へ揃えるため`overrides`を設定しています。Admin SDKは14.3.0とし、同時決済を検証済みのFirestore 8系を維持しています。更新時は`npm audit`とNode.js 24の全テストに加え、demoプロジェクトのFunctions・DBエミュレーターでApp Check拒否、初期化上限、決済の同時実行を確認してください。HTMLには埋め込み・object・baseの制限を付け、Firebaseの認証用`/__/auth/`ヘルパーはフレーム拒否の対象から外しています。
 
 本番URL: `https://gazostadium.web.app`
 
