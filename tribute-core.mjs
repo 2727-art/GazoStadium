@@ -49,21 +49,37 @@ export const DISCLOSURE_LABELS = Object.freeze({
 export const DISCLOSURE_SHORT = Object.freeze({ nekama: "ネカマ", as_is: "素", undisclosed: "非開示" });
 export const STYLE_LABELS = Object.freeze({ harsh: "罵倒", cold: "事務的", sweet: "甘やかし" });
 export const SIGIL_COLORS = Object.freeze(["#ff4fa3", "#b48cff", "#5fd4ff", "#ffd166", "#7ee08a", "#ff7a59"]);
-// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある12種から選ぶ。
-// 1〜6 はゆるめの絵、7〜12 は同じ6人の大人びた絵。
+// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある23種から選ぶ。
+// 1〜6 はゆるめの絵、7〜12 は同じ6人の大人びた絵。13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（無料）。
+export const AVATAR_GROUPS = Object.freeze([
+  Object.freeze({ id: "illust", label: "イラスト" }),
+  Object.freeze({ id: "jirai", label: "写真・地雷系" }),
+  Object.freeze({ id: "gal", label: "写真・夜ギャル" }),
+]);
 export const AVATARS = Object.freeze([
-  Object.freeze({ id: 1, label: "地雷" }),
-  Object.freeze({ id: 2, label: "量産" }),
-  Object.freeze({ id: 3, label: "ギャル" }),
-  Object.freeze({ id: 4, label: "ゆめかわ" }),
-  Object.freeze({ id: 5, label: "サブカル" }),
-  Object.freeze({ id: 6, label: "あざと" }),
-  Object.freeze({ id: 7, label: "地雷（艶）" }),
-  Object.freeze({ id: 8, label: "量産（艶）" }),
-  Object.freeze({ id: 9, label: "ギャル（艶）" }),
-  Object.freeze({ id: 10, label: "ゆめかわ（艶）" }),
-  Object.freeze({ id: 11, label: "サブカル（艶）" }),
-  Object.freeze({ id: 12, label: "あざと（艶）" }),
+  Object.freeze({ id: 1, group: "illust", label: "地雷" }),
+  Object.freeze({ id: 2, group: "illust", label: "量産" }),
+  Object.freeze({ id: 3, group: "illust", label: "ギャル" }),
+  Object.freeze({ id: 4, group: "illust", label: "ゆめかわ" }),
+  Object.freeze({ id: 5, group: "illust", label: "サブカル" }),
+  Object.freeze({ id: 6, group: "illust", label: "あざと" }),
+  Object.freeze({ id: 7, group: "illust", label: "地雷（艶）" }),
+  Object.freeze({ id: 8, group: "illust", label: "量産（艶）" }),
+  Object.freeze({ id: 9, group: "illust", label: "ギャル（艶）" }),
+  Object.freeze({ id: 10, group: "illust", label: "ゆめかわ（艶）" }),
+  Object.freeze({ id: 11, group: "illust", label: "サブカル（艶）" }),
+  Object.freeze({ id: 12, group: "illust", label: "あざと（艶）" }),
+  Object.freeze({ id: 13, group: "jirai", label: "地雷（白金）" }),
+  Object.freeze({ id: 14, group: "jirai", label: "地雷（眼鏡）" }),
+  Object.freeze({ id: 15, group: "jirai", label: "地雷（うさぎ）" }),
+  Object.freeze({ id: 16, group: "jirai", label: "地雷（銀メッシュ）" }),
+  Object.freeze({ id: 17, group: "gal", label: "夜ギャル（金髪）" }),
+  Object.freeze({ id: 18, group: "gal", label: "夜ギャル（黒髪）" }),
+  Object.freeze({ id: 19, group: "gal", label: "夜ギャル（まとめ髪）" }),
+  Object.freeze({ id: 20, group: "gal", label: "夜ギャル（サングラス）" }),
+  Object.freeze({ id: 21, group: "gal", label: "夜ギャル（赤）" }),
+  Object.freeze({ id: 22, group: "gal", label: "夜ギャル（頬杖）" }),
+  Object.freeze({ id: 23, group: "gal", label: "夜ギャル（ファー）" }),
 ]);
 export const AVATAR_MAX = AVATARS.length;
 

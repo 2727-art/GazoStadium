@@ -15,9 +15,10 @@ const TONES = Object.freeze(["sweet", "normal", "harsh"]);
 const DISCLOSURES = Object.freeze(["nekama", "as_is", "undisclosed"]);
 const MANAGER_STYLES = Object.freeze(["harsh", "cold", "sweet"]);
 const SIGIL_COLORS = Object.freeze([0, 1, 2, 3, 4, 5]);
-// 管理人の印のアイコン。0 はペルソナ名の1文字、1〜12 は用意したアイコン（画像のアップロードはない）。
-const AVATAR_IDS = Object.freeze([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-const AVATAR_MAX = 12;
+// 管理人の印のアイコン。0 はペルソナ名の1文字、1〜23 は用意したアイコン（画像のアップロードはない）。
+// 1〜12 はイラスト、13〜16 は写真・地雷系、17〜23 は写真・夜ギャル。
+const AVATAR_MAX = 23;
+const AVATAR_IDS = Object.freeze(Array.from({ length: AVATAR_MAX + 1 }, (_, id) => id));
 
 // 保存済みの値を読む時も、範囲外は端のアイコンに寄せず文字の印に戻す（クライアントの avatarId と同じ）。
 function normalizeAvatar(value) {

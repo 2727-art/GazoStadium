@@ -11,7 +11,8 @@ const { viewContract: serverView } = require("../tribute-service");
 const { migrateTributeLimits } = require("../scripts/migrate-tribute-limits.cjs");
 
 const root = path.resolve(__dirname, "../..");
-const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
+// Windows の取り出しでは CRLF になるので、改行を揃えてから読む（下の照合は LF で書いている）。
+const read = (file) => fs.readFileSync(path.join(root, file), "utf8").replace(/\r\n/g, "\n");
 const client = read("tribute.js");
 const share = read("tribute-share.mjs");
 const styles = read("tribute.css");

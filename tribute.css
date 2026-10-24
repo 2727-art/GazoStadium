@@ -426,8 +426,9 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
 .tribute-card-preview > div { min-width: 0; }
 .tribute-card-preview small { display: block; font-size: 0.7rem; }
 .tribute-card-preview strong { display: block; font-size: 1.1rem; overflow-wrap: anywhere; }
-/* 6列×2段（ゆるめの絵 / 大人びた絵）。狭い画面でも段を崩さない。 */
+/* 6列ずつ（イラストはゆるめの絵 / 大人びた絵の2段、写真は地雷系・夜ギャルの段）。狭い画面でも段を崩さない。 */
 .tribute-avatar-picker { display: grid; gap: 10px; }
+.tribute-avatar-group { margin-top: 4px; color: var(--tr-mist); font-size: 0.74rem; font-weight: 700; letter-spacing: 0.04em; }
 .tribute-avatar-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px 8px; max-width: 460px; padding: 4px; }
 .tribute-avatar-picker label { position: relative; display: grid; place-items: center; cursor: pointer; }
 .tribute-avatar-picker .tribute-avatar-letter { display: flex; gap: 10px; align-items: center; justify-content: flex-start; font-size: 0.82rem; color: var(--tr-mist); }

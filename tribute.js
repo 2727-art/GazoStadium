@@ -21,6 +21,7 @@ import {
 } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2";
 import {
+  AVATAR_GROUPS,
   AVATARS,
   DEFAULT_SEALS,
   DEFINITION,
@@ -79,7 +80,7 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -394,7 +395,7 @@ function renderHub() {
           ${renderBoardNotice(profile)}
           ${renderWordForm(profile)}
           ${renderInvite(profile)}`
-    : `<p>管理する側になるには、管理人カードを作ります。印は12種のアイコンか、ペルソナ名の1文字から選べます。</p>
+    : `<p>管理する側になるには、管理人カードを作ります。印は${AVATARS.length}種のアイコンか、ペルソナ名の1文字から選べます。</p>
           <button class="button button-ghost" type="button" data-t="nav" data-screen="card">管理人カードを作る</button>`}
       </div>
     </section>
@@ -703,7 +704,7 @@ function renderCardEditor() {
     <div class="tribute-editor-preview"><small>掲示板での見え方</small><div class="tribute-card-grid" data-card-preview>${renderCardPreview(card)}</div></div>
     <label class="tribute-field"><span>ペルソナ名（1〜${LIMITS.personaName}文字）</span><input name="personaName" maxlength="${LIMITS.personaName}" required value="${escapeHtml(card.personaName || "")}" /></label>
     <fieldset><legend>印のアイコン</legend><div class="tribute-avatar-picker" data-avatar-picker style="--sigil:${sigilColor(card)}">${renderAvatarChoices(card)}</div>
-      <small>用意した12種から選びます（画像のアップロードはできません）。上の段はゆるめ、下の段は大人びた絵です。</small></fieldset>
+      <small>用意した${AVATARS.length}種から選びます（画像のアップロードはできません）。イラストは上の段がゆるめ、下の段が大人びた絵です。</small></fieldset>
     <fieldset><legend>印の色</legend><div class="tribute-swatches">${SIGIL_COLORS.map((color, index) => `<label style="--sigil:${color}"><input type="radio" name="sigil" value="${index}" ${Number(card.sigil || 0) === index ? "checked" : ""} /><span aria-label="色${index + 1}"></span></label>`).join("")}</div>
       <small>アイコンの縁と、掲示板のカードの色になります。</small></fieldset>
     ${renderSealSettings(card)}
@@ -1006,8 +1007,13 @@ function stopDecorationTrial(form) {
 function renderAvatarChoices(card) {
   const selected = avatarId(card.avatar);
   const letter = Array.from(String(card.personaName || "管").trim())[0] || "管";
-  const icons = AVATARS.map((avatar) => `<label title="${escapeHtml(avatar.label)}"><input type="radio" name="avatar" value="${avatar.id}" aria-label="印：${escapeHtml(avatar.label)}" ${selected === avatar.id ? "checked" : ""} /><span class="tribute-avatar-choice"><img src="${escapeHtml(avatarUrl(avatar.id))}" alt="" width="112" height="112" decoding="async" draggable="false" /></span></label>`).join("");
-  return `<div class="tribute-avatar-grid">${icons}</div>
+  const icon = (avatar) => `<label title="${escapeHtml(avatar.label)}"><input type="radio" name="avatar" value="${avatar.id}" aria-label="印：${escapeHtml(avatar.label)}" ${selected === avatar.id ? "checked" : ""} /><span class="tribute-avatar-choice"><img src="${escapeHtml(avatarUrl(avatar.id))}" alt="" width="112" height="112" decoding="async" draggable="false" /></span></label>`;
+  // イラスト・写真の地雷系・写真の夜ギャルの段に分けて並べる。
+  const groups = AVATAR_GROUPS.map((group) => {
+    const icons = AVATARS.filter((avatar) => avatar.group === group.id).map(icon).join("");
+    return icons ? `<span class="tribute-avatar-group">${escapeHtml(group.label)}</span><div class="tribute-avatar-grid">${icons}</div>` : "";
+  }).join("");
+  return `${groups}
     <label class="tribute-avatar-letter"><input type="radio" name="avatar" value="0" ${selected ? "" : "checked"} /><span class="tribute-avatar-choice is-letter" data-avatar-letter aria-hidden="true">${escapeHtml(letter)}</span><span>アイコンを使わず、ペルソナ名の1文字にする</span></label>`;
 }
 
