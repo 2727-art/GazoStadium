@@ -726,51 +726,105 @@ test("the manager's daily receive cap applies across contracts", async () => {
   await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 50, clientRequestId: nextRequestId() });
 });
 
-test("offering needs Google protection and eligibility, splits 80/20, grants honors and funds first-tribute subsidies", async () => {
-  const harness = createHarness({ balances: { manager: 0, p1: 2_000, p2: 2_000, p3: 2_000, p4: 2_000 } });
-  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+test("only managers paid by 3 wallets with 1,000 Pay can open a vault; Pay moves in and out freely and only the tier is shown", async () => {
+  const harness = createHarness({ balances: { manager: 20_000, p1: 3_000, p2: 3_000, p3: 3_000 } });
+  await confirmAge(harness, "viewer");
+  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 };
+  const publicManagerId = await openManager(harness, "manager", card);
+  const move = (uid, action, amount, clientRequestId = nextRequestId()) => harness.act(uid, action, { amount, clientRequestId });
+  const open = { caps: { perTribute: 1_000, perDay: 1_000, total: 10_000 } };
+
+  // 管理人カードのない人と、実績の足りない管理人は、金庫を作れない（推し値市場の実績は数えない）。
+  await confirmAge(harness, "p1");
+  await rejects(move("p1", "vault_deposit", 10), /管理人カードのある管理人だけ/);
   const contracts = {};
-  for (const payer of ["p1", "p2", "p3"]) {
-    contracts[payer] = await startContract(harness, "manager", payer, publicManagerId, {}, 0);
-  }
-  await rejects(harness.act("manager", "offer", { amount: 300, clientRequestId: nextRequestId() }, { googleProtected: true }), /3人以上から5回以上/);
-  for (const payer of ["p1", "p2", "p3", "p1", "p2"]) {
-    harness.advance(10);
-    await harness.act(payer, "tribute", { contractId: contracts[payer], kind: "silent", amount: 100, clientRequestId: nextRequestId() });
-  }
-  assert.equal(harness.balance("manager"), 475);
-  await rejects(harness.act("manager", "offer", { amount: 300, clientRequestId: nextRequestId() }), /Google/);
-  await rejects(harness.act("manager", "offer", { amount: 476, clientRequestId: nextRequestId() }, { googleProtected: true }), /あと 475 Pay/);
-  const offered = await harness.act("manager", "offer", { amount: 300, clientRequestId: nextRequestId() }, { googleProtected: true });
-  assert.deepEqual(offered.split, { burned: 240, fund: 60 });
-  assert.equal(offered.honor.tier.label, "上納者");
-  assert.equal(harness.balance("manager"), 175);
-  const fund = await harness.act("manager", "fund", {}, { googleProtected: true });
-  assert.equal(fund.fund.balance, 60);
-  assert.equal(fund.me.offerable, 175);
-  assert.equal(fund.me.eligible, true);
-  const card = await harness.act("p1", "manager", { publicManagerId });
-  assert.equal(card.card.honor.label, "上納者");
+  for (const payer of ["p1", "p2", "p3"]) contracts[payer] = await startContract(harness, "manager", payer, publicManagerId, open, 0);
+  let view = await harness.act("manager", "vault");
+  assert.equal(view.vault.qualified, false);
+  assert.deepEqual(view.vault.progress, { payers: 0, received: 0, needPayers: 3, needReceived: 1_000 });
+  await harness.act("p1", "tribute", { contractId: contracts.p1, kind: "silent", amount: 500, clientRequestId: nextRequestId() });
+  await harness.act("p2", "tribute", { contractId: contracts.p2, kind: "silent", amount: 300, clientRequestId: nextRequestId() });
+  await rejects(move("manager", "vault_deposit", 100), /累計3人以上の財布から、合わせて1,000 Pay以上/);
+  await rejects(move("manager", "vault_withdraw", 100), /まだ金庫がありません/);
+  await harness.act("p3", "tribute", { contractId: contracts.p3, kind: "silent", amount: 200, clientRequestId: nextRequestId() });
+  view = await harness.act("manager", "vault");
+  assert.equal(view.vault.qualified, true, "the vault opens on the first deposit");
+  const wallet = harness.balance("manager");
 
-  await harness.act("manager", "vote", { policy: "first" });
-  // p4 との最初の献上は手数料5のうち2が基金から戻る。
-  const p4Contract = await startContract(harness, "manager", "p4", publicManagerId, {}, 0);
-  await harness.act("p4", "tribute", { contractId: p4Contract, kind: "silent", amount: 100, clientRequestId: nextRequestId() });
-  assert.equal(harness.balance("manager"), 175 + 97);
-  assert.equal((await harness.act("manager", "fund", {}, { googleProtected: true })).fund.balance, 58);
-  harness.advance(10);
-  await harness.act("p4", "tribute", { contractId: p4Contract, kind: "silent", amount: 100, clientRequestId: nextRequestId() });
-  assert.equal(harness.balance("manager"), 175 + 97 + 95, "the same pair is subsidized once a month");
-  const ledger = harness.ledger("manager").find((entry) => entry.components?.some((component) => component.kind === "tribute_subsidy"));
-  assert.ok(ledger);
+  // 入れる: 木箱（1,000）→ 蔵（10,000）。同じ依頼は二重に動かさない。
+  const firstId = nextRequestId();
+  const first = await move("manager", "vault_deposit", 1_000, firstId);
+  assert.deepEqual(first.vault, { qualified: true, amount: 1_000, tier: 1, bestTier: 1 });
+  assert.equal(first.reachedTier, 1);
+  const replay = await move("manager", "vault_deposit", 1_000, firstId);
+  assert.equal(replay.replayed, true);
+  assert.equal(harness.balance("manager"), wallet - 1_000);
+  harness.advance(1_000);
+  const third = await move("manager", "vault_deposit", 9_000);
+  assert.deepEqual(third.vault, { qualified: true, amount: 10_000, tier: 3, bestTier: 3 });
+  await rejects(move("manager", "vault_deposit", wallet), /AnjuPay残高が足りません/);
 
-  await rejects(harness.act("p1", "recommend", { publicManagerId }), /称号/);
-  const otherId = await openManager(harness, "other", { entryFee: 0, personaName: "サキ", disclosure: "undisclosed" });
-  const recommended = await harness.act("manager", "recommend", { publicManagerId: otherId });
-  assert.deepEqual(recommended.recommendations, [otherId]);
-  await rejects(harness.act("manager", "recommend", { publicManagerId: (await openManager(harness, "third", { entryFee: 0, personaName: "ユナ" })) }), /1件まで/);
-  const board = await harness.act("p1", "board");
-  assert.deepEqual(board.recommended.map((entry) => entry.publicManagerId), [otherId]);
+  // 出す: 段階は下がるが、届いた段階（飾り）は残る。
+  harness.advance(1_000);
+  const out = await move("manager", "vault_withdraw", 6_000);
+  assert.deepEqual(out.vault, { qualified: true, amount: 4_000, tier: 1, bestTier: 3 });
+  assert.equal(out.reachedTier, undefined);
+  assert.equal(harness.balance("manager"), wallet - 4_000);
+  await rejects(move("manager", "vault_withdraw", 4_001), /金庫の残りが足りません/);
+  const kinds = harness.ledger("manager").map((entry) => `${entry.kind}:${entry.status}`);
+  assert.ok(kinds.includes("tribute_vault_deposit:held") && kinds.includes("tribute_vault_withdraw:settled"), kinds.join(","));
+
+  // 外に見せるのは段階だけ。額は本人の state だけに出る。
+  const detail = await harness.act("p1", "manager", { publicManagerId });
+  assert.deepEqual(detail.card.vault, { level: 1, id: "box", label: "木箱" });
+  assert.doesNotMatch(JSON.stringify(detail), /4000|vaultAmount/);
+  assert.deepEqual((await harness.act("viewer", "board")).managers[0].vault, { level: 1, id: "box", label: "木箱" });
+  assert.deepEqual((await harness.act("manager", "state")).profile.vault, { qualified: true, amount: 4_000, tier: 1, bestTier: 3 });
+
+  // 金庫番付: 段階の高い順、同じ段階は先に届いた順。額は出さない。
+  const otherId = await openManager(harness, "other", { personaName: "サキ", disclosure: "undisclosed", entryFee: 0 });
+  harness.firestore.write("tributeProfiles/other", { ...harness.firestore.read("tributeProfiles/other"), vaultQualifiedAt: 1, vaultAmount: 30_000, vaultTier: 4, vaultTierAt: harness.now(), vaultBestTier: 4 });
+  const ranking = (await harness.act("viewer", "vault")).ranking;
+  assert.deepEqual(ranking.map((row) => [row.publicManagerId, row.vault.label]), [[otherId, "宝物庫"], [publicManagerId, "木箱"]]);
+  assert.doesNotMatch(JSON.stringify(ranking), /30000|4000|amount/);
+
+  // 金庫の飾りは、届いた段階まで使える（ストアでは買えない）。
+  harness.advance(2_100);
+  await harness.act("manager", "save_profile", { card: { ...card, frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane" }, accepting: true });
+  harness.advance(2_100);
+  await rejects(harness.act("manager", "save_profile", { card: { ...card, frame: "houmotsu" }, accepting: true }), /金庫が「宝物庫」に届くと使えます/);
+  assert.equal((await harness.act("manager", "decorations")).vaultBestTier, 3);
+  assert.equal((await harness.act("viewer", "manager", { publicManagerId })).card.frame, "kura");
+
+  // 終わった牧場基金の操作は、読み込み直すよう伝える。
+  for (const action of ["fund", "offer", "vote", "recommend", "unrecommend"]) {
+    await rejects(harness.act("manager", action, {}), /牧場基金は終わり、管理人の金庫に変わりました/);
+  }
+  assert.equal((await harness.act("viewer", "board")).recommended, undefined, "the board has no recommended shelf");
+});
+
+test("the ended fund's honors become limited achievements once, with the lower honors too", async () => {
+  const harness = createHarness();
+  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 };
+  await openManager(harness, "manager", card);
+  harness.firestore.write("tributeHonors/2026-10__manager", { uid: "manager", monthKey: "2026-10", offered: 1_600, tierId: "grand_offerer" });
+  const state = await harness.act("manager", "state");
+  const honors = (ids) => ids.filter((id) => id.startsWith("tribute_honor_")).sort();
+  assert.deepEqual(honors(state.achievements.unlocked), ["tribute_honor_grand_offerer", "tribute_honor_offerer"]);
+  assert.deepEqual(honors(state.achievements.newlyUnlocked), ["tribute_honor_grand_offerer", "tribute_honor_offerer"]);
+  assert.equal(harness.firestore.read("tributeProfiles/manager").honorRecordsChecked, true);
+
+  // 確かめるのは一度だけ（基金は終わっているので、あとから称号は増えない）。
+  harness.firestore.write("tributeHonors/2026-09__manager", { uid: "manager", monthKey: "2026-09", offered: 6_000, tierId: "master" });
+  assert.deepEqual(honors((await harness.act("manager", "state")).achievements.unlocked), ["tribute_honor_grand_offerer", "tribute_honor_offerer"]);
+
+  // 限定称号は、牧場のカードに出せる。
+  harness.advance(2_100);
+  const saved = await harness.act("manager", "save_profile", { card: { ...card, achievements: ["tribute_honor_grand_offerer"] }, accepting: true });
+  assert.deepEqual(saved.profile.card.achievements, ["tribute_honor_grand_offerer"]);
+  // 称号のない人には何も付かない。
+  await openManager(harness, "plain", { ...card, personaName: "サキ" });
+  assert.deepEqual(honors((await harness.act("plain", "state")).achievements.unlocked), []);
 });
 
 test("the manager ranking puts the ranking points (500 per wallet per day) first and the number of wallets second", async () => {

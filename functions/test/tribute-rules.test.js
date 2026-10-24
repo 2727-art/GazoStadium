@@ -101,20 +101,38 @@ test("manager cards take one of the 23 prepared icons or fall back to the letter
   }
 });
 
-test("fees, subsidies, offering splits and honor tiers", () => {
+test("fees, the vault tiers and qualification, and the ended fund's honors as limited achievements", () => {
   assert.equal(rules.tributeFee(1), 1);
   assert.equal(rules.tributeFee(10), 1);
   assert.equal(rules.tributeFee(100), 5);
   assert.equal(rules.tributeFee(101), 6);
-  assert.equal(rules.subsidyFor(1), 0, "the fee floor of 1 Pay stays");
-  assert.equal(rules.subsidyFor(5), 2);
-  assert.equal(rules.subsidyFor(50), 10);
-  assert.deepEqual(rules.offerSplit(300), { burned: 240, fund: 60 });
-  assert.deepEqual(rules.offerSplit(11), { burned: 9, fund: 2 });
+  // 牧場基金（上納・補填・方針）は終わった。
+  for (const name of ["subsidyFor", "offerSplit", "decorationFundShare", "POLICIES"]) assert.equal(rules[name], undefined, name);
+
+  // 金庫の段階は、いま金庫にある額で決まる（木箱1,000／金庫5,000／蔵10,000／宝物庫30,000／金の城100,000）。
+  assert.deepEqual(rules.VAULT_TIERS.map((tier) => [tier.label, tier.threshold]), [["木箱", 1_000], ["金庫", 5_000], ["蔵", 10_000], ["宝物庫", 30_000], ["金の城", 100_000]]);
+  for (const [amount, level] of [[0, 0], [999, 0], [1_000, 1], [4_999, 1], [5_000, 2], [10_000, 3], [37_066, 4], [100_000, 5], [9_999_999, 5], [-5, 0], ["x", 0]]) {
+    assert.equal(rules.vaultTierFor(amount), level, String(amount));
+  }
+  assert.equal(rules.vaultTierInfo(3).label, "蔵");
+  assert.equal(rules.vaultTierInfo(0), null);
+
+  // 金庫を作れるのは、累計3人以上の財布から、合わせて1,000 Pay以上を受け取った管理人。
+  assert.deepEqual(rules.vaultQualification([{ total: 500 }, { total: 300 }, { total: 200 }]), { payers: 3, received: 1_000, qualified: true });
+  assert.equal(rules.vaultQualification([{ total: 990 }, { total: 5 }, { total: 4 }]).qualified, false, "1,000 Pay in all");
+  assert.equal(rules.vaultQualification([{ total: 5_000 }, { total: 5_000 }, { total: 0 }]).qualified, false, "a pair with nothing given is not a wallet");
+  assert.equal(rules.vaultQualification(null).qualified, false);
+
+  // 上納の称号は限定称号として残す（上の称号を取った人は、下の称号も持つ）。
   assert.equal(rules.honorTierFor(299), null);
   assert.equal(rules.honorTierFor(300).label, "上納者");
   assert.equal(rules.honorTierFor(1_600).label, "大上納者");
   assert.equal(rules.honorTierFor(5_000).label, "牧場の主");
+  assert.deepEqual(rules.honorAchievementIds({ tierId: "offerer" }), ["tribute_honor_offerer"]);
+  assert.deepEqual(rules.honorAchievementIds({ offered: 1_600 }), ["tribute_honor_offerer", "tribute_honor_grand_offerer"]);
+  assert.deepEqual(rules.honorAchievementIds({ tierId: "master", offered: 10 }), ["tribute_honor_offerer", "tribute_honor_grand_offerer", "tribute_honor_master"]);
+  assert.deepEqual(rules.honorAchievementIds({ offered: 299 }), []);
+  assert.deepEqual(rules.honorAchievementIds(null), []);
 });
 
 test("raised caps apply from the next JST day and allowances combine all three caps", () => {

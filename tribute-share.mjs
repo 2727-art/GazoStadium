@@ -2,11 +2,15 @@
 // URL は入れず、「AnjuPay・換金不可・アプリ内ポイント」の表記は必ず入れる。見た目は牧場のもので、実在の決済サービスには似せない。
 
 import {
+  CASTLE_PATHS,
   CROWN_JEWELS,
   CROWN_PATH,
+  GEM_PATH,
   HEART_PATH,
   FLOURISH_PATH,
   ROSE_PATHS,
+  SENRYO_FITTINGS,
+  SENRYO_RIVETS,
   THRONE_CROWN_PATH,
   framePalette,
   inkColor,
@@ -16,7 +20,7 @@ import {
   sealSvg,
   sealTextLayout,
   waxPoints,
-} from "./tribute-deco.mjs?v=ranch-frame-color-v1";
+} from "./tribute-deco.mjs?v=ranch-vault-v1";
 
 export const SHARE_WIDTH = 1080;
 export const SHARE_HEIGHT = 1350;
@@ -120,6 +124,23 @@ function sealOutline(seal, shape) {
     for (const [x, y] of CROWN_JEWELS) {
       seal.beginPath();
       seal.arc(x, y, 7, 0, Math.PI * 2);
+      seal.fill();
+    }
+  } else if (shape === "senryo") {
+    seal.lineWidth = 10;
+    roundRectPath(seal, 16, 40, 268, 232, 10);
+    seal.stroke();
+    seal.lineWidth = 2.5;
+    roundRectPath(seal, 32, 56, 236, 200, 4);
+    seal.stroke();
+    strokeLine(seal, 16, 104, 284, 104, 6);
+    for (const [x, y] of SENRYO_FITTINGS) {
+      roundRectPath(seal, x, y, 22, 22, 3);
+      seal.fill();
+    }
+    for (const [x, y] of SENRYO_RIVETS) {
+      seal.beginPath();
+      seal.arc(x, y, 6, 0, Math.PI * 2);
       seal.fill();
     }
   } else {
@@ -1070,6 +1091,60 @@ function paintCrown(ctx, centerX, top, width, palette) {
   ctx.restore();
 }
 
+// 金の天守としゃちほこ（tribute-deco.mjs の CASTLE_PATHS と同じ形。viewBox は 0 -4 84 50）。
+function paintCastle(ctx, centerX, top, width, palette) {
+  const [high, middle, low] = palette.metal;
+  const scale = width / 84;
+  ctx.save();
+  ctx.translate(centerX - width / 2, top + 4 * scale);
+  ctx.scale(scale, scale);
+  ctx.shadowColor = "rgba(0, 0, 0, 0.6)";
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 2;
+  ctx.fillStyle = low;
+  ctx.fill(new Path2D(CASTLE_PATHS.base));
+  ctx.shadowColor = "transparent";
+  ctx.strokeStyle = palette.castleLine;
+  ctx.lineWidth = 1;
+  ctx.stroke(new Path2D(CASTLE_PATHS.base));
+  ctx.fillStyle = middle;
+  ctx.fill(new Path2D(CASTLE_PATHS.floors));
+  ctx.lineWidth = 0.8;
+  ctx.stroke(new Path2D(CASTLE_PATHS.floors));
+  ctx.fillStyle = palette.castleLine;
+  ctx.fill(new Path2D(CASTLE_PATHS.windows));
+  const roof = ctx.createLinearGradient(0, -4, 0, 46);
+  roof.addColorStop(0, high);
+  roof.addColorStop(0.55, middle);
+  roof.addColorStop(1, low);
+  ctx.fillStyle = roof;
+  ctx.fill(new Path2D(CASTLE_PATHS.roofs));
+  ctx.lineWidth = 0.9;
+  ctx.stroke(new Path2D(CASTLE_PATHS.roofs));
+  ctx.fillStyle = high;
+  ctx.fill(new Path2D(CASTLE_PATHS.shachi));
+  ctx.lineWidth = 0.6;
+  ctx.stroke(new Path2D(CASTLE_PATHS.shachi));
+  ctx.restore();
+}
+
+// 金貨（四角い穴の開いた古い金貨）。
+function paintCoin(ctx, cx, cy, radius, [high, middle, low]) {
+  const coin = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.4, 0, cx, cy, radius * 1.1);
+  coin.addColorStop(0, high);
+  coin.addColorStop(0.55, middle);
+  coin.addColorStop(1, low);
+  ctx.fillStyle = coin;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = low;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fillRect(cx - radius * 0.3, cy - radius * 0.3, radius * 0.6, radius * 0.6);
+}
+
 // カードの枠と背景。中の文字の色と位置は、どの枠・どの色でも同じ。色は枠の色（tribute-deco.mjs）から。
 function paintFrame(ctx, frame, box, color, frameColor) {
   const { x, y, width, height } = box;
@@ -1244,6 +1319,122 @@ function paintFrame(ctx, frame, box, color, frameColor) {
     roundRectPath(ctx, x + 6, y + 6, width - 12, height - 12, 25);
     ctx.stroke();
     paintCrown(ctx, x + width / 2, y - 58, 140, palette);
+  } else if (frame === "kura") {
+    // 暗い蔵の中に、なまこ壁の縁・白壁の線・屋根瓦。
+    const inside = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
+    inside.addColorStop(0, palette.a);
+    inside.addColorStop(0.62, palette.b);
+    inside.addColorStop(1, palette.b);
+    roundRectPath(ctx, x, y, width, height, 6);
+    ctx.fillStyle = inside;
+    ctx.fill();
+    const band = 30;
+    ctx.save();
+    roundRectPath(ctx, x, y, width, height, 6);
+    ctx.rect(x + band, y + band, width - band * 2, height - band * 2);
+    ctx.clip("evenodd");
+    ctx.fillStyle = palette.tile;
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = palette.grout;
+    ctx.lineWidth = 5;
+    ctx.lineCap = "round";
+    for (let offset = -height; offset < width + height; offset += 30) {
+      ctx.beginPath();
+      ctx.moveTo(x + offset, y);
+      ctx.lineTo(x + offset + height, y + height);
+      ctx.moveTo(x + offset, y + height);
+      ctx.lineTo(x + offset + height, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = palette.plaster;
+    ctx.strokeRect(x + band + 3, y + band + 3, width - band * 2 - 6, height - band * 2 - 6);
+    // 屋根瓦（上の縁）
+    ctx.fillStyle = palette.roof;
+    ctx.fillRect(x - 10, y - 22, width + 20, 16);
+    ctx.strokeStyle = palette.roofEdge;
+    ctx.lineWidth = 2.4;
+    const tiles = Math.round((width + 20) / 34);
+    const pitch = (width + 20) / tiles;
+    for (let index = 0; index < tiles; index += 1) {
+      const left = x - 10 + index * pitch;
+      ctx.beginPath();
+      ctx.moveTo(left, y - 14);
+      ctx.arc(left + pitch / 2, y - 14, pitch / 2, Math.PI, 0);
+      ctx.closePath();
+      ctx.fillStyle = palette.roof;
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else if (frame === "houmotsu") {
+    // 金貨の縁と、四隅の宝石。
+    const inside = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
+    inside.addColorStop(0, palette.a);
+    inside.addColorStop(0.6, palette.b);
+    inside.addColorStop(1, palette.b);
+    roundRectPath(ctx, x, y, width, height, 10);
+    ctx.fillStyle = inside;
+    ctx.fill();
+    const glow = ctx.createRadialGradient(x + width / 2, y, 0, x + width / 2, y, width * 0.75);
+    glow.addColorStop(0, palette.glow);
+    glow.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = glow;
+    ctx.fill();
+    const band = 30;
+    eachEdge(ctx, box, (length) => {
+      const coins = Math.max(1, Math.round((length - band * 2) / 34));
+      const pitch = (length - band * 2) / coins;
+      for (let index = 0; index < coins; index += 1) paintCoin(ctx, band + pitch * index + pitch / 2, band / 2, 13, palette.metal);
+    });
+    const gem = new Path2D(GEM_PATH);
+    eachCorner(ctx, box, band / 2, () => {
+      ctx.translate(-21, -21);
+      ctx.scale(1.5, 1.5);
+      ctx.fillStyle = palette.gems[0];
+      ctx.fill(gem);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+      ctx.stroke(gem);
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = palette.gems[1];
+      ctx.fill(new Path2D("M14 2 L20 11 L14 14 L8 11 Z"));
+      ctx.globalAlpha = 1;
+    });
+  } else if (frame === "kinjo") {
+    // 玉座と同じ作りで、上に金の天守。
+    roundRectPath(ctx, x, y, width, height, 30);
+    const night = ctx.createRadialGradient(x + width / 2, y, 0, x + width / 2, y, width * 1.05);
+    night.addColorStop(0, palette.a);
+    night.addColorStop(0.58, palette.b);
+    night.addColorStop(1, palette.c);
+    ctx.fillStyle = night;
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    const shine = ctx.createLinearGradient(x, y, x + width, y + height * 0.55);
+    shine.addColorStop(0, "rgba(255, 228, 160, 0)");
+    shine.addColorStop(0.38, "rgba(255, 228, 160, 0)");
+    shine.addColorStop(0.5, "rgba(255, 228, 160, 0.16)");
+    shine.addColorStop(0.62, "rgba(255, 228, 160, 0)");
+    shine.addColorStop(1, "rgba(255, 228, 160, 0)");
+    ctx.fillStyle = shine;
+    ctx.fillRect(x, y, width, height);
+    ctx.restore();
+    ctx.save();
+    ctx.shadowColor = palette.glow;
+    ctx.shadowBlur = 60;
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = metalGradient(ctx, box, palette.m);
+    roundRectPath(ctx, x, y, width, height, 30);
+    ctx.stroke();
+    ctx.restore();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = palette.line;
+    roundRectPath(ctx, x + 7, y + 7, width - 14, height - 14, 25);
+    ctx.stroke();
+    // 見出し（WALLET WANTED）に重ならない大きさで、枠の上に乗せる。
+    paintCastle(ctx, x + width / 2, y - 60, 132, palette);
   } else {
     const panel = ctx.createLinearGradient(x, y, x + width * 0.6, y + height);
     panel.addColorStop(0, mixColor(PANEL, color, 0.14));
@@ -1288,11 +1479,12 @@ export async function renderRecruitImage(data) {
   const word = String(data.word || "");
   const intro = String(data.intro || "");
   const achievements = (Array.isArray(data.achievements) ? data.achievements : []).slice(0, 3);
-  const honorLabel = String(data.honorLabel || "");
-  // 中の人の札を先頭に。宣言「未払いは既読無視」と「高額請求」は、型と称号より先に並べる。
+  // 金庫の段階（外に見せるのは段階だけ。額は入れない）。
+  const vaultLabel = String(data.vaultLabel || "");
+  // 中の人の札を先頭に。宣言「未払いは既読無視」と「高額請求」は、型と金庫の段階より先に並べる。
   const OATH = "未払いは既読無視";
   const HIGH = "高額請求";
-  const tags = [manager.disclosureLabel, data.ignoreUnpaid ? OATH : "", data.highRequest ? HIGH : "", manager.styleLabel, honorLabel].filter(Boolean);
+  const tags = [manager.disclosureLabel, data.ignoreUnpaid ? OATH : "", data.highRequest ? HIGH : "", manager.styleLabel, vaultLabel].filter(Boolean);
   await loadFonts([manager.personaName, word, intro, tags.join(""), achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布募集中入場料管理中今月の財布人アプリ内ポイントだけ現金なし#WALLET WANTED"].join(""));
   const image = await loadImage(manager.avatarUrl);
   const canvas = canvasFor();
@@ -1347,7 +1539,7 @@ export async function renderRecruitImage(data) {
       tagY += 58;
     }
     const isDisclosure = index === 0;
-    const isHonor = !isDisclosure && (label === honorLabel || label === HIGH);
+    const isHonor = !isDisclosure && (label === vaultLabel || label === HIGH);
     const isOath = !isDisclosure && label === OATH;
     const nekama = manager.disclosureKey === "nekama";
     const color = isDisclosure ? (nekama ? "#9fe6ff" : TEXT) : isOath ? "#ffb3c6" : isHonor ? "#f6dfa6" : TEXT;

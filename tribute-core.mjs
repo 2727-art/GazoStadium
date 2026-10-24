@@ -200,11 +200,25 @@ export const REPORT_REASON_LABELS = Object.freeze({
   threat: "脅迫・差別・晒しの脅し",
   other: "その他",
 });
-export const POLICY_LABELS = Object.freeze({
-  both: "両方（初めての関係と続く管理）",
-  first: "初めての関係",
-  renewal: "続く管理",
-});
+// 管理人の金庫の段階。サーバーの VAULT_TIERS と同じ。外に見せるのは段階だけ（額は本人だけ）。
+export const VAULT_TIERS = Object.freeze([
+  Object.freeze({ level: 1, id: "box", label: "木箱", threshold: 1_000 }),
+  Object.freeze({ level: 2, id: "safe", label: "金庫", threshold: 5_000 }),
+  Object.freeze({ level: 3, id: "kura", label: "蔵", threshold: 10_000 }),
+  Object.freeze({ level: 4, id: "treasury", label: "宝物庫", threshold: 30_000 }),
+  Object.freeze({ level: 5, id: "castle", label: "金の城", threshold: 100_000 }),
+]);
+// 金庫を作れるのは、お貢ぎ牧場で累計3人以上の財布から、合わせて1,000 Pay以上を受け取った管理人。サーバーの LIMITS と同じ。
+export const VAULT_QUALIFY = Object.freeze({ payers: 3, received: 1_000 });
+
+export function vaultTierFor(amount) {
+  const value = Math.max(0, Math.floor(Number(amount) || 0));
+  return VAULT_TIERS.reduce((level, tier) => (value >= tier.threshold ? tier.level : level), 0);
+}
+
+export function vaultTierInfo(level) {
+  return VAULT_TIERS.find((tier) => tier.level === Number(level)) || null;
+}
 
 const FORBIDDEN_PATTERNS = Object.freeze([
   Object.freeze({ reason: "email", pattern: /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/iu }),

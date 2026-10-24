@@ -582,6 +582,29 @@ const tributeDefinitions = [
   }),
 ];
 
+// 終わった牧場基金（2026年10月まで）の上納の称号。限定称号として、当時の記録から一度だけ解除する（新しくは取れない）。
+// 解除はお貢ぎ牧場のサービスが tributeHonors から行う。上の称号を取った人は、下の称号も持つ。
+const tributeHonorDefinitions = [
+  ["tribute_honor_offerer", 1, "納", "上納者", 300],
+  ["tribute_honor_grand_offerer", 2, "献", "大上納者", 1500],
+  ["tribute_honor_master", 3, "主", "牧場の主", 5000],
+].map(([id, level, icon, name, threshold]) => Object.freeze({
+  id,
+  scope: "special",
+  category: "tribute_honor",
+  family: "tribute_honor",
+  familyLabel: "牧場基金の限定称号",
+  icon,
+  level,
+  target: level,
+  name,
+  description: `お貢ぎ牧場の牧場基金（2026年10月に終了）で、ひと月に${threshold.toLocaleString("ja-JP")} Pay以上を上納した`,
+  hint: "牧場基金の終了とともに、新しくは取れなくなった限定称号",
+  autoPublic: false,
+  legacy: true,
+  condition: { type: "tribute_honor" },
+}));
+
 const specialDefinitions = [Object.freeze({
   id: DOLLMASTER_ACHIEVEMENT_ID,
   scope: "special",
@@ -608,6 +631,7 @@ const ACHIEVEMENT_DEFINITIONS = Object.freeze([
   ...marketDefinitions,
   ...fleaDefinitions,
   ...tributeDefinitions,
+  ...tributeHonorDefinitions,
 ]);
 const ACHIEVEMENT_BY_ID = new Map(ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition]));
 

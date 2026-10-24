@@ -131,7 +131,7 @@ const PRODUCT_ROWS = [
   ["chat_frame_stardust", "chatFrame", 1100],
   ["chat_frame_royal_gold", "chatFrame", 1300],
   ["chat_frame_beyond", "chatFrame", 1500],
-  // お貢ぎ牧場の飾り（tribute-rules.js の DECORATION_SLOTS・tribute-deco.mjs と揃える）。売上の20%は牧場基金へ。
+  // お貢ぎ牧場の飾り（tribute-rules.js の DECORATION_SLOTS・tribute-deco.mjs と揃える）。金庫の段階で使う飾りは売らない。
   ["ranch_frame_kurokawa", "ranchFrame", 5000],
   ["ranch_frame_kusari", "ranchFrame", 8000],
   ["ranch_frame_bara", "ranchFrame", 10000],

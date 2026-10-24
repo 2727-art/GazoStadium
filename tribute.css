@@ -215,7 +215,13 @@
 
 .tribute-tag.is-nekama { border-color: rgba(95, 212, 255, 0.55); color: #8fe3ff; }
 .tribute-tag.is-as_is { border-color: rgba(255, 79, 163, 0.5); color: #ff9ccc; }
-.tribute-tag.is-honor { border-color: rgba(232, 194, 122, 0.6); color: var(--tr-gold); }
+/* 金庫の段階（外に見せるのは段階だけ）。段階が上がるほど金色が濃くなる。 */
+.tribute-tag.is-vault { display: inline-flex; gap: 4px; align-items: center; border-color: rgba(232, 194, 122, 0.6); color: var(--tr-gold); }
+.tribute-tag.is-vault i { font-style: normal; font-size: 0.68em; padding: 0 3px; border-radius: 4px; background: rgba(232, 194, 122, 0.22); }
+.tribute-tag.is-vault-treasury,
+.tribute-tag.is-vault-castle { background: linear-gradient(135deg, rgba(232, 194, 122, 0.24), rgba(255, 79, 163, 0.16)); color: #ffe7a8; }
+.tribute-tag.is-vault-castle { border-color: #f3cf74; box-shadow: 0 0 10px rgba(243, 207, 116, 0.35); }
+.tribute-tag.is-vault.is-empty { border-color: var(--tr-line); color: var(--tr-mist); }
 .tribute-tag.is-mine { border-color: rgba(126, 224, 138, 0.5); color: #9ff0a9; }
 
 .tribute-chip {
@@ -310,7 +316,7 @@
 .tribute-switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; cursor: pointer; }
 .tribute-switch input { width: 18px; height: 18px; accent-color: var(--tr-accent); }
 .tribute-section-title { margin-bottom: 10px !important; }
-.tribute-shelf { display: grid; gap: 10px; }
+
 .tribute-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; }
 
 .tribute-card > .tribute-card-face {
@@ -853,15 +859,30 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
 .tribute-ledger,
 .tribute-ranking,
 .tribute-receipts,
-.tribute-fund { display: grid; gap: 14px; }
+.tribute-vault { display: grid; gap: 14px; }
 
-.tribute-tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
-.tribute-tiers li { display: grid; gap: 2px; padding: 10px; border: 1px solid var(--tr-line); border-radius: 12px; }
-.tribute-tiers li.is-current { border-color: var(--tr-gold); background: rgba(232, 194, 122, 0.08); }
-.tribute-tiers b { color: var(--tr-gold); }
-.tribute-honor { display: grid; gap: 8px; }
-.tribute-policy { padding: 7px 12px; border: 1px solid var(--tr-line); border-radius: 10px; background: var(--tr-panel-2); color: var(--tr-text); font: inherit; font-size: 0.82rem; cursor: pointer; }
-.tribute-policy.is-selected { border-color: var(--tr-gold); color: var(--tr-gold); }
+/* 金庫：自分の金庫（額は本人だけ）、段階の進み具合、出し入れ、金庫番付、段階と飾りの一覧。 */
+.tribute-vault-mine { display: grid; gap: 10px; }
+.tribute-vault-mine.is-tier-treasury,
+.tribute-vault-mine.is-tier-castle { border-color: rgba(232, 194, 122, 0.55); box-shadow: 0 0 24px rgba(232, 194, 122, 0.14); }
+.tribute-vault-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; }
+.tribute-vault-head strong { font-size: 1.7rem; font-weight: 900; color: var(--tr-gold); font-variant-numeric: tabular-nums; }
+.tribute-vault-head small { flex-basis: 100%; color: var(--tr-mist); font-size: 0.74rem; }
+.tribute-vault-next { display: grid; gap: 4px; }
+.tribute-vault-next small { color: var(--tr-mist); font-size: 0.78rem; }
+.tribute-vault-form { display: grid; gap: 8px; }
+.tribute-vault-form > small { color: var(--tr-mist); font-size: 0.74rem; line-height: 1.6; }
+.tribute-vault-ranking li { grid-template-columns: 2rem minmax(0, 1fr) auto; }
+.tribute-vault-tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.tribute-vault-tiers li { display: grid; gap: 2px; padding: 10px; border: 1px solid var(--tr-line); border-radius: 12px; color: var(--tr-mist); }
+.tribute-vault-tiers li b { display: flex; gap: 4px; align-items: center; color: var(--tr-text); }
+.tribute-vault-tiers li b i { font-style: normal; font-size: 0.7em; padding: 0 3px; border-radius: 4px; background: rgba(232, 194, 122, 0.18); color: var(--tr-gold); }
+.tribute-vault-tiers li small { font-size: 0.72rem; line-height: 1.5; }
+.tribute-vault-tiers li.is-reached { border-color: rgba(232, 194, 122, 0.55); }
+.tribute-vault-tiers li.is-reached b { color: var(--tr-gold); }
+.tribute-vault-tiers li.is-current { background: rgba(232, 194, 122, 0.1); }
+/* 金庫の飾り（非売品）は、ストアの飾りと見分けられるよう金の点を付ける。 */
+.tribute-deco-tile.is-vault small::before { content: "庫 "; color: var(--tr-gold); font-weight: 800; }
 
 @keyframes tribute-sheet-in { from { transform: translate(-50%, 30px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
 @keyframes tribute-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -993,6 +1014,52 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
   :is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="gyokuza"]::after { animation: none; background-position: 30% 0; }
 }
 
+/* 金庫の飾りの枠（非売品。金庫の段階で使える）。背景はどの色でも暗いまま、文字には触れない。 */
+/* 蔵：なまこ壁の縁、白壁の線、上に屋根瓦。 */
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kura"] {
+  border: 12px solid transparent;
+  border-image: var(--fr-namako) 24 round;
+  border-radius: 2px;
+  background: linear-gradient(160deg, var(--fr-a), var(--fr-b) 62%) padding-box;
+  box-shadow: inset 0 0 0 3px var(--fr-plaster), 0 8px 20px rgba(0, 0, 0, 0.55);
+}
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kura"]::before { content: ""; position: absolute; left: -16px; right: -16px; top: -24px; height: 14px; background: var(--fr-roof) left bottom / 20px 14px repeat-x; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55)); pointer-events: none; }
+.tribute-card > .tribute-card-face[data-frame="kura"] { margin-top: 12px; height: calc(100% - 12px); }
+.tribute-profile[data-frame="kura"] { margin-top: 14px; }
+
+/* 宝物庫：金貨の縁と、四隅の宝石。 */
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="houmotsu"] {
+  border: 12px solid transparent;
+  border-image: var(--fr-coins) 24 round;
+  border-radius: 4px;
+  background: radial-gradient(120% 80% at 50% 0%, var(--fr-glow), transparent 62%) padding-box, linear-gradient(160deg, var(--fr-a), var(--fr-b) 60%) padding-box;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+}
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="houmotsu"]::before {
+  content: "";
+  position: absolute;
+  inset: -16px;
+  pointer-events: none;
+  background: var(--fr-gem) top left / 26px no-repeat, var(--fr-gem) top right / 26px no-repeat, var(--fr-gem) bottom left / 26px no-repeat, var(--fr-gem) bottom right / 26px no-repeat;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+}
+
+/* 金の城：玉座と同じ作りで、上に金の天守としゃちほこ。光がゆっくり流れる。 */
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kinjo"] {
+  border: 3px solid transparent;
+  background:
+    radial-gradient(120% 80% at 50% 0%, var(--fr-a), var(--fr-b) 58%, var(--fr-c)) padding-box,
+    linear-gradient(135deg, var(--fr-m1), var(--fr-m2) 30%, var(--fr-m3) 50%, var(--fr-m4) 70%, var(--fr-m1)) border-box;
+  box-shadow: inset 0 0 0 1px var(--fr-line), 0 0 30px var(--fr-glow), 0 10px 26px rgba(0, 0, 0, 0.6);
+}
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kinjo"]::before { content: ""; position: absolute; left: 50%; top: -38px; width: 84px; height: 50px; transform: translateX(-50%); background: var(--fr-castle) center / contain no-repeat; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6)); pointer-events: none; }
+:is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kinjo"]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(110deg, transparent 38%, rgba(255, 228, 160, 0.18) 50%, transparent 62%) 120% 0 / 260% 100% no-repeat; mix-blend-mode: screen; animation: tribute-throne-shine 8s ease-in-out infinite; }
+.tribute-card > .tribute-card-face[data-frame="kinjo"] { margin-top: 30px; height: calc(100% - 30px); }
+.tribute-profile[data-frame="kinjo"] { margin-top: 32px; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.tribute-card-face, .tribute-profile, .tribute-deco-swatch)[data-frame="kinjo"]::after { animation: none; background-position: 30% 0; }
+}
+
 /* 枠の色の丸（カードの編集） */
 .tribute-frame-colors { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
 .tribute-frame-color { position: relative; display: grid; justify-items: center; align-content: start; gap: 4px; min-width: 0; color: var(--tr-mist); font-size: 0.64rem; line-height: 1.3; text-align: center; overflow-wrap: anywhere; cursor: pointer; }
@@ -1042,6 +1109,12 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .tribute-deco-swatch[data-frame="kurokawa"]::after { inset: 4px; border-radius: 6px; }
 .tribute-deco-swatch[data-frame="gyokuza"] { margin-top: 8px; height: 40px; }
 .tribute-deco-swatch[data-frame="gyokuza"]::before { top: -15px; width: 34px; height: 21px; }
+.tribute-deco-swatch[data-frame="kura"] { margin-top: 8px; height: 40px; border-width: 8px; }
+.tribute-deco-swatch[data-frame="kura"]::before { left: -9px; right: -9px; top: -15px; height: 9px; background-size: 13px 9px; }
+.tribute-deco-swatch[data-frame="houmotsu"] { border-width: 8px; }
+.tribute-deco-swatch[data-frame="houmotsu"]::before { inset: -9px; background-size: 15px, 15px, 15px, 15px; }
+.tribute-deco-swatch[data-frame="kinjo"] { margin-top: 12px; height: 36px; }
+.tribute-deco-swatch[data-frame="kinjo"]::before { top: -20px; width: 40px; height: 24px; }
 .tribute-deco-ink { display: block; width: 26px; height: 26px; border-radius: 50%; background: var(--ink); box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.25), 0 0 10px color-mix(in srgb, var(--ink) 40%, transparent); }
 .tribute-deco-tiles.is-inks .tribute-deco-art { min-height: 30px; }
 .tribute-deco-trial { display: grid; gap: 6px; margin-top: 8px; padding: 12px; border: 1px solid rgba(232, 194, 122, 0.55); border-radius: 14px; background: linear-gradient(135deg, rgba(232, 194, 122, 0.14), rgba(255, 79, 163, 0.08)); }

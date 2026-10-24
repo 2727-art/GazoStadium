@@ -50,20 +50,31 @@ test("the decoration catalog is the same in the browser, the store prices and th
     ranch_ink_sakura: 2_000,
     ranch_ink_kin: 3_000,
   }, "the prices agreed for the ranch shelf");
-  assert.deepEqual(deco.CARD_FRAMES.map((entry) => entry.id), [rules.DEFAULT_FRAME, ...rules.CARD_FRAMES]);
-  assert.deepEqual(deco.SEAL_SHAPES.map((entry) => entry.id), [...rules.SEAL_SHAPES]);
-  assert.deepEqual(deco.SEAL_INKS.map((entry) => entry.id), [...rules.SEAL_INKS]);
+  // 金庫の飾り（非売品）は、ストアの飾りのあとに並ぶ。
+  const vaultIds = (slot) => rules.VAULT_DECORATIONS.filter((item) => item.slot === slot).map((item) => item.id);
+  assert.deepEqual(deco.CARD_FRAMES.map((entry) => entry.id), [rules.DEFAULT_FRAME, ...rules.CARD_FRAMES, ...vaultIds("frame")]);
+  assert.deepEqual(deco.SEAL_SHAPES.map((entry) => entry.id), [...rules.SEAL_SHAPES, ...vaultIds("sealShape")]);
+  assert.deepEqual(deco.SEAL_INKS.map((entry) => entry.id), [...rules.SEAL_INKS, ...vaultIds("sealInk")]);
   assert.equal(deco.SEAL_SHAPES[0].id, rules.DEFAULT_SEAL_SHAPE);
   assert.equal(deco.SEAL_INKS[0].id, rules.DEFAULT_SEAL_INK);
   for (const list of [deco.CARD_FRAMES, deco.SEAL_SHAPES, deco.SEAL_INKS]) {
     assert.equal(list[0].price, 0, "the default of each slot is free");
     assert.equal(list[0].productId, "");
   }
-  for (const value of [{}, null, { frame: "gyokuza", sealShape: "wax", sealInk: "kin" }, { frame: "<b>", sealShape: "star", sealInk: "#000" }, { frame: "kusari", sealShape: "date", sealInk: "ai" }]) {
+  for (const value of [{}, null, { frame: "gyokuza", sealShape: "wax", sealInk: "kin" }, { frame: "<b>", sealShape: "star", sealInk: "#000" }, { frame: "kusari", sealShape: "date", sealInk: "ai" }, { frame: "kinjo", frameColor: "pink", sealShape: "senryo", sealInk: "kogane" }, { frame: "kura", sealShape: "heart", sealInk: "kogane" }]) {
     assert.deepEqual(deco.normalizeDecorations(value), rules.normalizeDecorations(value), JSON.stringify(value));
     assert.deepEqual(deco.requiredDecorationProducts(value), rules.requiredDecorationProducts(rules.normalizeDecorations(value)), JSON.stringify(value));
+    assert.equal(deco.requiredVaultTier(value), rules.requiredVaultTier(rules.normalizeDecorations(value)), JSON.stringify(value));
   }
-  assert.equal(deco.DECORATION_FUND_PERCENT * 100, rules.DECORATION_FUND_BASIS_POINTS);
+  // 金庫の飾りは、段階ごとに1つずつ（古金・千両箱・蔵・宝物庫・金の城）。ストアの商品ではない。
+  assert.deepEqual(deco.VAULT_DECORATION_ITEMS.map(({ slot, deco: id, tier }) => ({ slot, id, tier })), rules.VAULT_DECORATIONS.map(({ slot, id, tier }) => ({ slot, id, tier })));
+  assert.deepEqual(rules.VAULT_DECORATIONS.map((item) => item.tier), [1, 2, 3, 4, 5]);
+  assert.deepEqual(deco.VAULT_DECORATION_ITEMS.map((item) => item.name), ["古金", "千両箱", "蔵", "宝物庫", "金の城"]);
+  for (const item of rules.VAULT_DECORATIONS) {
+    assert.ok(!rules.DECORATION_PRODUCT_IDS.some((id) => id.endsWith(`_${item.id}`)), `${item.id} is not sold`);
+    assert.ok(!Object.keys(catalog).some((id) => id.endsWith(`_${item.id}`)), `${item.id} is not in the store`);
+  }
+  assert.equal(deco.DECORATION_FUND_PERCENT, undefined, "the ended ranch fund no longer takes a share of sales");
 
   // Realtime Database の持ち物の検証にも同じ ID が入っている（ストアの商品と同じ扱い）。
   const inventory = JSON.parse(read("database.rules.json")).rules.online.economy.$uid.inventory.$productId[".validate"];
@@ -73,7 +84,7 @@ test("the decoration catalog is the same in the browser, the store prices and th
   }
 });
 
-test("the manager card accepts decorations and up to three achievements, and the fund takes 20% of each sale", () => {
+test("the manager card accepts decorations and up to three achievements, and decoration sales no longer feed a fund", () => {
   const base = { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 };
   const plain = rules.normalizeManagerCard(base).card;
   assert.deepEqual({ frame: plain.frame, sealShape: plain.sealShape, sealInk: plain.sealInk, achievements: plain.achievements }, { frame: "", sealShape: "date", sealInk: "shu", achievements: [] });
@@ -81,27 +92,29 @@ test("the manager card accepts decorations and up to three achievements, and the
   assert.deepEqual(decorated.achievements, ["battle_total_10", "tribute_manager_1", "tribute_wallet_3"]);
   assert.deepEqual(rules.requiredDecorationProducts(decorated), ["ranch_frame_kinbuchi", "ranch_seal_crown", "ranch_ink_kin"]);
   assert.deepEqual(rules.requiredDecorationProducts(plain), []);
-  assert.equal(rules.decorationFundShare(30_000), 6_000);
-  assert.equal(rules.decorationFundShare(1_000), 200);
-  assert.equal(rules.decorationFundShare(0), 0);
-  assert.equal(rules.decorationFundShare(-5), 0);
+  assert.equal(rules.decorationFundShare, undefined);
+  // 金庫の飾りは商品ではなく、金庫の段階で使える（いちばん高いもの）。
+  const vaulted = rules.normalizeManagerCard({ ...base, frame: "kinjo", sealShape: "senryo", sealInk: "kogane" }).card;
+  assert.deepEqual(rules.requiredDecorationProducts(vaulted), []);
+  assert.equal(rules.requiredVaultTier(vaulted), 5);
+  assert.equal(rules.requiredVaultTier({ frame: "kura", sealInk: "kogane" }), 3);
 
   // サーバー: 保存する時に、持っているか・解除しているかを確かめる。
   const save = sourceBlock(service, "async function saveProfileAction", "async function decorationsAction");
   assert.match(save, /requiredDecorationProducts\(cardValues\)\.map\(\(productId\) => transaction\.get\(purchaseRef\(uid, productId\)\)\)/);
   assert.match(save, /持っていない飾りは保存できません/);
+  assert.match(save, /const needTier = requiredVaultTier\(cardValues\);\s*if \(needTier > profile\.vaultBestTier\)/);
+  assert.match(save, /金庫が「\$\{vaultTierInfo\(needTier\)\.label\}」に届くと使えます/);
+  assert.match(sourceBlock(service, "async function decorationsAction", "// 宣言「未払いは既読無視」を"), /vaultBestTier: profile\.vaultBestTier/);
   assert.match(save, /!unlocked\[id\] \|\| !ACHIEVEMENT_BY_ID\.has\(id\)/);
   assert.match(sourceBlock(service, "async function decorationsAction", "// 宣言「未払いは既読無視」を"), /\.where\("productId", "in", \[\.\.\.DECORATION_PRODUCT_IDS\]\)/);
   assert.doesNotMatch(sourceBlock(service, "async function decorationsAction", "// 宣言「未払いは既読無視」を"), /\.set\(|\.update\(|\.create\(/, "reading decorations never writes");
   assert.match(service, /const marks = \{ receivedAt: ctx\.now, seal, \.\.\.sealLook\(ctx\.profiles\.manager\.value\.card\)/, "the seal look is stamped when it is pressed");
 
-  // 購入: 飾りの売上の20%を、同じトランザクションでその月の牧場基金へ。対戦の装備には付けない。
+  // 購入: 牧場基金は2026年10月に終わり、売上を積む先はない。対戦の装備には付けない。
   const purchase = sourceBlock(indexSource, "async function purchaseProduct", "async function claimPeriods");
   assert.match(purchase, /const ranchDecoration = TRIBUTE_DECORATION_PRODUCT_TYPES\.includes\(product\.type\);/);
-  assert.match(purchase, /fund \? transaction\.get\(fund\) : Promise\.resolve\(null\)/);
-  assert.match(purchase, /const share = tributeDecorationFundShare\(product\.price\);[\s\S]*?balance: count\(fundValue\.balance\) \+ share,[\s\S]*?shopIncome: count\(fundValue\.shopIncome\) \+ share,/);
-  const fundWrite = purchase.indexOf("transaction.set(fund,");
-  assert.ok(fundWrite > purchase.indexOf("transaction.create(purchase,") && fundWrite < purchase.indexOf('result = { outcome: "purchased"'), "the fund share is written with the purchase");
+  assert.doesNotMatch(purchase, /tributeFund|FundShare|fundSnapshot/);
   assert.match(purchase, /if \(!ranchDecoration\) await autoEquipProduct\(uid, product\);/);
 });
 
@@ -126,10 +139,12 @@ test("seals keep one look per shape and ink, escape their words, and frames only
   assert.equal(deco.frameAttr(""), "");
   assert.equal(deco.frameAttr('" onmouseover="alert(1)'), "");
   assert.equal(deco.frameAttr("bara", '" onmouseover="alert(1)'), ' data-frame="bara" data-frame-color="red"');
-  for (const id of rules.CARD_FRAMES) {
+  for (const id of [...rules.CARD_FRAMES, ...rules.VAULT_DECORATIONS.filter((item) => item.slot === "frame").map((item) => item.id)]) {
     assert.match(styles, new RegExp(`\\[data-frame="${id}"\\]`), id);
   }
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\[data-frame="gyokuza"\]::after \{ animation: none;/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\[data-frame="kinjo"\]::after \{ animation: none;/, "the golden castle's light stops too");
+  assert.match(deco.sealSvg({ label: "受領", name: "ミオ様", at, shape: "senryo", ink: "kogane" }), /class="tribute-seal is-senryo"[\s\S]*stroke="#cfb26f"/, "千両箱 in 古金");
   // 共有画像の印は canvas で同じ形を描く。
   const tributeShare = await (async () => {
     globalThis.document = globalThis.document || {};
@@ -138,13 +153,15 @@ test("seals keep one look per shape and ink, escape their words, and frames only
   assert.equal(typeof tributeShare.renderRecruitImage, "function");
   assert.match(tributeShare.sealSvg({ label: "受領", name: "ミオ様", at, shape: "crown", ink: "kin", rough: false }), /class="tribute-seal is-crown"/, "the share module re-exports the shared seal");
   // 画面・ストア・共有画像は同じ URL で読み込み、ブラウザでは1つのモジュールになる。
-  const specifier = './tribute-deco.mjs?v=ranch-frame-color-v1"';
+  const specifier = './tribute-deco.mjs?v=ranch-vault-v1"';
   for (const [name, source] of [["tribute.js", client], ["tribute-share.mjs", share], ["online.js", online]]) {
     assert.ok(source.includes(`from "${specifier}`), name);
   }
   assert.match(share, /new Path2D\(HEART_PATH\)/);
   assert.match(share, /new Path2D\(CROWN_PATH\)/);
   assert.match(share, /waxPoints\(\)/);
+  assert.match(share, /\} else if \(shape === "senryo"\) \{[\s\S]*?SENRYO_FITTINGS/);
+  assert.match(share, /new Path2D\(CASTLE_PATHS\.roofs\)/);
 });
 
 test("the card shows the frame and up to three achievements, and the editor lets managers try before they buy", () => {
@@ -165,11 +182,16 @@ test("the card shows the frame and up to three achievements, and the editor lets
   assert.match(editor, /economyActionCallable\(\{ action: "purchase", productId \}\)/);
   assert.match(editor, /if \(previewScreen\) \{[\s\S]*?見本では Pay を動かさず/, "the preview never spends Pay");
   assert.match(editor, /window\.confirm\(/, "buying asks first");
-  assert.match(editor, /買い切りで、払い戻しはありません。売上の\$\{DECORATION_FUND_PERCENT\}%は牧場基金に積まれます。/);
+  assert.match(editor, /"買い切りで、払い戻しはありません。"/);
+  assert.doesNotMatch(editor, /牧場基金に積まれ/);
+  // 金庫の飾りは「金庫で解放」。届いていない段階の飾りは試着だけで、保存はできない。
+  assert.match(editor, /if \(vaultBestTier\(\) >= entry\.vaultTier\) return \{ key: "owned", label: "金庫で解放" \};/);
+  assert.match(editor, /save\.disabled = Boolean\(state\.busy\) \|\| decorationsTried\(look\)\.length > 0 \|\| vaultDecorationsLocked\(look\)\.length > 0;/);
+  assert.match(sourceBlock(client, 'case "card": {', 'case "word": {'), /if \(vaultDecorationsLocked\(formDecorations\(form\)\)\.length\) return setFormError\(form, "金庫がまだその段階に届いていない飾りがあります。/);
   assert.match(editor, /<input type="hidden" name="\$\{name\}" value="\$\{escapeHtml\(value\)\}" \/>/, "a card saved while items are loading keeps its decorations");
   assert.match(editor, /<input type="hidden" name="achievements" value=/);
   assert.match(sourceBlock(client, 'case "card": {', 'case "word": {'), /if \(decorationsTried\(formDecorations\(form\)\)\.length\) return setFormError\(form, "試着中の飾りがあります。/);
-  assert.match(sourceBlock(client, "function renderCardEditor", "function renderSealSettings"), /data-card-save \$\{state\.busy \|\| decorationsTried\(normalizeDecorations\(card\)\)\.length \? "disabled" : ""\}/);
+  assert.match(sourceBlock(client, "function renderCardEditor", "function renderSealSettings"), /data-card-save \$\{state\.busy \|\| decorationsTried\(normalizeDecorations\(card\)\)\.length \|\| vaultDecorationsLocked\(card\)\.length \? "disabled" : ""\}/);
   assert.match(client, /if \(screen === "card"\) loadDecorations\(\);/, "items are read only when the editor opens");
   assert.match(client, /カードに出す実績は\$\{CARD_ACHIEVEMENT_LIMIT\}つまでです。/);
 
@@ -193,7 +215,7 @@ test("the recruit image is drawn on the manager's device with the disclosure, th
   assert.match(recruit, /\["AnjuPay（アプリ内ポイント）だけ・", false\], \["現金なし", true\]/);
   assert.match(recruit, /data\.ignoreUnpaid \? OATH : ""/, "the manager's declaration is on the image");
   assert.match(recruit, /paintFooter\(ctx\);/, "the AnjuPay notice is on every image");
-  for (const id of rules.CARD_FRAMES) assert.match(recruit, new RegExp(`frame === "${id}"`), id);
+  for (const id of [...rules.CARD_FRAMES, "kura", "houmotsu", "kinjo"]) assert.match(recruit, new RegExp(`frame === "${id}"`), id);
 
   const sheet = sourceBlock(client, "function openRecruit", "function downloadShareBlob");
   assert.match(sheet, /renderRecruitImage\(recruitData\(card, month\)\)/);
@@ -204,28 +226,29 @@ test("the recruit image is drawn on the manager's device with the disclosure, th
   assert.match(sourceBlock(client, "function renderInvite", "// 今日のひとこと（管理人だけ）"), /data-t="recruit-open">財布募集の画像を作る<\/button>/);
 });
 
-test("the AnjuPay store sells the ranch shelf with a confirmation and the fund share, and the design doc records the rules", () => {
-  assert.match(online, /import \{ DECORATION_FUND_PERCENT, RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, sealSvg as ranchSealSvg \} from "\.\/tribute-deco\.mjs\?v=ranch-frame-color-v1";/);
+test("the AnjuPay store sells the ranch shelf with a confirmation, without a fund share, and the design doc records the rules", () => {
+  assert.match(online, /import \{ RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, sealSvg as ranchSealSvg \} from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1";/);
   assert.match(online, /<span class="tribute-deco-swatch"\$\{ranchFrameAttr\(product\.deco\)\}><\/span>/, "store swatches get their color variables");
   assert.match(online, /枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。/);
   assert.match(online, /\.\.\.CHAT_COSMETIC_PRODUCTS,\r?\n  \.\.\.RANCH_DECORATION_PRODUCTS,\r?\n\];/);
   assert.match(online, /<h2 id="shopRanchTitle">お貢ぎ牧場の飾り<\/h2>/);
-  assert.match(online, /売上の<b>\$\{DECORATION_FUND_PERCENT\}%<\/b>は牧場基金に積まれ/);
+  assert.doesNotMatch(online, /牧場基金|DECORATION_FUND_PERCENT/);
   assert.match(online, /飾りは見た目だけで、掲示板の並び順・手数料・番付には影響しません。/);
   assert.match(online, /if \(RANCH_DECORATION_TYPES\.has\(product\.type\)\) \{\s*const after = Math\.max\(0, state\.economy\.points - product\.price\);\s*const confirmed = window\.confirm\(/);
   assert.match(online, /購入済み・牧場のカード編集で選ぶ/);
-  assert.match(client, /<div><dt>飾りの売上から<\/dt>/);
+  assert.doesNotMatch(client, /飾りの売上から/);
 
   assert.match(design, /牧場の飾り/);
-  assert.match(design, /売上の20%/);
+  assert.match(design, /金庫の飾り/);
   assert.match(design, /財布募集の画像/);
   assert.match(design, /実績（3つまで）|実績を3つまで/);
 });
 
 test("each frame has five free colors with a pink one, mirrored on the server and drawn only through color variables", async () => {
   const deco = await loadDeco();
-  assert.deepEqual(Object.keys(deco.FRAME_PALETTES), [...rules.CARD_FRAMES]);
-  for (const frame of rules.CARD_FRAMES) {
+  const vaultFrames = rules.VAULT_DECORATIONS.filter((item) => item.slot === "frame").map((item) => item.id);
+  assert.deepEqual(Object.keys(deco.FRAME_PALETTES), [...rules.CARD_FRAMES, ...vaultFrames]);
+  for (const frame of [...rules.CARD_FRAMES, ...vaultFrames]) {
     const ids = deco.FRAME_PALETTES[frame].map((palette) => palette.id);
     assert.deepEqual(ids, [...rules.FRAME_COLORS[frame]], frame);
     assert.equal(ids.length, 5, frame);
@@ -234,9 +257,11 @@ test("each frame has five free colors with a pink one, mirrored on the server an
     for (const value of [{ frame }, { frame, frameColor: ids[1] }, { frame, frameColor: "nope" }]) {
       assert.deepEqual(deco.normalizeDecorations(value), rules.normalizeDecorations(value), JSON.stringify(value));
     }
-    // 色は無料: 色を変えても、持っている必要があるのは枠だけ。
+    // 色は無料: 色を変えても、持っている必要があるのは枠だけ（金庫の枠は、金庫の段階だけ）。
     for (const color of ids) {
-      assert.deepEqual(rules.requiredDecorationProducts(rules.normalizeDecorations({ frame, frameColor: color })), [`ranch_frame_${frame}`]);
+      const look = rules.normalizeDecorations({ frame, frameColor: color });
+      assert.deepEqual(rules.requiredDecorationProducts(look), vaultFrames.includes(frame) ? [] : [`ranch_frame_${frame}`]);
+      if (vaultFrames.includes(frame)) assert.ok(rules.requiredVaultTier(look) >= 3, frame);
     }
     for (const palette of deco.FRAME_PALETTES[frame]) {
       const rule = deco.frameColorRule(frame, palette.id);
@@ -253,7 +278,7 @@ test("each frame has five free colors with a pink one, mirrored on the server an
   // tribute.css は色を持たず、変数で描く（文字の色と位置には触れない）。
   const frames = sourceBlock(styles, "/* ───────────── 牧場の飾り：カードの枠", "/* 牧場のカードに出す実績（3つまで） */");
   assert.doesNotMatch(frames, /data:image\/svg/);
-  for (const name of ["--fr-a", "--fr-chain", "--fr-lace", "--fr-rose", "--fr-crown", "--fr-stitch", "--fr-m1", "--fr-fl-tl"]) assert.ok(frames.includes(`var(${name})`), name);
+  for (const name of ["--fr-a", "--fr-chain", "--fr-lace", "--fr-rose", "--fr-crown", "--fr-stitch", "--fr-m1", "--fr-fl-tl", "--fr-namako", "--fr-plaster", "--fr-roof", "--fr-coins", "--fr-gem", "--fr-castle"]) assert.ok(frames.includes(`var(${name})`), name);
   assert.doesNotMatch(frames, /\bcolor:\s*var\(--fr/, "frame colors never change the text color");
 
   const editor = sourceBlock(client, "// 枠の色。持っている枠なら", "function renderDecorationTrial");

@@ -63,7 +63,7 @@ async function harness(dispatch) {
     previewScreen: "", EVENTS_LIMIT: 100, TRIBUTE_AGE_VERSION: 1,
     // 見学用の見本と招待リンク（ranch-invite-v1）。見本の契約IDはサーバーへ送られず、招待がなければ通常の入場になる。
     DEMO_CONTRACT_ID: "demo", pendingInvite: "", openManager(id) { calls.push({ ui: "manager", id }); },
-    SCREENS: new Set(["loading", "age", "hub", "thread", "board"]), firestore: {},
+    SCREENS: new Set(["loading", "age", "hub", "thread", "board"]), SCREEN_ALIASES: { fund: "vault" }, firestore: {},
     layer: { innerHTML: "", querySelector() { return null; } },
     tributeActionCallable: async (request) => {
       calls.push(request);

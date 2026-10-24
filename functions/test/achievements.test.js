@@ -1218,6 +1218,7 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "flea_purchases",
     "tribute_manager",
     "tribute_wallet",
+    "tribute_honor",
   ]);
   assert.deepEqual(
     JSON.parse(JSON.stringify([...window.HariaiAchievements.catalog]

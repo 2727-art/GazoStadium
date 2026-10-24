@@ -122,7 +122,7 @@ import {
   runOnlineOpponentDestroyedTransition,
 } from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v2";
 import { createSoloHiddenWaitGuard } from "./online-solo-idle-guard.mjs?v=solo-match-cost-guard-v1";
-import { DECORATION_FUND_PERCENT, RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, sealSvg as ranchSealSvg } from "./tribute-deco.mjs?v=ranch-frame-color-v1";
+import { RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, sealSvg as ranchSealSvg } from "./tribute-deco.mjs?v=ranch-vault-v1";
 import {
   ONLINE_P2P_RECOVERY_PHASES,
   createOnlineP2pGenerationToken,
@@ -5543,7 +5543,7 @@ function renderPointShop() {
         <div class="shop-oshi-market-groups">${oshiMarketCollectionGroups}</div>
       </section>
       <section class="shop-category shop-ranch-category" id="shopRanchCategory" aria-labelledby="shopRanchTitle"><div class="shop-category-head shop-ranch-head"><div><span>OMITSUGI RANCH / ${RANCH_DECORATION_PRODUCTS.length} ITEMS</span><h2 id="shopRanchTitle">お貢ぎ牧場の飾り</h2></div><p>管理人カードの枠と、財布に押す受取印を飾ります。掲示板・招待・財布募集の画像と、財布が保存する貢ぎ報告の画像に出ます。買ったあとは、お貢ぎ牧場の管理人カードの編集で選べます（試着もそこでできます）。枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。</p>
-        <p class="shop-ranch-fund">売上の<b>${DECORATION_FUND_PERCENT}%</b>は牧場基金に積まれ、新しい財布の献上手数料の補填に使われます。飾りは見た目だけで、掲示板の並び順・手数料・番付には影響しません。</p></div>
+        <p class="shop-ranch-fund">飾りは見た目だけで、掲示板の並び順・手数料・番付には影響しません。</p></div>
         <h3 class="shop-ranch-sub">カードの枠</h3><div class="shop-grid">${ranchShelf("ranchFrame")}</div>
         <h3 class="shop-ranch-sub">受取印の形</h3><div class="shop-grid">${ranchShelf("ranchSealShape")}</div>
         <h3 class="shop-ranch-sub">朱肉の色</h3><div class="shop-grid">${ranchShelf("ranchSealInk")}</div></section>
@@ -7950,7 +7950,7 @@ async function purchaseShopProduct(productId) {
       + `現在残高: ${formatAnjuPay(state.economy.points)}\n`
       + `商品価格: ${formatAnjuPay(product.price)}\n`
       + `購入後残高: ${formatAnjuPay(after)}\n\n`
-      + `買い切りで、お貢ぎ牧場の管理人カードの編集で選べます。売上の${DECORATION_FUND_PERCENT}%は牧場基金に積まれます。`,
+      + "買い切りで、お貢ぎ牧場の管理人カードの編集で選べます。",
     );
     if (!confirmed) return;
   }

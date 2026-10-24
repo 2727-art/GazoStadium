@@ -82,6 +82,10 @@ const ANJU_PAY_LABELS = Object.freeze({
   anju_pay_tribute_escrow_return: "お貢ぎ牧場の管理口座から返還",
   tribute_offering: "お貢ぎ牧場で牧場基金へ上納",
   anju_pay_tribute_offering: "お貢ぎ牧場で牧場基金へ上納",
+  tribute_vault_deposit: "お貢ぎ牧場の金庫へ入れた",
+  anju_pay_tribute_vault_deposit: "お貢ぎ牧場の金庫へ入れた",
+  tribute_vault_withdraw: "お貢ぎ牧場の金庫から出した",
+  anju_pay_tribute_vault_withdraw: "お貢ぎ牧場の金庫から出した",
   stadium_revenue: "マイスタジアムの売上を回収",
   anju_pay_stadium_revenue: "マイスタジアムの売上を回収",
   stadium_build: "マイスタジアムの施設を建設",
@@ -371,6 +375,8 @@ function historyLabel(entry) {
   if (key.includes("tribute_escrow_hold")) return ANJU_PAY_LABELS.tribute_escrow_hold;
   if (key.includes("tribute_escrow_return")) return ANJU_PAY_LABELS.tribute_escrow_return;
   if (key.includes("tribute_offering")) return ANJU_PAY_LABELS.tribute_offering;
+  if (key.includes("tribute_vault_deposit")) return ANJU_PAY_LABELS.tribute_vault_deposit;
+  if (key.includes("tribute_vault_withdraw")) return ANJU_PAY_LABELS.tribute_vault_withdraw;
   if (key.includes("tribute_received")) return ANJU_PAY_LABELS.tribute_received;
   if (key.includes("tribute")) return ANJU_PAY_LABELS.tribute_sent;
   if (key.includes("flea_listing_fee")) return ANJU_PAY_LABELS.flea_listing_fee;
@@ -983,16 +989,16 @@ function renderAccountStatus() {
 }
 
 // VALUE MARKET パトロンと循環基金は、推し値市場の終了（2026年10月）にあわせて受付を終えた。
-// 上納と牧場基金はお貢ぎ牧場で作り直している。ここでは獲得済みの記録だけを表示する。
+// お貢ぎ牧場の牧場基金も2026年10月に終わり、管理人の金庫に変わった。ここでは獲得済みの記録だけを表示する。
 function renderPatronage() {
   const patron = state.patron;
   const currentTier = tierForLevel(patron.tier);
   return `<section class="account-patron-section is-closed" id="accountPatronSection" tabindex="-1" aria-labelledby="accountPatronTitle">
     <div class="account-section-head"><div><span class="eyebrow">ANJUPAY PATRONAGE</span><h2 id="accountPatronTitle">VALUE MARKET パトロン（終了）</h2>
-      <p>推し値市場の終了にあわせ、パトロン還元と循環基金は2026年10月で受付を終えました。新しい「上納」と牧場基金は、お貢ぎ牧場の管理人が使えます。</p></div>
+      <p>推し値市場の終了にあわせ、パトロン還元と循環基金は2026年10月で受付を終えました。お貢ぎ牧場の牧場基金も同じ月に終わり、管理人の金庫に変わりました。</p></div>
       <div class="patron-current-badge tier-${currentTier.id}"><span>${currentTier.icon}</span><small>RECORD</small><strong>${currentTier.label}</strong></div></div>
     <p class="account-fine-print">これまでの累計支援 ${formatAnjuPay(patron.lifetimeSpent)} と獲得したバッジの記録は残ります。基金へ還元したAnjuPayの払い戻しはありません。</p>
-    <button class="button button-ghost button-small" type="button" id="accountOpenTributeFund">お貢ぎ牧場の牧場基金を見る</button>
+    <button class="button button-ghost button-small" type="button" id="accountOpenTributeVault">お貢ぎ牧場の金庫を見る</button>
   </section>`;
 }
 
@@ -1659,9 +1665,9 @@ function bindEvents() {
     state.notice = "現在のゲストデータを維持しています。別のGoogleアカウントなら保護に使用できます。";
     render();
   });
-  document.querySelector("#accountOpenTributeFund")?.addEventListener("click", () => {
+  document.querySelector("#accountOpenTributeVault")?.addEventListener("click", () => {
     requestHome();
-    window.setTimeout(() => window.HariaiApp?.openTribute?.({ initialScreen: "fund" }), 0);
+    window.setTimeout(() => window.HariaiApp?.openTribute?.({ initialScreen: "vault" }), 0);
   });
   document.querySelectorAll("[data-patron-tier]").forEach((button) => {
     button.addEventListener("click", () => upgradePatron(Number(button.dataset.patronTier)));

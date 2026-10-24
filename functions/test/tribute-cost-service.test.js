@@ -43,6 +43,8 @@ function storage() {
         const result = await callback({
           get: async (ref) => {
             assert.equal(pending.length, 0, "transaction reads must precede writes");
+            // 検索（where の付いたもの）は、トランザクションの中でも一覧を返す。
+            if (typeof ref.where === "function" && !ref.id) return ref.get();
             reads.push(ref.path);
             return snapshot(ref);
           },
@@ -157,10 +159,12 @@ test("ranch first-use backfill retries atomically and is not repeated on later s
   assert.equal(result.achievements.stats.walletPairDays, 3, "existing contributions survive backfill");
   assert.equal(h.documents.get("tributeAchievementStats/payer").historyBackfilled, true);
   assert.equal(h.reads.filter((item) => item === "tributePairs/*").length, 2);
+  assert.equal(h.reads.filter((item) => item === "tributeHonors/*").length, 1, "the ended fund's honors are checked once");
   h.reads.length = 0;
   await h.act("payer", "state");
   assert.equal(h.reads.filter((item) => item === "tributeAchievementStats/payer").length, 1);
   assert.equal(h.reads.some((item) => item === "tributePairs/*"), false);
+  assert.equal(h.reads.some((item) => item === "tributeHonors/*"), false, "and never again");
 });
 
 const indexSource = fs.readFileSync(path.join(__dirname, "../index.js"), "utf8");

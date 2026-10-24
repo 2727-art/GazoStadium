@@ -1,6 +1,6 @@
 "use strict";
 
-// お貢ぎ牧場の純粋な規則。上限・入力・禁止表現・手数料・称号をここに集め、サービスとテストで共有する。
+// お貢ぎ牧場の純粋な規則。上限・入力・禁止表現・手数料・金庫の段階をここに集め、サービスとテストで共有する。
 // 上限と離脱は預ける側が持つ。ここにある関数は、預ける側の上限を超える移動を通さないためにある。
 
 const TRIBUTE_SCHEMA_VERSION = 1;
@@ -82,13 +82,22 @@ const FRAME_COLORS = Object.freeze({
   bara: Object.freeze(["red", "pink", "black", "white", "blue"]),
   kinbuchi: Object.freeze(["gold", "pinkgold", "silver", "rosegold", "blackgold"]),
   gyokuza: Object.freeze(["crimson", "pink", "jet", "violet", "lapis"]),
+  kura: Object.freeze(["shirakabe", "pink", "kurokabe", "shu", "ai"]),
+  houmotsu: Object.freeze(["gold", "pinkgold", "silver", "ruby", "lapis"]),
+  kinjo: Object.freeze(["gold", "pink", "blackgold", "shu", "violet"]),
 });
 const DECORATION_PRODUCT_TYPES = Object.freeze(Object.values(DECORATION_SLOTS).map((slot) => slot.type));
 const DECORATION_PRODUCT_IDS = Object.freeze(Object.values(DECORATION_SLOTS).flatMap((slot) => (
   slot.ids.filter((id) => id !== slot.fallback).map((id) => `${slot.prefix}${id}`)
 )));
-// 牧場の飾りの売上のうち、牧場基金に積む割合（上納と同じ20%）。残りは消える。
-const DECORATION_FUND_BASIS_POINTS = 2_000;
+// 金庫の段階で手に入る非売品の飾り（ストアでは売らない）。一度届いた段階の飾りは、金庫から出してもずっと使える。
+const VAULT_DECORATIONS = Object.freeze([
+  Object.freeze({ slot: "sealInk", id: "kogane", tier: 1 }),
+  Object.freeze({ slot: "sealShape", id: "senryo", tier: 2 }),
+  Object.freeze({ slot: "frame", id: "kura", tier: 3 }),
+  Object.freeze({ slot: "frame", id: "houmotsu", tier: 4 }),
+  Object.freeze({ slot: "frame", id: "kinjo", tier: 5 }),
+]);
 const CARD_ACHIEVEMENT_ID_PATTERN = /^[a-z0-9_]{1,64}$/;
 const REPORT_REASONS = Object.freeze([
   "external_trade",
@@ -98,7 +107,6 @@ const REPORT_REASONS = Object.freeze([
   "other",
 ]);
 const SEVERE_REPORT_REASONS = Object.freeze(["external_trade", "personal_info", "exit_obstruction", "threat"]);
-const POLICIES = Object.freeze(["both", "first", "renewal"]);
 
 const LIMITS = Object.freeze({
   personaName: 16,
@@ -119,14 +127,8 @@ const LIMITS = Object.freeze({
   rankDailyPairCap: 500,
   feeRateBasisPoints: 500,
   minimumFee: 1,
-  subsidyMaximum: 10,
-  subsidyManagerMonthly: 50,
-  offerBurnBasisPoints: 8_000,
-  honorEligibleTributes: 5,
-  honorEligiblePayers: 3,
   rankingLimit: 20,
   boardLimit: 30,
-  recommendedLimit: 10,
   eventsPage: 100,
   receiptsPage: 50,
   severeReportHide: 3,
@@ -144,12 +146,27 @@ const LIMITS = Object.freeze({
   boardNoticeMs: 2 * 24 * 60 * 60 * 1_000,
   // 1回の限度額を3,000 Pay以上にできるのは、AnjuPayウォレットを Google で保護した財布だけ。
   googleCapThreshold: 3_000,
+  // 金庫を作れるのは、お貢ぎ牧場で累計3人以上の財布から、合わせて1,000 Pay以上を受け取った管理人だけ（推し値市場の実績は数えない）。
+  vaultQualifyPayers: 3,
+  vaultQualifyReceived: 1_000,
+  vaultRankingLimit: 30,
+  vaultRecentOps: 20,
 });
 
+// 管理人の金庫の段階。いま金庫にある額で決まり、外には段階だけを見せる（額は本人だけ）。
+const VAULT_TIERS = Object.freeze([
+  Object.freeze({ level: 1, id: "box", label: "木箱", threshold: 1_000 }),
+  Object.freeze({ level: 2, id: "safe", label: "金庫", threshold: 5_000 }),
+  Object.freeze({ level: 3, id: "kura", label: "蔵", threshold: 10_000 }),
+  Object.freeze({ level: 4, id: "treasury", label: "宝物庫", threshold: 30_000 }),
+  Object.freeze({ level: 5, id: "castle", label: "金の城", threshold: 100_000 }),
+]);
+
+// 終わった牧場基金の上納の称号（2026年10月まで）。実績コレクションの限定称号として残す。
 const HONOR_TIERS = Object.freeze([
-  Object.freeze({ id: "offerer", label: "上納者", threshold: 300, recommendationSlots: 1 }),
-  Object.freeze({ id: "grand_offerer", label: "大上納者", threshold: 1_500, recommendationSlots: 2 }),
-  Object.freeze({ id: "master", label: "牧場の主", threshold: 5_000, recommendationSlots: 3 }),
+  Object.freeze({ id: "offerer", label: "上納者", threshold: 300, achievementId: "tribute_honor_offerer" }),
+  Object.freeze({ id: "grand_offerer", label: "大上納者", threshold: 1_500, achievementId: "tribute_honor_grand_offerer" }),
+  Object.freeze({ id: "master", label: "牧場の主", threshold: 5_000, achievementId: "tribute_honor_master" }),
 ]);
 
 function cleanLine(value, maximumLength) {
@@ -330,12 +347,13 @@ function sealFor(value, { seals = DEFAULT_SEALS, ngWords = [] } = {}) {
   return seal && !containsNgWord(seal.label, ngWords) ? id : FALLBACK_SEAL;
 }
 
-// 飾りの選択。知らない値は既定に戻す（持っているかは、保存する時にサービスで確かめる）。
+// 飾りの選択。知らない値は既定に戻す（持っているか・金庫の段階に届いたかは、保存する時にサービスで確かめる）。
 function normalizeDecorations(value) {
   const decorations = {};
   for (const [key, slot] of Object.entries(DECORATION_SLOTS)) {
     const requested = String(value?.[key] ?? "");
-    decorations[key] = slot.ids.includes(requested) ? requested : slot.fallback;
+    const vaultItem = VAULT_DECORATIONS.some((item) => item.slot === key && item.id === requested);
+    decorations[key] = slot.ids.includes(requested) || vaultItem ? requested : slot.fallback;
   }
   // 枠の色は枠ごとの一覧から。枠がなければ空、知らない色はその枠の1色目。
   const colors = FRAME_COLORS[decorations.frame] || [];
@@ -350,22 +368,41 @@ function decorationProductId(slotKey, id) {
   return `${slot.prefix}${id}`;
 }
 
-// 既定ではない飾りの商品ID。保存する前に、この全部を持っているかを確かめる。
+// 既定ではない飾りの商品ID。保存する前に、この全部を持っているかを確かめる（金庫の飾りは商品ではない）。
 function requiredDecorationProducts(decorations) {
   return Object.keys(DECORATION_SLOTS)
     .map((key) => decorationProductId(key, decorations?.[key]))
     .filter(Boolean);
 }
 
+// 選んだ金庫の飾りに必要な段階（いちばん高いもの）。0 なら金庫の飾りを使っていない。
+function requiredVaultTier(decorations) {
+  return VAULT_DECORATIONS
+    .filter((item) => decorations?.[item.slot] === item.id)
+    .reduce((highest, item) => Math.max(highest, item.tier), 0);
+}
+
+function vaultTierFor(amount) {
+  const value = Math.max(0, Math.floor(Number(amount) || 0));
+  return VAULT_TIERS.reduce((level, tier) => (value >= tier.threshold ? tier.level : level), 0);
+}
+
+function vaultTierInfo(level) {
+  return VAULT_TIERS.find((tier) => tier.level === Number(level)) || null;
+}
+
+// 金庫を作れる管理人か（お貢ぎ牧場の組ごとの累計から）。
+function vaultQualification(pairs) {
+  const paid = (Array.isArray(pairs) ? pairs : []).map((pair) => Math.max(0, Math.floor(Number(pair?.total) || 0))).filter((total) => total > 0);
+  const payers = paid.length;
+  const received = paid.reduce((sum, total) => sum + total, 0);
+  return { payers, received, qualified: payers >= LIMITS.vaultQualifyPayers && received >= LIMITS.vaultQualifyReceived };
+}
+
 // 牧場のカードに出す実績（3つまで）。形だけ整え、解除済みかはサービスで確かめる。
 function normalizeCardAchievements(value) {
   const list = Array.isArray(value) ? value : [];
   return [...new Set(list.map(String).filter((id) => CARD_ACHIEVEMENT_ID_PATTERN.test(id)))].slice(0, LIMITS.cardAchievements);
-}
-
-function decorationFundShare(price) {
-  const value = Math.max(0, Math.floor(Number(price) || 0));
-  return Math.floor((value * DECORATION_FUND_BASIS_POINTS) / 10_000);
 }
 
 function normalizeManagerCard(value) {
@@ -489,20 +526,16 @@ function tributeFee(amount) {
   return Math.min(value, Math.max(LIMITS.minimumFee, Math.ceil((value * LIMITS.feeRateBasisPoints) / 10_000)));
 }
 
-function subsidyFor(fee) {
-  const normalizedFee = Math.max(0, Math.floor(Number(fee) || 0));
-  return Math.max(0, Math.min(LIMITS.subsidyMaximum, Math.floor(normalizedFee / 2), normalizedFee - LIMITS.minimumFee));
-}
-
-function offerSplit(amount) {
-  const value = Math.max(0, Math.floor(Number(amount) || 0));
-  const burned = Math.ceil((value * LIMITS.offerBurnBasisPoints) / 10_000);
-  return { burned, fund: value - burned };
-}
-
 function honorTierFor(offeredTotal) {
   const total = Math.max(0, Number(offeredTotal) || 0);
   return [...HONOR_TIERS].reverse().find((tier) => total >= tier.threshold) || null;
+}
+
+// その月に取った称号と、それより下の称号の限定実績（上の称号を取った人は、下の称号も持つ）。
+function honorAchievementIds(honor) {
+  const reached = HONOR_TIERS.find((tier) => tier.id === honor?.tierId) || honorTierFor(honor?.offered);
+  if (!reached) return [];
+  return HONOR_TIERS.slice(0, HONOR_TIERS.indexOf(reached) + 1).map((tier) => tier.achievementId);
 }
 
 function jstDateKey(timestamp = Date.now()) {
@@ -600,20 +633,20 @@ module.exports = {
   FRAME_COLORS,
   DECORATION_PRODUCT_TYPES,
   DECORATION_PRODUCT_IDS,
-  DECORATION_FUND_BASIS_POINTS,
+  VAULT_DECORATIONS,
   normalizeDecorations,
   decorationProductId,
   requiredDecorationProducts,
+  requiredVaultTier,
   normalizeCardAchievements,
-  decorationFundShare,
   AVATAR_IDS,
   AVATAR_MAX,
   normalizeAvatar,
   REPORT_REASONS,
   SEVERE_REPORT_REASONS,
-  POLICIES,
   LIMITS,
   HONOR_TIERS,
+  VAULT_TIERS,
   FORBIDDEN_MESSAGES,
   cleanLine,
   cleanMultiline,
@@ -639,9 +672,11 @@ module.exports = {
   normalizeReward,
   normalizeMessage,
   tributeFee,
-  subsidyFor,
-  offerSplit,
   honorTierFor,
+  honorAchievementIds,
+  vaultTierFor,
+  vaultTierInfo,
+  vaultQualification,
   jstDateKey,
   jstMonthKey,
   nextJstDateKey,

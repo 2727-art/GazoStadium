@@ -115,7 +115,7 @@ test("patron fund and impact responses are normalized on initialize and upgrade"
   assert.match(source, /const recommendationLimit = patronMetric\(source\.recommendationLimit/);
 });
 
-test("the retired VALUE MARKET patron panel keeps only the earned record and points to the new fund", () => {
+test("the retired VALUE MARKET patron panel keeps only the earned record and points to the ranch vault", () => {
   const source = read("account.js");
   const start = source.indexOf("function renderPatronage()");
   const end = source.indexOf("function transferCountdownText()", start);
@@ -123,9 +123,10 @@ test("the retired VALUE MARKET patron panel keeps only the earned record and poi
   assert.match(panel, /VALUE MARKET パトロン（終了）/);
   assert.match(panel, /パトロン還元と循環基金は2026年10月で受付を終えました/);
   assert.match(panel, /累計支援 \$\{formatAnjuPay\(patron\.lifetimeSpent\)\}/);
-  assert.match(panel, /id="accountOpenTributeFund"/);
+  assert.match(panel, /id="accountOpenTributeVault">お貢ぎ牧場の金庫を見る</);
+  assert.match(panel, /お貢ぎ牧場の牧場基金も同じ月に終わり、管理人の金庫に変わりました。/);
   assert.doesNotMatch(panel, /data-patron-tier|data-patron-policy/);
-  assert.match(source, /#accountOpenTributeFund"\)\?\.addEventListener\("click"[\s\S]*?openTribute\?\.\(\{ initialScreen: "fund" \}\)/);
+  assert.match(source, /#accountOpenTributeVault"\)\?\.addEventListener\("click"[\s\S]*?openTribute\?\.\(\{ initialScreen: "vault" \}\)/);
 });
 
 test("AnjuPay history names every tribute ledger kind", () => {
@@ -137,6 +138,8 @@ test("AnjuPay history names every tribute ledger kind", () => {
     "anju_pay_tribute_escrow_hold",
     "anju_pay_tribute_escrow_return",
     "anju_pay_tribute_offering",
+    "anju_pay_tribute_vault_deposit",
+    "anju_pay_tribute_vault_withdraw",
   ]) {
     assert.match(source, new RegExp(`  ${key}: "お貢ぎ牧場`));
   }

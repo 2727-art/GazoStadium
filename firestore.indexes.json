@@ -493,6 +493,20 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
+          "fieldPath": "vaultTier",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "vaultTierAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributeProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
           "fieldPath": "recommendedMonthKey",
           "order": "ASCENDING"
         },

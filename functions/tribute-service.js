@@ -9,9 +9,7 @@ const {
   TRIBUTE_AGE_VERSION,
   REPORT_REASONS,
   SEVERE_REPORT_REASONS,
-  POLICIES,
   LIMITS,
-  HONOR_TIERS,
   FORBIDDEN_MESSAGES,
   cleanLine,
   forbiddenReason,
@@ -27,6 +25,7 @@ const {
   normalizeDecorations,
   normalizeCardAchievements,
   requiredDecorationProducts,
+  requiredVaultTier,
   X_HANDLE_PATTERN,
   normalizeAvatar,
   normalizeWalletName,
@@ -39,9 +38,10 @@ const {
   RECEIVABLE_KINDS,
   normalizeMessage,
   tributeFee,
-  subsidyFor,
-  offerSplit,
-  honorTierFor,
+  honorAchievementIds,
+  vaultTierFor,
+  vaultTierInfo,
+  vaultQualification,
   jstDateKey,
   jstMonthKey,
   nextJstDateKey,
@@ -97,12 +97,12 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "receipts",
   "ledger",
   "rankings",
-  "fund",
-  "offer",
-  "vote",
-  "recommend",
-  "unrecommend",
+  "vault",
+  "vault_deposit",
+  "vault_withdraw",
 ]);
+// 終わった牧場基金の操作。古い画面から届いた時は、読み込み直すよう伝える。
+const RETIRED_FUND_ACTIONS = Object.freeze(["fund", "offer", "vote", "recommend", "unrecommend"]);
 const REQUIRED_DEPENDENCIES = Object.freeze([
   "firestore",
   "HttpsError",
@@ -132,7 +132,6 @@ const PROFILE_SAVE_INTERVAL_MS = 2_000;
 const APPLY_INTERVAL_MS = 30_000;
 const ACHIEVEMENT_STATS_SCHEMA_VERSION = 1;
 const ACHIEVEMENT_BACKFILL_PAIR_LIMIT = 1_000;
-const MINIMUM_OFFER = 10;
 const AGE_REQUIRED_MESSAGE = "お貢ぎ牧場は、18歳以上であることと遊びの前提を確認してから使えます。";
 const END_REASON_LABELS = Object.freeze({
   withdrawn: "申し込みを取り下げました",
@@ -196,11 +195,15 @@ function readProfile(snapshot) {
     },
     receiveDayKey: String(data.receiveDayKey || ""),
     receiveDayTotal: integer(data.receiveDayTotal, 0, Number.MAX_SAFE_INTEGER, 0),
-    recommendedMonthKey: String(data.recommendedMonthKey || ""),
-    recommendedCount: integer(data.recommendedCount, 0, 1_000_000, 0),
-    honorMonthKey: String(data.honorMonthKey || ""),
-    honorTierId: String(data.honorTierId || ""),
     highRequestAt: integer(data.highRequestAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    // 管理人の金庫（額は本人にしか返さない）。段階はいまの額で決まり、飾りはいちばん高く届いた段階で使える。
+    vaultAmount: integer(data.vaultAmount, 0, Number.MAX_SAFE_INTEGER, 0),
+    vaultTier: integer(data.vaultTier, 0, 5, 0),
+    vaultTierAt: integer(data.vaultTierAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    vaultBestTier: integer(data.vaultBestTier, 0, 5, 0),
+    vaultQualifiedAt: integer(data.vaultQualifiedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    vaultRecentOps: Array.isArray(data.vaultRecentOps) ? data.vaultRecentOps.map(String).slice(-LIMITS.vaultRecentOps) : [],
+    honorRecordsChecked: data.honorRecordsChecked === true,
     severeReportMonthKey: String(data.severeReportMonthKey || ""),
     severeReportCount: integer(data.severeReportCount, 0, 1_000_000, 0),
   };
@@ -210,10 +213,10 @@ function profileIsHidden(profile, monthKey) {
   return profile.severeReportMonthKey === monthKey && profile.severeReportCount >= LIMITS.severeReportHide;
 }
 
-function honorFor(profile, monthKey) {
-  if (profile.honorMonthKey !== monthKey) return null;
-  const tier = HONOR_TIERS.find((entry) => entry.id === profile.honorTierId);
-  return tier ? { tierId: tier.id, label: tier.label } : null;
+// 金庫の段階（外に見せるのは段階だけ。額は本人にしか返さない）。
+function vaultBadge(profile) {
+  const tier = profile.vaultQualifiedAt > 0 ? vaultTierInfo(profile.vaultTier) : null;
+  return tier ? { level: tier.level, id: tier.id, label: tier.label } : null;
 }
 
 // 今日のひとことは24時間だけ出す。期限の切れた言葉は返さない。
@@ -225,6 +228,12 @@ function activeWord(profile, now) {
 // 牧場のカードに出す実績。いまの実績一覧にあるものだけを返す。
 function cardAchievements(value) {
   return normalizeCardAchievements(value).filter((id) => ACHIEVEMENT_BY_ID.has(id));
+}
+
+// 牧場の画面で扱う実績（牧場の実績と、終わった牧場基金の限定称号）。
+function isRanchAchievement(id) {
+  const definition = ACHIEVEMENT_BY_ID.get(id);
+  return definition?.scope === "tribute" || definition?.family === "tribute_honor";
 }
 
 // 受取印は、押した時の形と朱肉で残す。記録のない古い印は日付印・朱になる。
@@ -254,8 +263,7 @@ function publicCard(profile, monthKey, now) {
     word: activeWord(profile, now),
     xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
     accepting: profile.accepting,
-    honor: honorFor(profile, monthKey),
-    recommendedCount: profile.recommendedMonthKey === monthKey ? profile.recommendedCount : 0,
+    vault: vaultBadge(profile),
     activeContracts: profile.counts.managerActive,
     lastActiveAt: profile.lastActiveAt,
   };
@@ -269,7 +277,13 @@ function ownProfileView(profile, monthKey, now) {
     accepting: profile.accepting,
     publicManagerId: profile.publicManagerId,
     hidden: profileIsHidden(profile, monthKey),
-    honor: honorFor(profile, monthKey),
+    // 自分の金庫（額は本人にだけ）。いちばん高く届いた段階までの金庫の飾りを使える。
+    vault: {
+      qualified: profile.vaultQualifiedAt > 0,
+      amount: profile.vaultAmount,
+      tier: profile.vaultTier,
+      bestTier: profile.vaultBestTier,
+    },
     counts: profile.counts,
     receiptCount: profile.receiptCount,
     wordsToday: profile.word?.dayKey === jstDateKey(now) ? profile.word.dayCount : 0,
@@ -410,19 +424,6 @@ function ignoreStart(contract, role, nextReadSeq, now) {
   return payerSeq > replySeq && nextReadSeq >= payerSeq ? { ignoredSince: now } : {};
 }
 
-function fundPolicy(fund) {
-  const votes = object(fund?.votes);
-  let best = "both";
-  let bestCount = integer(votes.both, 0, 1_000_000, 0);
-  for (const policy of ["first", "renewal"]) {
-    const count = integer(votes[policy], 0, 1_000_000, 0);
-    if (count > bestCount) {
-      best = policy;
-      bestCount = count;
-    }
-  }
-  return best;
-}
 
 function createTributeService(deps) {
   if (!deps || typeof deps !== "object") {
@@ -463,8 +464,6 @@ function createTributeService(deps) {
   const receiptRef = (uid, receiptId) => firestore.collection("tributeReceipts").doc(uid).collection("items").doc(receiptId);
   const pairRef = (managerUid, payerUid) => firestore.collection("tributePairs").doc(pairId(managerUid, payerUid));
   const managerMonthRef = (monthKey, managerUid) => firestore.collection("tributeManagerMonths").doc(`${monthKey}__${managerUid}`);
-  const fundRef = (monthKey) => firestore.collection("tributeFund").doc(monthKey);
-  const honorRef = (monthKey, uid) => firestore.collection("tributeHonors").doc(`${monthKey}__${uid}`);
   const reportRef = (reportId) => firestore.collection("tributeReports").doc(reportId);
   const achievementStatsRef = (uid) => firestore.collection("tributeAchievementStats").doc(uid);
   const achievementProfileRef = (uid) => firestore.collection("achievementProfiles").doc(uid);
@@ -914,7 +913,6 @@ function createTributeService(deps) {
   async function readTributeExtras(transaction, ctx, receiptId) {
     const [
       monthSnapshot,
-      fundSnapshot,
       receiptSnapshot,
       managerStatsSnapshot,
       payerStatsSnapshot,
@@ -922,7 +920,6 @@ function createTributeService(deps) {
       payerAchievementSnapshot,
     ] = await Promise.all([
       transaction.get(managerMonthRef(ctx.monthKey, ctx.managerUid)),
-      transaction.get(fundRef(ctx.monthKey)),
       receiptId ? transaction.get(receiptRef(ctx.payerUid, receiptId)) : Promise.resolve(null),
       transaction.get(achievementStatsRef(ctx.managerUid)),
       transaction.get(achievementStatsRef(ctx.payerUid)),
@@ -931,7 +928,6 @@ function createTributeService(deps) {
     ]);
     return {
       month: { exists: monthSnapshot.exists, value: object(monthSnapshot.data()) },
-      fund: { exists: fundSnapshot.exists, value: object(fundSnapshot.data()) },
       receipt: receiptSnapshot?.exists ? object(receiptSnapshot.data()) : null,
       receiptId,
       achievements: {
@@ -975,25 +971,6 @@ function createTributeService(deps) {
     }
   }
 
-  function subsidyForTribute(ctx, extra, fee) {
-    if (fee <= LIMITS.minimumFee) return 0;
-    const fund = extra.fund.value;
-    const balance = integer(fund.balance, 0, Number.MAX_SAFE_INTEGER, 0);
-    if (balance <= 0) return 0;
-    if (ctx.pair.value.subsidyMonthKey === ctx.monthKey) return 0;
-    const policy = fundPolicy(fund);
-    const isFirstForPair = integer(ctx.pair.value.count, 0, Number.MAX_SAFE_INTEGER, 0) === 0;
-    const isRenewalFirst = ctx.contract.renewal === true
-      && integer(ctx.contract.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0) === 0;
-    const eligible = policy === "first" ? isFirstForPair
-      : policy === "renewal" ? isRenewalFirst
-        : (isFirstForPair || isRenewalFirst);
-    if (!eligible) return 0;
-    const usedThisMonth = extra.month.value.monthKey === ctx.monthKey
-      ? integer(extra.month.value.subsidyUsed, 0, Number.MAX_SAFE_INTEGER, 0)
-      : 0;
-    return Math.max(0, Math.min(subsidyFor(fee), balance, LIMITS.subsidyManagerMonthly - usedThisMonth));
-  }
 
   function stageTribute(ctx, extra, { kind, amount, requestId = "", note = "", purpose = "", opKey }) {
     const contract = ctx.contract;
@@ -1015,8 +992,7 @@ function createTributeService(deps) {
         : "AnjuPay残高が足りません。");
     }
     const fee = tributeFee(amount);
-    const subsidy = subsidyForTribute(ctx, extra, fee);
-    const net = amount - fee + subsidy;
+    const net = amount - fee;
     const managerWallet = walletFor(ctx, "manager");
     if (walletCreditCapacity(managerWallet) < net) fail("failed-precondition", "相手のAnjuPay残高が上限に近いため渡せません。");
     const payerWallet = walletFor(ctx, "payer");
@@ -1048,9 +1024,6 @@ function createTributeService(deps) {
       { kind: "tribute_gross", labelKey: "anju_pay_tribute_gross", status: "settled", delta: amount, nominalAmount: amount },
       { kind: "tribute_fee", labelKey: "anju_pay_tribute_fee", status: "settled", delta: -fee, nominalAmount: fee },
     ];
-    if (subsidy > 0) {
-      managerComponents.push({ kind: "tribute_subsidy", labelKey: "anju_pay_tribute_subsidy", status: "settled", delta: subsidy, nominalAmount: subsidy });
-    }
     appendEntry(ctx, "manager", {
       entryId: groupId,
       groupId,
@@ -1131,7 +1104,6 @@ function createTributeService(deps) {
       rankOptIn: contract.rankOptIn === true,
       walletName: payerName(ctx),
       managerPersonaName: card.personaName,
-      ...(subsidy > 0 ? { subsidyMonthKey: ctx.monthKey } : {}),
     });
     const month = extra.month.value;
     const managerProfileValue = ctx.profiles.manager.value;
@@ -1149,21 +1121,9 @@ function createTributeService(deps) {
       receivedGross: integer(month.receivedGross, 0, Number.MAX_SAFE_INTEGER, 0) + amount,
       receivedNet: integer(month.receivedNet, 0, Number.MAX_SAFE_INTEGER, 0) + (amount - fee),
       tributeCount: integer(month.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
-      subsidyUsed: integer(month.subsidyUsed, 0, Number.MAX_SAFE_INTEGER, 0) + subsidy,
-      offered: integer(month.offered, 0, Number.MAX_SAFE_INTEGER, 0),
       updatedAt: ctx.now,
     };
     ctx.extraWrites.push((transaction) => transaction.set(managerMonthRef(ctx.monthKey, ctx.managerUid), monthPatch, { merge: true }));
-    if (subsidy > 0) {
-      const fund = extra.fund.value;
-      ctx.extraWrites.push((transaction) => transaction.set(fundRef(ctx.monthKey), {
-        monthKey: ctx.monthKey,
-        balance: integer(fund.balance, 0, Number.MAX_SAFE_INTEGER, 0) - subsidy,
-        subsidized: integer(fund.subsidized, 0, Number.MAX_SAFE_INTEGER, 0) + subsidy,
-        subsidyCount: integer(fund.subsidyCount, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
-        updatedAt: ctx.now,
-      }, { merge: true }));
-    }
     pushEvent(ctx, {
       type: "tribute",
       actor: fromEscrow ? "manager" : "payer",
@@ -1176,7 +1136,7 @@ function createTributeService(deps) {
       ...(receivable ? {} : { receivedAt: ctx.now }),
     });
     stageTributeAchievements(ctx, extra, firstForPairToday);
-    return { receipt: { receiptId, ...receipt }, fee, subsidy, net };
+    return { receipt: { receiptId, ...receipt }, fee, net };
   }
 
   // ───────────── 操作 ─────────────
@@ -1228,7 +1188,8 @@ function createTributeService(deps) {
     return stats;
   }
 
-  async function ensureAchievementState(uid) {
+  // checkHonors: まだ牧場基金の称号を確かめていない人だけ true（確かめ終えた人は、毎回の読み込みを増やさない）。
+  async function ensureAchievementState(uid, { checkHonors = false } = {}) {
     const readState = () => firestore.runTransaction(async (transaction) => {
       const [statsSnapshot, profileSnapshot] = await Promise.all([
         transaction.get(achievementStatsRef(uid)),
@@ -1238,12 +1199,20 @@ function createTributeService(deps) {
       // preflight stats value into the transaction that unlocks achievements.
       if (!statsSnapshot.exists || statsSnapshot.get("historyBackfilled") !== true) return null;
       const stats = normalizeTributeStats(statsSnapshot.data());
+      // 終わった牧場基金の称号（上納者・大上納者・牧場の主）を、限定称号として一度だけ実績に移す。
+      const honorIds = [];
+      if (checkHonors) {
+        const honors = await transaction.get(firestore.collection("tributeHonors").where("uid", "==", uid).limit(100));
+        for (const document of honors.docs) honorIds.push(...honorAchievementIds(object(document.data())));
+      }
+      const now = currentTime();
       const unlockResult = unlockAchievements(
         profileSnapshot.data(),
-        eligibleAchievementIds({ tributeStats: stats, scope: "tribute" }),
-        currentTime(),
+        [...eligibleAchievementIds({ tributeStats: stats, scope: "tribute" }), ...new Set(honorIds)],
+        now,
       );
       if (unlockResult.newlyUnlocked.length) transaction.set(achievementProfileRef(uid), unlockResult.profile);
+      if (checkHonors) transaction.set(profileRef(uid), { honorRecordsChecked: true, updatedAt: now }, { merge: true });
       return { stats, profile: unlockResult.profile, newlyUnlocked: unlockResult.newlyUnlocked };
     });
     let result = await readState();
@@ -1300,13 +1269,11 @@ function createTributeService(deps) {
     const contracts = raw.map((contract, index) => viewContract(withLimits(contract, limits[index]), uid, now));
     let achievements = null;
     try {
-      const achievementState = await ensureAchievementState(uid);
+      const achievementState = await ensureAchievementState(uid, { checkHonors: profile.exists && !profile.honorRecordsChecked });
       achievements = {
         stats: achievementState.stats,
-        unlocked: Object.keys(achievementState.profile.unlocked)
-          .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.scope === "tribute"),
-        newlyUnlocked: Object.keys(achievementState.profile.pendingUnlocks)
-          .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.scope === "tribute"),
+        unlocked: Object.keys(achievementState.profile.unlocked).filter(isRanchAchievement),
+        newlyUnlocked: Object.keys(achievementState.profile.pendingUnlocks).filter(isRanchAchievement),
       };
     } catch (error) {
       console.error("tribute achievement state failed", error);
@@ -1374,6 +1341,11 @@ function createTributeService(deps) {
         if (purchases.some((snapshot) => !snapshot.exists)) {
           fail("failed-precondition", "持っていない飾りは保存できません。AnjuPayストアで買ってから選んでください。");
         }
+        // 金庫の飾りは、金庫がその段階に一度でも届いていれば使える（ストアでは売らない）。
+        const needTier = requiredVaultTier(cardValues);
+        if (needTier > profile.vaultBestTier) {
+          fail("failed-precondition", `この飾りは、金庫が「${vaultTierInfo(needTier).label}」に届くと使えます。`);
+        }
         if (cardValues.achievements.length) {
           const unlocked = normalizeAchievementProfile((await transaction.get(achievementProfileRef(uid))).data()).unlocked;
           if (cardValues.achievements.some((id) => !unlocked[id] || !ACHIEVEMENT_BY_ID.has(id))) {
@@ -1405,7 +1377,8 @@ function createTributeService(deps) {
 
   // 管理人カードの編集で使う、持っている牧場の飾りと解除済みの実績。編集を開いた時だけ読む（書き込まない）。
   async function decorationsAction(uid) {
-    requireAge(await readOwnProfile(uid));
+    const profile = await readOwnProfile(uid);
+    requireAge(profile);
     const [purchases, achievementSnapshot] = await Promise.all([
       firestore.collection("economyPurchases").doc(uid).collection("items")
         .where("productId", "in", [...DECORATION_PRODUCT_IDS])
@@ -1419,7 +1392,7 @@ function createTributeService(deps) {
     const achievements = Object.keys(unlocked)
       .filter((id) => ACHIEVEMENT_BY_ID.has(id))
       .sort((left, right) => unlocked[right] - unlocked[left] || left.localeCompare(right));
-    return { ok: true, owned: [...new Set(owned)].sort(), achievements };
+    return { ok: true, owned: [...new Set(owned)].sort(), achievements, vaultBestTier: profile.vaultBestTier };
   }
 
   // 宣言「未払いは既読無視」を、管理人の申込中・進行中の契約へ写す（財布のスレッドに札を出すため）。
@@ -1506,19 +1479,12 @@ function createTributeService(deps) {
     const monthKey = jstMonthKey(now);
     // 直近7日に動いた管理人だけを読む。放置されたカードは条件で外れ、読み込みにも数えない。
     const activeSince = now - LIMITS.boardActiveWindowMs;
-    const [boardSnapshot, recommendedSnapshot] = await Promise.all([
-      firestore.collection("tributeProfiles")
-        .where("accepting", "==", true)
-        .where("lastActiveAt", ">=", activeSince)
-        .orderBy("lastActiveAt", "desc")
-        .limit(LIMITS.boardLimit * 2)
-        .get(),
-      firestore.collection("tributeProfiles")
-        .where("recommendedMonthKey", "==", monthKey)
-        .orderBy("recommendedCount", "desc")
-        .limit(LIMITS.recommendedLimit * 2)
-        .get(),
-    ]);
+    const boardSnapshot = await firestore.collection("tributeProfiles")
+      .where("accepting", "==", true)
+      .where("lastActiveAt", ">=", activeSince)
+      .orderBy("lastActiveAt", "desc")
+      .limit(LIMITS.boardLimit * 2)
+      .get();
     const toRows = (snapshot) => snapshot.docs
       .map((document) => ({ uid: document.id, profile: readProfile(document) }))
       .filter((row) => row.profile.accepting
@@ -1530,11 +1496,7 @@ function createTributeService(deps) {
       .filter((row) => !nekamaOnly || row.profile.card?.disclosure === "nekama")
       .slice(0, LIMITS.boardLimit)
       .map((row) => ({ ...publicCard(row.profile, monthKey, now), mine: row.uid === uid }));
-    const recommended = (await visibleRows(uid, toRows(recommendedSnapshot)))
-      .filter((row) => row.profile.recommendedCount > 0)
-      .slice(0, LIMITS.recommendedLimit)
-      .map((row) => ({ ...publicCard(row.profile, monthKey, now), mine: row.uid === uid }));
-    return { ok: true, nekamaOnly, managers: board, recommended };
+    return { ok: true, nekamaOnly, managers: board };
   }
 
   async function managerRanking(managerUid, monthKey, uid) {
@@ -2419,7 +2381,7 @@ function createTributeService(deps) {
         disclosure: String(row.profile.card?.disclosure || row.value.disclosure || "undisclosed"),
         sigil: integer(row.profile.card?.sigil ?? row.value.sigil, 0, 5, 0),
         avatar: normalizeAvatar(row.profile.card?.avatar ?? row.value.avatar),
-        honor: honorFor(row.profile, monthKey),
+        vault: vaultBadge(row.profile),
         payers: integer(row.value.payers, 0, Number.MAX_SAFE_INTEGER, 0),
         rankScore: integer(row.value.rankScore, 0, Number.MAX_SAFE_INTEGER, 0),
         mine: row.uid === uid,
@@ -2432,80 +2394,73 @@ function createTributeService(deps) {
     return { ok: true, monthKey, managers: visible, managerBoard };
   }
 
-  function honorSummary(honor) {
-    const tier = honorTierFor(honor.offered);
+  // ───────────── 金庫 ─────────────
+  // 牧場基金（上納・称号・推薦・方針の投票・手数料の補填）は終わり、管理人ごとの金庫に置き換えた。
+  // 金庫の Pay は本人のもののままで、いつでも出し入れできる。外に見せるのは段階だけ（額は本人だけ）。
+
+  function ownVaultView(profile) {
     return {
-      offered: integer(honor.offered, 0, Number.MAX_SAFE_INTEGER, 0),
-      tier: tier ? { tierId: tier.id, label: tier.label, recommendationSlots: tier.recommendationSlots } : null,
-      vote: POLICIES.includes(honor.vote) ? honor.vote : "",
-      recommendations: Array.isArray(honor.recommendations)
-        ? honor.recommendations.filter((id) => PUBLIC_MANAGER_ID_PATTERN.test(String(id))).slice(0, 3)
-        : [],
+      qualified: profile.vaultQualifiedAt > 0,
+      amount: profile.vaultAmount,
+      tier: profile.vaultTier,
+      bestTier: profile.vaultBestTier,
     };
   }
 
-  async function fundAction(uid, _data, context) {
+  // お貢ぎ牧場の組ごとの累計から、金庫を作れるかを数える（推し値市場の実績は数えない）。
+  async function readVaultQualification(uid, transaction = null) {
+    const query = firestore.collection("tributePairs").where("managerUid", "==", uid);
+    const snapshot = transaction ? await transaction.get(query) : await query.get();
+    return vaultQualification(snapshot.docs.map((document) => object(document.data())));
+  }
+
+  // 自分の金庫と金庫番付（読むだけ）。番付は段階の高い順、同じ段階なら先に届いた順。額は出さない。
+  async function vaultAction(uid) {
     const profile = await readOwnProfile(uid);
     requireAge(profile);
     const now = currentTime();
     const monthKey = jstMonthKey(now);
-    const [fundSnapshot, monthSnapshot, honorSnapshot] = await Promise.all([
-      fundRef(monthKey).get(),
-      managerMonthRef(monthKey, uid).get(),
-      honorRef(monthKey, uid).get(),
-    ]);
-    const fund = object(fundSnapshot.data());
-    const month = object(monthSnapshot.data());
-    const honor = honorSummary(object(honorSnapshot.data()));
-    const tributeCount = integer(month.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0);
-    const payers = integer(month.payers, 0, Number.MAX_SAFE_INTEGER, 0);
-    const receivedNet = integer(month.receivedNet, 0, Number.MAX_SAFE_INTEGER, 0);
-    const offered = integer(month.offered, 0, Number.MAX_SAFE_INTEGER, 0);
-    const recommendationRows = [];
-    for (const id of honor.recommendations) {
-      const snapshot = await firestore.collection("tributeProfiles").where("publicManagerId", "==", id).limit(1).get();
-      const document = snapshot.docs[0];
-      if (!document) continue;
-      const card = readProfile(document).card;
-      recommendationRows.push({ publicManagerId: id, personaName: cleanLine(card?.personaName, LIMITS.personaName) || "管理人" });
-    }
+    const hasCard = Boolean(profile.card);
+    const progress = hasCard && !profile.vaultQualifiedAt ? await readVaultQualification(uid) : null;
+    const snapshot = await firestore.collection("tributeProfiles")
+      .where("vaultTier", ">=", 1)
+      .orderBy("vaultTier", "desc")
+      .orderBy("vaultTierAt", "asc")
+      .limit(LIMITS.vaultRankingLimit * 2)
+      .get();
+    const rows = snapshot.docs
+      .map((document) => ({ uid: document.id, profile: readProfile(document) }))
+      .filter((row) => row.profile.vaultQualifiedAt > 0 && row.profile.publicManagerId && row.profile.card && !profileIsHidden(row.profile, monthKey));
+    const ranking = (await visibleRows(uid, rows))
+      .slice(0, LIMITS.vaultRankingLimit)
+      .map((row, index) => ({
+        rank: index + 1,
+        publicManagerId: row.profile.publicManagerId,
+        personaName: cleanLine(row.profile.card?.personaName, LIMITS.personaName) || "管理人",
+        disclosure: String(row.profile.card?.disclosure || "undisclosed"),
+        sigil: integer(row.profile.card?.sigil, 0, 5, 0),
+        avatar: normalizeAvatar(row.profile.card?.avatar),
+        vault: vaultBadge(row.profile),
+        mine: row.uid === uid,
+      }));
     return {
       ok: true,
-      monthKey,
-      fund: {
-        balance: integer(fund.balance, 0, Number.MAX_SAFE_INTEGER, 0),
-        contributed: integer(fund.contributed, 0, Number.MAX_SAFE_INTEGER, 0),
-        burned: integer(fund.burned, 0, Number.MAX_SAFE_INTEGER, 0),
-        shopIncome: integer(fund.shopIncome, 0, Number.MAX_SAFE_INTEGER, 0),
-        subsidized: integer(fund.subsidized, 0, Number.MAX_SAFE_INTEGER, 0),
-        subsidyCount: integer(fund.subsidyCount, 0, Number.MAX_SAFE_INTEGER, 0),
-        policy: fundPolicy(fund),
-        votes: {
-          both: integer(object(fund.votes).both, 0, Number.MAX_SAFE_INTEGER, 0),
-          first: integer(object(fund.votes).first, 0, Number.MAX_SAFE_INTEGER, 0),
-          renewal: integer(object(fund.votes).renewal, 0, Number.MAX_SAFE_INTEGER, 0),
-        },
+      vault: {
+        hasCard,
+        ...ownVaultView(profile),
+        // まだ金庫を作っていない管理人には、条件までの道のりを返す（満たしていれば、最初に入れた時に金庫ができる）。
+        ...(progress ? {
+          qualified: progress.qualified,
+          progress: { payers: progress.payers, received: progress.received, needPayers: LIMITS.vaultQualifyPayers, needReceived: LIMITS.vaultQualifyReceived },
+        } : {}),
       },
-      me: {
-        googleProtected: context?.googleProtected === true,
-        tributeCount,
-        payers,
-        receivedNet,
-        offered,
-        offerable: Math.max(0, receivedNet - offered),
-        eligible: tributeCount >= LIMITS.honorEligibleTributes && payers >= LIMITS.honorEligiblePayers,
-        honor: { ...honor, recommendations: recommendationRows },
-      },
-      tiers: HONOR_TIERS.map((tier) => ({ ...tier })),
+      ranking,
     };
   }
 
-  async function offerAction(uid, data, context) {
-    if (context?.googleProtected !== true) {
-      fail("failed-precondition", "上納は、Googleでアカウントを保護してから使えます。");
-    }
+  async function vaultMoveAction(uid, data, direction) {
+    const deposit = direction === "deposit";
     const amount = requireAmount(data?.amount);
-    if (amount < MINIMUM_OFFER) fail("invalid-argument", `上納は${MINIMUM_OFFER} Payからです。`);
     const clientRequestId = requireClientRequestId(data?.clientRequestId);
     await ensureWallet(uid);
     let result = null;
@@ -2514,169 +2469,80 @@ function createTributeService(deps) {
       result = null;
       balance = null;
       const now = currentTime();
-      const monthKey = jstMonthKey(now);
-      const [profileSnapshot, walletSnapshot, ledgerConfigSnapshot, monthSnapshot, fundSnapshot, honorSnapshot] = await Promise.all([
+      const [profileSnapshot, walletSnapshot, ledgerConfigSnapshot] = await Promise.all([
         transaction.get(profileRef(uid)),
         transaction.get(walletRef(uid)),
         transaction.get(anjuPayLedgerConfigRef()),
-        transaction.get(managerMonthRef(monthKey, uid)),
-        transaction.get(fundRef(monthKey)),
-        transaction.get(honorRef(monthKey, uid)),
       ]);
       const profile = readProfile(profileSnapshot);
       requireAge(profile);
-      const honorValue = object(honorSnapshot.data());
-      const opKey = `offer:${clientRequestId}`;
-      if (Array.isArray(honorValue.recentOps) && honorValue.recentOps.includes(opKey)) {
-        result = { ok: true, replayed: true, honor: honorSummary(honorValue) };
+      if (!profile.card) fail("failed-precondition", "金庫は、管理人カードのある管理人だけが使えます。");
+      const opKey = `vault:${direction}:${clientRequestId}`;
+      if (profile.vaultRecentOps.includes(opKey)) {
+        result = { ok: true, replayed: true, vault: ownVaultView(profile) };
         return;
       }
-      const month = object(monthSnapshot.data());
-      const tributeCount = integer(month.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0);
-      const payers = integer(month.payers, 0, Number.MAX_SAFE_INTEGER, 0);
-      if (tributeCount < LIMITS.honorEligibleTributes || payers < LIMITS.honorEligiblePayers) {
-        fail("failed-precondition", "上納できるのは、今月3人以上から5回以上の献上を受けた管理人だけです。");
+      let qualifiedAt = profile.vaultQualifiedAt;
+      if (!qualifiedAt) {
+        if (!deposit) fail("failed-precondition", "まだ金庫がありません。");
+        // 金庫を作れるかは、最初に入れる時に一度だけ確かめる。一度満たせば、ずっと使える。
+        const qualification = await readVaultQualification(uid, transaction);
+        if (!qualification.qualified) {
+          fail("failed-precondition", `金庫を作れるのは、お貢ぎ牧場で累計${LIMITS.vaultQualifyPayers}人以上の財布から、合わせて${LIMITS.vaultQualifyReceived.toLocaleString("ja-JP")} Pay以上を受け取った管理人だけです。`);
+        }
+        qualifiedAt = now;
       }
-      const offerable = integer(month.receivedNet, 0, Number.MAX_SAFE_INTEGER, 0) - integer(month.offered, 0, Number.MAX_SAFE_INTEGER, 0);
-      if (amount > offerable) fail("failed-precondition", `今月上納できるのは、あと ${Math.max(0, offerable)} Pay までです。`);
       const wallet = walletData(walletSnapshot);
-      if (wallet.balance < amount) fail("failed-precondition", "AnjuPay残高が足りません。");
+      if (deposit && wallet.balance < amount) fail("failed-precondition", "AnjuPay残高が足りません。");
+      if (!deposit && profile.vaultAmount < amount) fail("failed-precondition", "金庫の残りが足りません。");
+      if (!deposit && walletCreditCapacity(wallet) < amount) fail("failed-precondition", "AnjuPay残高が上限に近いため、金庫から出せません。");
       stageAnjuPayOpening(transaction, walletRef(uid), wallet, ledgerConfigSnapshot, now);
       const before = wallet.balance;
-      debitPoints(wallet, amount);
-      const split = offerSplit(amount);
-      const groupId = anjuPayEntryId(`tribute-offer:${uid}:${monthKey}:${clientRequestId}`);
+      if (deposit) debitPoints(wallet, amount);
+      else creditPoints(wallet, amount);
+      const kind = deposit ? "tribute_vault_deposit" : "tribute_vault_withdraw";
+      const labelKey = deposit ? "anju_pay_tribute_vault_deposit" : "anju_pay_tribute_vault_withdraw";
+      const status = deposit ? "held" : "settled";
+      const delta = deposit ? -amount : amount;
+      const groupId = anjuPayEntryId(`tribute-vault:${uid}:${direction}:${clientRequestId}`);
       appendAnjuPayEntry(transaction, walletRef(uid), wallet, ledgerConfigSnapshot, {
         entryId: groupId,
         groupId,
-        kind: "tribute_offering",
+        kind,
         category: "tribute",
-        labelKey: "anju_pay_tribute_offering",
-        status: "settled",
-        delta: -amount,
+        labelKey,
+        status,
+        delta,
         nominalAmount: amount,
         balanceBefore: before,
         balanceAfter: wallet.balance,
-        components: [
-          { kind: "offering_burn", labelKey: "anju_pay_tribute_offering_burn", status: "settled", delta: -split.burned, nominalAmount: split.burned },
-          { kind: "offering_fund", labelKey: "anju_pay_tribute_offering_fund", status: "settled", delta: -split.fund, nominalAmount: split.fund },
-        ],
-        details: { mode: "tribute", role: "manager", periodKey: monthKey },
+        components: [{ kind: deposit ? "vault_deposit" : "vault_withdraw", labelKey, status, delta, nominalAmount: amount }],
+        details: { mode: "tribute", role: "manager" },
         occurredAt: now,
       });
       transaction.set(walletRef(uid), { ...wallet, ...anjuPayWalletMetadataPatch(wallet), updatedAt: now }, { merge: true });
-      const fund = object(fundSnapshot.data());
-      transaction.set(fundRef(monthKey), {
-        monthKey,
-        balance: integer(fund.balance, 0, Number.MAX_SAFE_INTEGER, 0) + split.fund,
-        contributed: integer(fund.contributed, 0, Number.MAX_SAFE_INTEGER, 0) + split.fund,
-        burned: integer(fund.burned, 0, Number.MAX_SAFE_INTEGER, 0) + split.burned,
-        offerCount: integer(fund.offerCount, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
-        updatedAt: now,
-      }, { merge: true });
-      transaction.set(managerMonthRef(monthKey, uid), {
-        offered: integer(month.offered, 0, Number.MAX_SAFE_INTEGER, 0) + amount,
-        updatedAt: now,
-      }, { merge: true });
-      const offered = integer(honorValue.offered, 0, Number.MAX_SAFE_INTEGER, 0) + amount;
-      const tier = honorTierFor(offered);
-      const recentOps = Array.isArray(honorValue.recentOps) ? honorValue.recentOps.slice(-(RECENT_OPS_LIMIT - 1)) : [];
-      const nextHonor = {
-        schemaVersion: TRIBUTE_SCHEMA_VERSION,
-        monthKey,
-        uid,
-        offered,
-        tierId: tier?.id || "",
-        recommendations: Array.isArray(honorValue.recommendations) ? honorValue.recommendations : [],
-        vote: POLICIES.includes(honorValue.vote) ? honorValue.vote : "",
-        recentOps: [...recentOps, opKey],
+      const vaultAmount = profile.vaultAmount + (deposit ? amount : -amount);
+      const tier = vaultTierFor(vaultAmount);
+      const patch = {
+        vaultAmount,
+        vaultTier: tier,
+        // 同じ段階の中の番付の順（その段階に届いた時刻）。段階が変わった時だけ書き換える。
+        vaultTierAt: tier !== profile.vaultTier || !profile.vaultTierAt ? now : profile.vaultTierAt,
+        vaultBestTier: Math.max(profile.vaultBestTier, tier),
+        vaultQualifiedAt: qualifiedAt,
+        vaultRecentOps: [...profile.vaultRecentOps.slice(-(LIMITS.vaultRecentOps - 1)), opKey],
         updatedAt: now,
       };
-      transaction.set(honorRef(monthKey, uid), nextHonor, { merge: true });
-      transaction.set(profileRef(uid), {
-        honorMonthKey: monthKey,
-        honorTierId: tier?.id || "",
-        updatedAt: now,
-      }, { merge: true });
+      transaction.set(profileRef(uid), patch, { merge: true });
       balance = wallet.balance;
-      result = { ok: true, offered: amount, split, honor: honorSummary(nextHonor), walletBalance: wallet.balance };
+      result = {
+        ok: true,
+        vault: ownVaultView({ ...profile, ...patch }),
+        walletBalance: wallet.balance,
+        ...(patch.vaultBestTier > profile.vaultBestTier ? { reachedTier: patch.vaultBestTier } : {}),
+      };
     });
     if (balance !== null) await mirrorTouched([{ uid, balance }]);
-    return result;
-  }
-
-  async function voteAction(uid, data) {
-    const policy = String(data?.policy || "");
-    if (!POLICIES.includes(policy)) fail("invalid-argument", "方針を選んでください。");
-    let result = null;
-    await firestore.runTransaction(async (transaction) => {
-      const now = currentTime();
-      const monthKey = jstMonthKey(now);
-      const [profileSnapshot, honorSnapshot, fundSnapshot] = await Promise.all([
-        transaction.get(profileRef(uid)),
-        transaction.get(honorRef(monthKey, uid)),
-        transaction.get(fundRef(monthKey)),
-      ]);
-      requireAge(readProfile(profileSnapshot));
-      const honor = object(honorSnapshot.data());
-      if (!honorTierFor(honor.offered)) fail("failed-precondition", "方針への投票は、今月の称号を持つ管理人だけができます。");
-      const previous = POLICIES.includes(honor.vote) ? honor.vote : "";
-      const fund = object(fundSnapshot.data());
-      const votes = { both: 0, first: 0, renewal: 0, ...object(fund.votes) };
-      if (previous) votes[previous] = Math.max(0, integer(votes[previous], 0, 1_000_000, 0) - 1);
-      votes[policy] = integer(votes[policy], 0, 1_000_000, 0) + 1;
-      transaction.set(fundRef(monthKey), { monthKey, votes, updatedAt: now }, { merge: true });
-      transaction.set(honorRef(monthKey, uid), { vote: policy, updatedAt: now }, { merge: true });
-      result = { ok: true, policy: fundPolicy({ votes }), vote: policy };
-    });
-    return result;
-  }
-
-  async function recommendAction(uid, data, add) {
-    const publicManagerId = requirePublicManagerId(data?.publicManagerId);
-    const { uid: targetUid } = await findManagerByPublicId(publicManagerId);
-    if (targetUid === uid) fail("failed-precondition", "自分は推薦できません。");
-    let result = null;
-    await firestore.runTransaction(async (transaction) => {
-      const now = currentTime();
-      const monthKey = jstMonthKey(now);
-      const [profileSnapshot, honorSnapshot, targetSnapshot] = await Promise.all([
-        transaction.get(profileRef(uid)),
-        transaction.get(honorRef(monthKey, uid)),
-        transaction.get(profileRef(targetUid)),
-      ]);
-      requireAge(readProfile(profileSnapshot));
-      if (add && playerSafety) await playerSafety.assertAllowed(uid, targetUid, transaction);
-      const honor = object(honorSnapshot.data());
-      const tier = honorTierFor(honor.offered);
-      if (!tier) fail("failed-precondition", "推薦は、今月の称号を持つ管理人だけができます。");
-      const list = Array.isArray(honor.recommendations)
-        ? honor.recommendations.filter((id) => PUBLIC_MANAGER_ID_PATTERN.test(String(id)))
-        : [];
-      const target = readProfile(targetSnapshot);
-      const targetCount = target.recommendedMonthKey === monthKey ? target.recommendedCount : 0;
-      if (add) {
-        if (list.includes(publicManagerId)) {
-          result = { ok: true, recommendations: list };
-          return;
-        }
-        if (!target.card) fail("failed-precondition", "この管理人は推薦できません。");
-        if (list.length >= tier.recommendationSlots) fail("failed-precondition", `今月の推薦は${tier.recommendationSlots}件までです。`);
-        const next = [...list, publicManagerId];
-        transaction.set(honorRef(monthKey, uid), { recommendations: next, updatedAt: now }, { merge: true });
-        transaction.set(profileRef(targetUid), { recommendedMonthKey: monthKey, recommendedCount: targetCount + 1, updatedAt: now }, { merge: true });
-        result = { ok: true, recommendations: next };
-        return;
-      }
-      if (!list.includes(publicManagerId)) {
-        result = { ok: true, recommendations: list };
-        return;
-      }
-      const next = list.filter((id) => id !== publicManagerId);
-      transaction.set(honorRef(monthKey, uid), { recommendations: next, updatedAt: now }, { merge: true });
-      transaction.set(profileRef(targetUid), { recommendedMonthKey: monthKey, recommendedCount: Math.max(0, targetCount - 1), updatedAt: now }, { merge: true });
-      result = { ok: true, recommendations: next };
-    });
     return result;
   }
 
@@ -2685,6 +2551,9 @@ function createTributeService(deps) {
     if (!uid) fail("unauthenticated", "ログインが必要です。");
     const data = object(dataValue);
     const action = String(data.action || "");
+    if (RETIRED_FUND_ACTIONS.includes(action)) {
+      fail("failed-precondition", "牧場基金は終わり、管理人の金庫に変わりました。画面を読み込み直してください。");
+    }
     if (!TRIBUTE_ACTIONS.includes(action)) fail("invalid-argument", "操作を確認できません。");
     switch (action) {
       case "state": return stateAction(uid);
@@ -2700,11 +2569,9 @@ function createTributeService(deps) {
       case "set_word": return setWordAction(uid, data);
       case "ledger": return ledgerAction(uid);
       case "rankings": return rankingsAction(uid, data);
-      case "fund": return fundAction(uid, data, context);
-      case "offer": return offerAction(uid, data, context);
-      case "vote": return voteAction(uid, data);
-      case "recommend": return recommendAction(uid, data, true);
-      case "unrecommend": return recommendAction(uid, data, false);
+      case "vault": return vaultAction(uid);
+      case "vault_deposit": return vaultMoveAction(uid, data, "deposit");
+      case "vault_withdraw": return vaultMoveAction(uid, data, "withdraw");
       default: return runNamedContractAction(uid, action, data, context);
     }
   }
@@ -2784,7 +2651,7 @@ function createTributeService(deps) {
 
 module.exports = {
   TRIBUTE_ACTIONS,
+  RETIRED_FUND_ACTIONS,
   createTributeService,
   viewContract,
-  fundPolicy,
 };

@@ -34,7 +34,6 @@ import {
   LIMITS,
   PER_DAY_OPTIONS,
   PER_TRIBUTE_OPTIONS,
-  POLICY_LABELS,
   PREMISES,
   MAX_SEALS,
   PURPOSES,
@@ -51,6 +50,8 @@ import {
   TOTAL_OPTIONS,
   TRIAL_DURATION_DAYS,
   TRIBUTE_AGE_VERSION,
+  VAULT_QUALIFY,
+  VAULT_TIERS,
   capViolation,
   X_EXTERNAL_CONFIRM_MESSAGE,
   X_HANDLE_PATTERN,
@@ -77,29 +78,32 @@ import {
   todayWordProblem,
   trialCaps,
   tributeFee,
+  vaultTierFor,
+  vaultTierInfo,
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
   renderExcerptImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-kidoku-v1";
+} from "./tribute-share.mjs?v=ranch-vault-v1";
 import {
   CARD_FRAMES,
-  DECORATION_FUND_PERCENT,
   FRAME_PALETTES,
   SEAL_INKS,
   SEAL_SHAPES,
+  VAULT_DECORATION_ITEMS,
   decorationChoice,
   frameAttr,
   normalizeDecorations,
   requiredDecorationProducts,
+  requiredVaultTier,
   sealSvg,
-} from "./tribute-deco.mjs?v=ranch-frame-color-v1";
+} from "./tribute-deco.mjs?v=ranch-vault-v1";
 
 const appRoot = document.querySelector("#app");
 // 確認シートとレシートは画面の外側に置く。画面要素の入場アニメーションが transform を使うため、
@@ -112,14 +116,16 @@ const economyActionCallable = httpsCallable(functions, "economyAction");
 const HOLD_MS = 1_200;
 const EVENTS_LIMIT = 100;
 const PREVIEW_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const SCREENS = new Set(["age", "hub", "board", "manager", "apply", "card", "thread", "receipts", "ledger", "ranking", "fund", "error", "loading"]);
+const SCREENS = new Set(["age", "hub", "board", "manager", "apply", "card", "thread", "receipts", "ledger", "ranking", "vault", "error", "loading"]);
 const NAV_ITEMS = Object.freeze([
   Object.freeze({ screen: "hub", label: "契約" }),
   Object.freeze({ screen: "board", label: "掲示板" }),
   Object.freeze({ screen: "ledger", label: "貢ぎ帳" }),
   Object.freeze({ screen: "ranking", label: "番付" }),
-  Object.freeze({ screen: "fund", label: "牧場基金" }),
+  Object.freeze({ screen: "vault", label: "金庫" }),
 ]);
+// 牧場基金は2026年10月に終わり、金庫に変わった（古い入口から来た時は金庫を開く）。
+const SCREEN_ALIASES = Object.freeze({ fund: "vault" });
 
 const previewScreen = (() => {
   try {
@@ -156,16 +162,16 @@ function createState() {
     contracts: [],
     achievements: null,
     walletBalance: null,
-    board: { status: "idle", managers: [], recommended: [], nekamaOnly: false },
+    board: { status: "idle", managers: [], nekamaOnly: false },
     manager: { status: "idle", publicManagerId: "", data: null },
     applyTarget: null,
     thread: { contractId: "", raw: null, view: null, events: [], status: "idle" },
     receipts: { status: "idle", items: [], more: false },
     ledger: { status: "idle", asPayer: [], asManager: [] },
     ranking: { status: "idle", managers: [], monthKey: "" },
-    fund: { status: "idle", data: null },
-    // 管理人カードの編集で使う、持っている飾りと解除済みの実績（編集を開いた時に読む）。
-    decorations: { status: "idle", owned: [], achievements: [] },
+    vault: { status: "idle", data: null },
+    // 管理人カードの編集で使う、持っている飾り・解除済みの実績・金庫のいちばん高い段階（編集を開いた時に読む）。
+    decorations: { status: "idle", owned: [], achievements: [], vaultBestTier: 0 },
     sheet: null,
     receipt: null,
     busy: "",
@@ -261,8 +267,10 @@ function disclosureTag(disclosure) {
   return `<span class="tribute-tag is-${key}" title="${escapeHtml(DISCLOSURE_LABELS[key])}">${escapeHtml(DISCLOSURE_SHORT[key])}</span>`;
 }
 
-function honorTag(honor) {
-  return honor?.label ? `<span class="tribute-tag is-honor">${escapeHtml(honor.label)}</span>` : "";
+// 金庫の段階（外に見せるのは段階だけ）。
+function vaultTag(vault) {
+  const tier = vaultTierInfo(vault?.level);
+  return tier ? `<span class="tribute-tag is-vault is-vault-${escapeHtml(tier.id)}" title="金庫の段階：${escapeHtml(tier.label)}"><i aria-hidden="true">庫</i>${escapeHtml(tier.label)}</span>` : "";
 }
 
 function cardXHandle(card) {
@@ -387,7 +395,7 @@ function renderHub() {
       </div>
       <div class="tribute-me-manager">
         <span class="tribute-eyebrow">管理人として</span>
-        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${honorTag(profile.honor)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${escapeHtml(boardStatusLabel(profile))}</small></div></div>
+        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${vaultTag(card.vault)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${escapeHtml(boardStatusLabel(profile))}</small></div></div>
           <div class="tribute-row">
             <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
             <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
@@ -570,11 +578,11 @@ function renderManagerCard(card, { compact = false, preview = false } = {}) {
     : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame, card.frameColor)}>`;
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
     ${face}
-      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${vaultTag(card.vault)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
       ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
-      <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span>${card.recommendedCount ? `<span>推薦 <b>${Number(card.recommendedCount)}</b></span>` : ""}</span>
+      <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span></span>
     ${preview ? "</div>" : "</button>"}
   </article>`;
 }
@@ -594,7 +602,6 @@ function renderBoard() {
       <small>性別で絞る機能はありません。中の人の札は、分かって渡すための札です。</small>
       ${isNewWallet() ? '<button class="tribute-link" type="button" data-t="open-demo">初めてなら、見本の契約を見学できます</button>' : ""}
     </div>
-    ${board.recommended.length ? `<section class="tribute-shelf"><h2>推薦棚 <small>上納した管理人たちの推薦</small></h2><div class="tribute-card-grid is-shelf">${board.recommended.map((card) => renderManagerCard(card, { compact: true })).join("")}</div></section>` : ""}
     <section><h2 class="tribute-section-title">受付中の管理人</h2>${body}</section>
   </div>`, { title: "掲示板" });
 }
@@ -613,9 +620,6 @@ function renderManagerDetail() {
   const welcome = entry.invited && !card.mine
     ? `<div class="tribute-invite-welcome" role="note"><b>${escapeHtml(card.personaName)}の招待で来ました</b><span>初めてなら、見本の契約で流れを見てから「お試しの設定」で申し込めます。限度額と解約は、いつでも自分で設定できます（管理人には見えません）。</span><button class="button button-ghost button-small" type="button" data-t="open-demo">見学する</button></div>`
     : "";
-  const fundHonor = state.fund.data?.me?.honor;
-  const canRecommend = !card.mine && fundHonor?.tier;
-  const recommended = (fundHonor?.recommendations || []).some((row) => row.publicManagerId === card.publicManagerId);
   const action = card.mine
     ? `<p class="tribute-note">あなたの管理人カードです。</p>`
     : openContractId
@@ -626,7 +630,7 @@ function renderManagerDetail() {
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
     <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame, card.frameColor)}>
-      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${declarationTags(card)}</div></div></div>
+      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${vaultTag(card.vault)}${declarationTags(card)}</div></div></div>
       ${cardAchievementsMarkup(card.achievements, " is-large")}
       ${wordBubble(card.word, " is-large")}
       <p class="tribute-profile-intro">${escapeHtml(card.intro || "（紹介文なし）")}</p>
@@ -639,7 +643,6 @@ function renderManagerDetail() {
       </dl>
       ${xProfileButton(card)}
       <div class="tribute-row">${action}
-        ${canRecommend ? `<button class="button button-ghost button-small" type="button" data-t="${recommended ? "unrecommend" : "recommend"}" data-id="${escapeHtml(card.publicManagerId)}">${recommended ? "推薦を外す" : "推薦する"}</button>` : ""}
         ${card.mine || previewScreen ? "" : renderBlockButton({ mode: "tribute", publicManagerId: card.publicManagerId }, "この管理人をブロック")}
       </div>
     </section>
@@ -726,7 +729,7 @@ function renderCardEditor() {
     <label class="tribute-check"><input type="checkbox" name="accepting" ${profile.accepting || !profile.card ? "checked" : ""} /><span>受付する（掲示板に出す）</span></label>
     <p class="tribute-note">連絡先・SNSのID・外部決済・現金・会う約束・住所や本名に関わる言葉は、カードにも会話にも書けません。</p>
     <p class="tribute-form-error" data-form-error role="alert"></p>
-    <div class="tribute-row"><button class="button button-primary" type="submit" data-card-save ${state.busy || decorationsTried(normalizeDecorations(card)).length ? "disabled" : ""}>保存する</button>
+    <div class="tribute-row"><button class="button button-primary" type="submit" data-card-save ${state.busy || decorationsTried(normalizeDecorations(card)).length || vaultDecorationsLocked(card).length ? "disabled" : ""}>保存する</button>
       <button class="button button-ghost" type="button" data-t="nav" data-screen="hub">戻る</button></div>
   </form>`, { title: "管理人カード" });
 }
@@ -770,6 +773,20 @@ function decorationByProduct(productId) {
   return [...CARD_FRAMES, ...SEAL_SHAPES, ...SEAL_INKS].find((entry) => entry.productId === productId) || null;
 }
 
+// 金庫のいちばん高く届いた段階（その段階までの金庫の飾りを使える）。
+function vaultBestTier() {
+  return Number(state.decorations.vaultBestTier) || 0;
+}
+
+// 選んでいるうち、金庫がまだその段階に届いていない金庫の飾り（試着中）。
+function vaultDecorationsLocked(decorations) {
+  if (state.decorations.status !== "ready") return [];
+  const look = normalizeDecorations(decorations);
+  return ["frame", "sealShape", "sealInk"]
+    .map((slot) => decorationChoice(slot, look[slot]))
+    .filter((entry) => entry?.vaultTier && entry.vaultTier > vaultBestTier());
+}
+
 function formDecorations(form) {
   const card = state.profile?.card || {};
   const data = new FormData(form);
@@ -778,6 +795,11 @@ function formDecorations(form) {
 }
 
 function decorationStatus(entry, selected) {
+  if (entry.vaultTier) {
+    if (vaultBestTier() >= entry.vaultTier) return { key: "owned", label: "金庫で解放" };
+    if (selected) return { key: "trying", label: "試着中" };
+    return { key: "locked", label: `金庫「${vaultTierInfo(entry.vaultTier)?.label || ""}」` };
+  }
   if (!entry.productId) return { key: "free", label: "無料" };
   if (ownedDecorations().has(entry.productId)) return { key: "owned", label: "持っている" };
   if (selected) return { key: "trying", label: "試着中" };
@@ -787,7 +809,7 @@ function decorationStatus(entry, selected) {
 function decorationTile(slot, entry, selectedId, art) {
   const selected = entry.id === selectedId;
   const status = decorationStatus(entry, selected);
-  return `<label class="tribute-deco-tile is-${status.key}${entry.special ? " is-special" : ""}" data-deco-slot="${slot}" data-deco-id="${escapeHtml(entry.id)}">
+  return `<label class="tribute-deco-tile is-${status.key}${entry.special ? " is-special" : ""}${entry.vaultTier ? " is-vault" : ""}" data-deco-slot="${slot}" data-deco-id="${escapeHtml(entry.id)}">
     <input type="radio" name="${slot}" value="${escapeHtml(entry.id)}" ${selected ? "checked" : ""} />
     <span class="tribute-deco-art" data-deco-art>${art}</span><b>${escapeHtml(entry.name)}</b><small data-deco-status>${escapeHtml(status.label)}</small>
   </label>`;
@@ -816,7 +838,7 @@ function renderDecorationSettings(card) {
     <div class="tribute-deco-group"><h3>朱肉の色</h3>
       <div class="tribute-deco-tiles is-inks">${SEAL_INKS.map((ink) => decorationTile("sealInk", ink, look.sealInk, `<i class="tribute-deco-ink" style="--ink:${ink.dark}"></i>`)).join("")}</div></div>
     <div data-deco-trial>${renderDecorationTrial(look)}</div>
-    <small>飾りが変えるのは見た目だけです。中の人の札・入場料・管理中の人数は、どの飾りでも同じ位置に出ます。AnjuPayストアの「お貢ぎ牧場の飾り」でも買えます。</small>
+    <small>飾りが変えるのは見た目だけです。中の人の札・入場料・管理中の人数は、どの飾りでも同じ位置に出ます。AnjuPayストアの「お貢ぎ牧場の飾り」でも買えます。古金・千両箱・蔵・宝物庫・金の城は、金庫がその段階に届くと使える非売品です。</small>
   </fieldset>`;
 }
 
@@ -845,16 +867,19 @@ function refreshFrameColors(form) {
 
 function renderDecorationTrial(look) {
   const tried = decorationsTried(look).map(decorationByProduct).filter(Boolean);
-  if (!tried.length) return "";
+  const locked = vaultDecorationsLocked(look);
+  if (!tried.length && !locked.length) return "";
   const balance = state.walletBalance;
   const total = tried.reduce((sum, entry) => sum + entry.price, 0);
-  const after = balance === null ? "" : balance >= total ? `財布 ${escapeHtml(formatPay(balance))} → 買ったあと <em>${escapeHtml(formatPay(balance - total))}</em>` : `財布 ${escapeHtml(formatPay(balance))}（あと ${escapeHtml(formatPay(total - balance))} 足りません）`;
+  const after = !tried.length || balance === null ? "" : balance >= total ? `財布 ${escapeHtml(formatPay(balance))} → 買ったあと <em>${escapeHtml(formatPay(balance - total))}</em>` : `財布 ${escapeHtml(formatPay(balance))}（あと ${escapeHtml(formatPay(total - balance))} 足りません）`;
+  const lockedNote = locked.map((entry) => `「${escapeHtml(entry.name)}」は金庫が「${escapeHtml(vaultTierInfo(entry.vaultTier)?.label || "")}」に届くと使えます`).join("。");
   return `<div class="tribute-deco-trial" role="status">
-    <b>試着中：${tried.map((entry) => escapeHtml(entry.name)).join("・")}</b>
+    <b>試着中：${[...tried, ...locked].map((entry) => escapeHtml(entry.name)).join("・")}</b>
     ${after ? `<span>${after}</span>` : ""}
+    ${lockedNote ? `<span>${lockedNote}（ストアでは売っていません）。</span>` : ""}
     <div class="tribute-row">${tried.map((entry) => `<button class="button button-primary button-small" type="button" data-t="buy-deco" data-product="${escapeHtml(entry.productId)}" ${state.busy || (balance !== null && balance < entry.price) ? "disabled" : ""}>${escapeHtml(entry.name)}を${escapeHtml(formatPay(entry.price))}で買う</button>`).join("")}
       <button class="button button-ghost button-small" type="button" data-t="stop-trial">試着をやめる</button></div>
-    <small>試着中は保存できません。買い切りで、売上の${DECORATION_FUND_PERCENT}%は牧場基金に積まれます。</small>
+    <small>試着中は保存できません。${tried.length ? "ストアの飾りは買い切りです。" : ""}</small>
   </div>`;
 }
 
@@ -878,7 +903,7 @@ function updateDecorations(form) {
   const trial = form.querySelector("[data-deco-trial]");
   if (trial) trial.innerHTML = renderDecorationTrial(look);
   const save = form.querySelector("[data-card-save]");
-  if (save) save.disabled = Boolean(state.busy) || decorationsTried(look).length > 0;
+  if (save) save.disabled = Boolean(state.busy) || decorationsTried(look).length > 0 || vaultDecorationsLocked(look).length > 0;
 }
 
 // 実績は種類ごとに一番高い段だけを並べる（いま選んでいるものは必ず残す）。
@@ -895,7 +920,9 @@ function cardAchievementChoices(selected) {
     const entry = achievementEntry(id);
     if (entry && !list.includes(entry)) list.push(entry);
   }
-  return list.sort((left, right) => Number(right.category === "tribute_ranch") - Number(left.category === "tribute_ranch") || right.level - left.level);
+  // 牧場の実績と、牧場基金の限定称号を先に並べる。
+  const ranch = (entry) => Number(entry.category === "tribute_ranch" || entry.category === "tribute_honor");
+  return list.sort((left, right) => ranch(right) - ranch(left) || right.level - left.level);
 }
 
 function renderCardAchievementPicker(card) {
@@ -909,7 +936,7 @@ function renderCardAchievementPicker(card) {
     return `<fieldset class="tribute-card-achievement-pick">${legend}<p class="tribute-note">対戦・トレーニング・牧場などで実績を解除すると、ここから${CARD_ACHIEVEMENT_LIMIT}つまで選んでカードに飾れます。</p></fieldset>`;
   }
   return `<fieldset class="tribute-card-achievement-pick">${legend}
-    <div class="tribute-achievement-choices">${choices.map((entry) => `<label><input type="checkbox" name="achievements" value="${escapeHtml(entry.id)}" ${selected.includes(entry.id) ? "checked" : ""} /><span><i aria-hidden="true">${escapeHtml(entry.icon)}</i><b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.familyLabel || "")} Lv.${Number(entry.level) || 1}</small></span></label>`).join("")}</div>
+    <div class="tribute-achievement-choices">${choices.map((entry) => `<label><input type="checkbox" name="achievements" value="${escapeHtml(entry.id)}" ${selected.includes(entry.id) ? "checked" : ""} /><span><i aria-hidden="true">${escapeHtml(entry.icon)}</i><b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.familyLabel || "")} ${entry.legacy ? "限定" : `Lv.${Number(entry.level) || 1}`}</small></span></label>`).join("")}</div>
     <small>牧場のカードにだけ出ます。実績コレクションの展示とは別に選べます。</small>
   </fieldset>`;
 }
@@ -924,6 +951,7 @@ async function loadDecorations() {
       status: "ready",
       owned: Array.isArray(payload?.owned) ? payload.owned.map(String) : [],
       achievements: Array.isArray(payload?.achievements) ? payload.achievements.map(String) : [],
+      vaultBestTier: Math.max(0, Math.min(VAULT_TIERS.length, Number(payload?.vaultBestTier) || 0)),
     };
   } catch (error) {
     if (!isCurrent(generation)) return;
@@ -954,7 +982,7 @@ async function buyDecoration(productId) {
   const confirmed = window.confirm(
     `${entry.name}を${formatPay(entry.price)}で買いますか？\n\n`
     + (balance === null ? "" : `いまの財布：${formatPay(balance)}\n買ったあと：${formatPay(Math.max(0, balance - entry.price))}\n\n`)
-    + `買い切りで、払い戻しはありません。売上の${DECORATION_FUND_PERCENT}%は牧場基金に積まれます。`,
+    + "買い切りで、払い戻しはありません。",
   );
   if (!confirmed) return;
   state.busy = "buy-deco";
@@ -993,7 +1021,9 @@ function stopDecorationTrial(form) {
   let frameReset = false;
   for (const slot of ["frame", "sealShape", "sealInk"]) {
     const entry = decorationChoice(slot, look[slot]);
-    if (!entry?.productId || owned.has(entry.productId)) continue;
+    const lockedStore = entry?.productId && !owned.has(entry.productId);
+    const lockedVault = entry?.vaultTier && entry.vaultTier > vaultBestTier();
+    if (!lockedStore && !lockedVault) continue;
     const input = form.querySelector(`input[name="${slot}"][value="${CSS.escape(saved[slot])}"]`);
     if (input) input.checked = true;
     if (slot === "frame") frameReset = true;
@@ -1026,8 +1056,7 @@ function renderCardPreview(card) {
     personaName: String(card.personaName || "").trim() || "ペルソナ名",
     activeContracts: current.activeContracts || 0,
     word: current.word || null,
-    honor: current.honor || null,
-    recommendedCount: 0,
+    vault: current.vault || null,
     mine: false,
   }, { preview: true });
 }
@@ -1783,7 +1812,7 @@ function recruitData(card, month) {
       disclosureLabel: DISCLOSURE_LABELS[disclosureKey],
       styleLabel: STYLE_LABELS[card.style] || "",
     },
-    honorLabel: card.honor?.label || "",
+    vaultLabel: vaultTierInfo(card.vault?.level)?.label || "",
     ignoreUnpaid: card.ignoreUnpaid === true,
     highRequest: card.highRequest === true,
     ...look,
@@ -1961,53 +1990,79 @@ function renderRanking() {
     <p class="tribute-note">管理人番付：今月の番付加算（同じ財布から1日500 Payまで）の多い順、同じなら財布の人数で並べます。毎日満額を貢ぐ財布を多く抱える管理人が上に来ます。実際の献上額とレシートは制限しません。</p>
     ${ranking.status === "loading" ? `<p class="tribute-empty">番付を読み込んでいます…</p>` : ranking.managers.length
     ? `<ol class="tribute-manager-ranking">${ranking.managers.map((row) => `<li class="${row.mine ? "is-mine" : ""}"><b>${row.rank}</b>
-        <button type="button" data-t="open-manager" data-id="${escapeHtml(row.publicManagerId)}">${sigil(row)}<span><strong>${escapeHtml(row.personaName)}</strong>${disclosureTag(row.disclosure)}${honorTag(row.honor)}</span></button>
+        <button type="button" data-t="open-manager" data-id="${escapeHtml(row.publicManagerId)}">${sigil(row)}<span><strong>${escapeHtml(row.personaName)}</strong>${disclosureTag(row.disclosure)}${vaultTag(row.vault)}</span></button>
         <em>${escapeHtml(formatPay(row.rankScore))} ・ 財布${row.payers}人</em></li>`).join("")}</ol>`
     : `<p class="tribute-empty">今月の番付はまだありません。</p>`}
   </div>`, { title: "番付" });
 }
 
-function renderFund() {
-  const data = state.fund.data;
-  if (!data) return frame(`<p class="tribute-empty">${state.fund.status === "error" ? "牧場基金を開けませんでした。" : "牧場基金を読み込んでいます…"}</p>`, { title: "牧場基金" });
-  const { fund, me, tiers, monthKey } = data;
-  const honor = me.honor;
-  const canOffer = me.googleProtected && me.eligible && me.offerable >= 10;
-  return frame(`<div class="tribute-fund">
+// ───────────── 金庫 ─────────────
+// 管理人の金庫。Pay は自分のもののままで、いつでも出し入れできる。外に見せるのは段階だけ（額は本人だけ）。
+const VAULT_SLOT_LABELS = Object.freeze({ frame: "カードの枠", sealShape: "受取印の形", sealInk: "朱肉" });
+
+function renderVault() {
+  const data = state.vault.data;
+  if (!data) return frame(`<p class="tribute-empty">${state.vault.status === "error" ? "金庫を開けませんでした。" : "金庫を読み込んでいます…"}</p>`, { title: "金庫" });
+  const vault = data.vault || {};
+  const ranking = Array.isArray(data.ranking) ? data.ranking : [];
+  return frame(`<div class="tribute-vault">
+    ${renderMyVault(vault)}
     <section class="tribute-panel">
-      <span class="tribute-eyebrow">${escapeHtml(monthKey.replace("-", "年"))}月</span><h2>牧場基金</h2>
-      <p>管理人が受け取った献上の一部を「上納」すると、80%は消却、20%がその月の基金に積まれます。AnjuPayストアの「お貢ぎ牧場の飾り」の売上も、${DECORATION_FUND_PERCENT}%がその月の基金に積まれます。基金は献上手数料の補填（手数料の半分・最大10 Pay・手数料は最低1 Pay残す）だけに使い、管理人へ直接配りません。</p>
-      <dl class="tribute-facts">
-        <div><dt>基金残高</dt><dd>${escapeHtml(formatPay(fund.balance))}</dd></div>
-        <div><dt>今月の積み立て</dt><dd>${escapeHtml(formatPay(fund.contributed))}</dd></div>
-        <div><dt>飾りの売上から</dt><dd>${escapeHtml(formatPay(fund.shopIncome || 0))}</dd></div>
-        <div><dt>今月の消却</dt><dd>${escapeHtml(formatPay(fund.burned))}</dd></div>
-        <div><dt>補填</dt><dd>${escapeHtml(formatPay(fund.subsidized))}（${fund.subsidyCount}件）</dd></div>
-      </dl>
-      <p>今月の方針：<b>${escapeHtml(POLICY_LABELS[fund.policy] || "両方")}</b>（両方 ${fund.votes.both} ・ 初めて ${fund.votes.first} ・ 続く ${fund.votes.renewal}）</p>
+      <h2>金庫番付 <small>段階の高い順・同じ段階は先に届いた順</small></h2>
+      <p class="tribute-note">金庫の額は本人にしか見えません。番付に出るのは段階だけです。</p>
+      ${ranking.length
+    ? `<ol class="tribute-manager-ranking tribute-vault-ranking">${ranking.map((row) => `<li class="${row.mine ? "is-mine" : ""}"><b>${Number(row.rank)}</b>
+        <button type="button" data-t="open-manager" data-id="${escapeHtml(row.publicManagerId)}">${sigil(row)}<span><strong>${escapeHtml(row.personaName)}</strong>${disclosureTag(row.disclosure)}</span></button>
+        <em>${vaultTag(row.vault)}</em></li>`).join("")}</ol>`
+    : `<p class="tribute-empty">まだ段階のある金庫はありません。</p>`}
     </section>
     <section class="tribute-panel">
-      <h2>あなたの上納</h2>
-      <dl class="tribute-facts">
-        <div><dt>今月の献上</dt><dd>${me.tributeCount}回 ・ ${me.payers}人</dd></div>
-        <div><dt>受取（手数料後）</dt><dd>${escapeHtml(formatPay(me.receivedNet))}</dd></div>
-        <div><dt>上納済み</dt><dd>${escapeHtml(formatPay(me.offered))}</dd></div>
-        <div><dt>上納できる</dt><dd>${escapeHtml(formatPay(me.offerable))}</dd></div>
-      </dl>
-      ${!me.googleProtected ? `<p class="tribute-note">上納は、AnjuPayウォレットでGoogleによる保護をしてから使えます。</p>` : ""}
-      ${!me.eligible ? `<p class="tribute-note">上納できるのは、今月3人以上から5回以上の献上を受けた管理人です。</p>` : ""}
-      <form class="tribute-inline-form" data-form="offer">
-        <label><span>上納する額（10 Pay から）</span><input name="amount" type="number" inputmode="numeric" min="10" max="${me.offerable}" step="1" ${canOffer ? "" : "disabled"} /></label>
-        <button class="button button-primary button-small" type="submit" ${canOffer && !state.busy ? "" : "disabled"}>上納する</button>
-      </form>
-      <ul class="tribute-tiers">${tiers.map((tier) => `<li class="${honor.tier?.tierId === tier.id ? "is-current" : ""}"><b>${escapeHtml(tier.label)}</b><span>${escapeHtml(formatPay(tier.threshold))}</span><small>推薦 ${tier.recommendationSlots}件・方針へ1票</small></li>`).join("")}</ul>
-      ${honor.tier ? `<div class="tribute-honor">
-        <p>今月の称号：<b>${escapeHtml(honor.tier.label)}</b>（管理人カードに表示）</p>
-        <div class="tribute-radio-row">${Object.entries(POLICY_LABELS).map(([policy, label]) => `<button type="button" class="tribute-policy ${honor.vote === policy ? "is-selected" : ""}" data-t="vote" data-policy="${policy}" aria-pressed="${honor.vote === policy}">${escapeHtml(label)}</button>`).join("")}</div>
-        <p>推薦（${honor.recommendations.length} / ${honor.tier.recommendationSlots}）：${honor.recommendations.length ? honor.recommendations.map((row) => `<button type="button" class="tribute-link" data-t="open-manager" data-id="${escapeHtml(row.publicManagerId)}">${escapeHtml(row.personaName)}</button>`).join("・") : "管理人カードから推薦できます。"}</p>
-      </div>` : ""}
+      <h2>段階と金庫の飾り</h2>
+      <ul class="tribute-vault-tiers">${VAULT_TIERS.map((tier) => {
+    const item = VAULT_DECORATION_ITEMS.find((entry) => entry.tier === tier.level);
+    const reached = Number(vault.bestTier) >= tier.level;
+    return `<li class="${reached ? "is-reached" : ""}${Number(vault.tier) === tier.level ? " is-current" : ""}"><b><i aria-hidden="true">庫</i>${escapeHtml(tier.label)}</b><span>${escapeHtml(formatPay(tier.threshold))}〜</span><small>${item ? `${escapeHtml(VAULT_SLOT_LABELS[item.slot])}「${escapeHtml(item.name)}」` : ""}${reached ? " ・ 使える" : ""}</small></li>`;
+  }).join("")}</ul>
+      <small>段階は、いま金庫にある額で決まります。一度届いた段階の飾りは、金庫から出してもずっと使えます。飾りはカードの編集で選べます（ストアでは売っていません）。</small>
     </section>
-  </div>`, { title: "牧場基金" });
+  </div>`, { title: "金庫" });
+}
+
+function renderMyVault(vault) {
+  const qualify = `お貢ぎ牧場で累計${VAULT_QUALIFY.payers}人以上の財布から、合わせて${escapeHtml(formatPay(VAULT_QUALIFY.received))}以上を受け取った管理人が、金庫を作れます（推し値市場の実績は数えません）。`;
+  if (!vault.hasCard) {
+    return `<section class="tribute-panel tribute-vault-mine"><span class="tribute-eyebrow">あなたの金庫</span><h2>金庫は管理人のもの</h2>
+      <p>${qualify}</p><button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">管理人カードを作る</button></section>`;
+  }
+  if (!vault.qualified) {
+    const progress = vault.progress || { payers: 0, received: 0 };
+    return `<section class="tribute-panel tribute-vault-mine"><span class="tribute-eyebrow">あなたの金庫</span><h2>金庫まで、あと少し</h2>
+      <p>${qualify}</p>
+      <dl class="tribute-facts">
+        <div><dt>献上してくれた財布</dt><dd>${Number(progress.payers)} / ${VAULT_QUALIFY.payers}人</dd></div>
+        <div><dt>受け取った累計</dt><dd>${escapeHtml(formatPay(progress.received))} / ${escapeHtml(formatPay(VAULT_QUALIFY.received))}</dd></div>
+      </dl></section>`;
+  }
+  const amount = Number(vault.amount) || 0;
+  const current = vaultTierInfo(vaultTierFor(amount));
+  const next = VAULT_TIERS.find((tier) => tier.level === (current?.level || 0) + 1) || null;
+  const floor = current?.threshold || 0;
+  const ratio = next ? Math.min(1, Math.max(0, (amount - floor) / (next.threshold - floor))) : 1;
+  const balance = state.walletBalance;
+  const chips = [[1_000, "1,000"], [5_000, "5,000"], [10_000, "10,000"], ["wallet", "財布の全部"], ["vault", "金庫の全部"]];
+  return `<section class="tribute-panel tribute-vault-mine is-tier-${escapeHtml(current?.id || "none")}"><span class="tribute-eyebrow">あなたの金庫</span>
+    <div class="tribute-vault-head">${current ? vaultTag({ level: current.level }) : '<span class="tribute-tag is-vault is-empty">まだ段階なし</span>'}<strong>${escapeHtml(formatPay(amount))}</strong><small>金庫の額はあなたにしか見えません</small></div>
+    ${next
+    ? `<div class="tribute-vault-next"><div class="tribute-request-progress" aria-hidden="true"><i style="width:${Math.round(ratio * 100)}%"></i></div><small>「${escapeHtml(next.label)}」まで あと ${escapeHtml(formatPay(next.threshold - amount))}</small></div>`
+    : `<p class="tribute-note">最高段階の「${escapeHtml(current.label)}」です。</p>`}
+    <form class="tribute-vault-form" data-form="vault">
+      <label class="tribute-field"><span>金額（Pay）</span><input name="amount" type="number" inputmode="numeric" min="1" step="1" required /></label>
+      <div class="tribute-amount-chips">${chips.map(([value, label]) => `<button type="button" data-t="vault-chip" data-amount="${value}">${escapeHtml(label)}</button>`).join("")}</div>
+      <div class="tribute-row"><button class="button button-primary button-small" type="submit" name="direction" value="deposit" ${state.busy ? "disabled" : ""}>金庫に入れる</button><button class="button button-ghost button-small" type="submit" name="direction" value="withdraw" ${state.busy || !amount ? "disabled" : ""}>金庫から出す</button></div>
+      <small>財布 ${balance === null ? "確認中" : escapeHtml(formatPay(balance))}。金庫の Pay はあなたのもののままで、いつでも財布に出せます。献上や買い物に使う時は、財布に出してください。</small>
+      <p class="tribute-form-error" data-form-error role="alert"></p>
+    </form>
+  </section>`;
 }
 
 function render() {
@@ -2028,7 +2083,7 @@ function render() {
     receipts: renderReceipts,
     ledger: renderLedger,
     ranking: renderRanking,
-    fund: renderFund,
+    vault: renderVault,
   };
   appRoot.innerHTML = (renderers[state.screen] || renderHub)();
   renderLayer();
@@ -2063,12 +2118,17 @@ function applyState(payload) {
   }
 }
 
+// 牧場で知らせる実績（牧場の実績と、終わった牧場基金の限定称号）。
+function isRanchAchievement(definition) {
+  return definition?.scope === "tribute" || definition?.family === "tribute_honor";
+}
+
 // 解除した実績は共通の演出で知らせ、表示済みとしてサーバーへ伝える（失敗しても次の読み込みで再通知される）。
 function notifyAchievementUnlocks(value) {
   const catalog = window.HariaiAchievements;
   if (!catalog || !Array.isArray(value) || !value.length) return;
   const ids = (catalog.normalizeIds?.(value, catalog.catalog?.length || 400) || [])
-    .filter((id) => catalog.byId?.get?.(id)?.scope === "tribute");
+    .filter((id) => isRanchAchievement(catalog.byId?.get?.(id)));
   if (!ids.length) return;
   if (state.achievements) {
     state.achievements.unlocked = [...new Set([...state.achievements.unlocked, ...ids])];
@@ -2124,7 +2184,7 @@ async function loadBoard() {
   try {
     const payload = await call("board", { nekamaOnly: state.board.nekamaOnly });
     if (!isCurrent(generation)) return;
-    state.board = { ...state.board, status: "ready", managers: payload.managers || [], recommended: payload.recommended || [] };
+    state.board = { ...state.board, status: "ready", managers: payload.managers || [] };
   } catch (error) {
     if (!isCurrent(generation)) return;
     state.board.status = "error";
@@ -2140,12 +2200,8 @@ async function openManager(publicManagerId, { invited = false } = {}) {
   state.manager = { status: "loading", publicManagerId, data: null, invited };
   render();
   try {
-    const [payload, fund] = await Promise.all([
-      call("manager", { publicManagerId }),
-      state.fund.data ? Promise.resolve(null) : call("fund").catch(() => null),
-    ]);
+    const payload = await call("manager", { publicManagerId });
     if (!isCurrent(generation)) return;
-    if (fund) state.fund = { status: "ready", data: fund };
     state.manager = { status: "ready", publicManagerId, data: payload, invited };
   } catch (error) {
     if (!isCurrent(generation)) return;
@@ -2171,7 +2227,8 @@ async function loadList(key, action, mapper) {
   render();
 }
 
-function navigate(screen, { refresh = true } = {}) {
+function navigate(requested, { refresh = true } = {}) {
+  const screen = SCREEN_ALIASES[requested] || requested;
   if (!SCREENS.has(screen)) return;
   if (screen !== "thread") stopThread();
   state.sheet = null;
@@ -2181,7 +2238,7 @@ function navigate(screen, { refresh = true } = {}) {
   else if (screen === "receipts") loadList("receipts", "receipts", (payload) => ({ items: payload.receipts || [], more: payload.more === true }));
   else if (screen === "ledger") loadList("ledger", "ledger", (payload) => ({ asPayer: payload.asPayer || [], asManager: payload.asManager || [] }));
   else if (screen === "ranking") loadList("ranking", "rankings", (payload) => ({ managers: payload.managers || [], monthKey: payload.monthKey || "" }));
-  else if (screen === "fund") loadList("fund", "fund", (payload) => ({ data: payload }));
+  else if (screen === "vault") loadList("vault", "vault", (payload) => ({ data: payload }));
   else {
     render();
     if (screen === "hub" && refresh) refreshState();
@@ -2496,6 +2553,7 @@ async function handleSubmit(form) {
       const x = normalizeXProfile(data.get("xProfile"));
       if (x.error) return setFormError(form, x.error);
       if (decorationsTried(formDecorations(form)).length) return setFormError(form, "試着中の飾りがあります。買うか、試着をやめてから保存してください。");
+      if (vaultDecorationsLocked(formDecorations(form)).length) return setFormError(form, "金庫がまだその段階に届いていない飾りがあります。試着をやめてから保存してください。");
       await mutate("save_profile", {
         card: {
           personaName,
@@ -2647,16 +2705,28 @@ async function handleSubmit(form) {
       }
       return;
     }
-    case "offer": {
-      const amount = readAmount(form, state.fund.data?.me?.offerable || 0);
+    case "vault": {
+      // 金庫に入れる・出す。Pay は自分のもののままで、外に見せるのは段階だけ。
+      const withdraw = form.dataset.direction === "withdraw";
+      const vault = state.vault.data?.vault || {};
+      const amount = readAmount(form, withdraw ? Number(vault.amount) || 0 : state.walletBalance ?? Number.MAX_SAFE_INTEGER);
       if (amount.error) return setFormError(form, amount.error);
-      const result = await mutate("offer", { amount: amount.value, clientRequestId: createRequestId() }, { form, success: "上納しました。" });
+      const result = await mutate(withdraw ? "vault_withdraw" : "vault_deposit", { amount: amount.value, clientRequestId: createRequestId() }, {
+        form,
+        success: withdraw ? `金庫から ${formatPay(amount.value)} 出しました。` : `金庫に ${formatPay(amount.value)} 入れました。`,
+      });
       if (result) {
         if (Number.isFinite(result.walletBalance)) {
-    state.walletBalance = result.walletBalance;
-    paintWallet();
-  }
-        navigate("fund");
+          state.walletBalance = result.walletBalance;
+          paintWallet();
+        }
+        if (result.vault && state.profile) state.profile = { ...state.profile, vault: result.vault, card: state.profile.card ? { ...state.profile.card, vault: result.vault.tier ? { level: result.vault.tier } : null } : null };
+        const reached = vaultTierInfo(result.reachedTier);
+        if (reached) {
+          const item = VAULT_DECORATION_ITEMS.find((entry) => entry.tier === reached.level);
+          showToast(`金庫が「${reached.label}」に届きました。${item ? `カードの飾りに「${item.name}」が加わりました。` : ""}`);
+        }
+        navigate("vault");
       }
       return;
     }
@@ -2940,19 +3010,15 @@ async function handleClick(target) {
       render();
       return;
     }
-    case "vote":
-      await mutate("vote", { policy: target.dataset.policy }, { success: "方針に投票しました。", after: () => navigate("fund") });
+    case "vault-chip": {
+      // 金額の候補（財布の全部・金庫の全部も選べる）。
+      const form = target.closest('form[data-form="vault"]');
+      if (!form) return;
+      const vault = state.vault.data?.vault || {};
+      const preset = target.dataset.amount === "wallet" ? state.walletBalance : target.dataset.amount === "vault" ? vault.amount : Number(target.dataset.amount);
+      if (Number.isSafeInteger(preset) && preset > 0) form.elements.amount.value = String(preset);
       return;
-    case "recommend":
-    case "unrecommend":
-      await mutate(action, { publicManagerId: target.dataset.id }, {
-        success: action === "recommend" ? "推薦しました。" : "推薦を外しました。",
-        after: () => {
-          state.fund = { status: "idle", data: null };
-          openManager(target.dataset.id);
-        },
-      });
-      return;
+    }
     case "open-x": {
       const handle = String(target.dataset.handle || "");
       if (!X_HANDLE_PATTERN.test(handle) || !window.confirm(X_EXTERNAL_CONFIRM_MESSAGE)) return;
@@ -3039,6 +3105,8 @@ function bindRoot(root) {
     const form = event.target.closest?.("form[data-form]");
     if (!form || !form.closest(".tribute-screen, .tribute-layer")) return;
     event.preventDefault();
+    // 金庫の「入れる」「出す」のように、押したボタンで向きが変わるフォーム。
+    if (event.submitter?.name === "direction") form.dataset.direction = event.submitter.value;
     handleSubmit(form);
   });
 
@@ -3188,7 +3256,8 @@ async function start({ initialScreen = "", inviteManager = "" } = {}) {
       startPreview(previewScreen);
       return;
     }
-    navigate(SCREENS.has(initialScreen) ? initialScreen : "hub", { refresh: false });
+    const screen = SCREEN_ALIASES[initialScreen] || initialScreen;
+    navigate(SCREENS.has(screen) ? screen : "hub", { refresh: false });
   } catch (error) {
     if (!isCurrent(generation)) return;
     state.screen = "error";
@@ -3338,6 +3407,14 @@ function previewThreadChange(change) {
 }
 
 const previewOwnedDecorations = new Set(["ranch_frame_kurokawa", "ranch_seal_heart", "ranch_ink_sakura"]);
+// 見本の金庫（vault-new はまだ金庫を作れない管理人）。
+const previewVault = { qualified: previewScreen !== "vault-new", amount: previewScreen === "vault-new" ? 0 : 12_400, tier: 0, bestTier: 0 };
+previewVault.tier = vaultTierFor(previewVault.amount);
+previewVault.bestTier = previewVault.tier;
+
+function previewVaultView() {
+  return { ...previewVault, hasCard: true, ...(previewVault.qualified ? {} : { progress: { payers: 2, received: 640, needPayers: VAULT_QUALIFY.payers, needReceived: VAULT_QUALIFY.received } }) };
+}
 
 const PREVIEW_MANAGER_CARD = Object.freeze({
   publicManagerId: "a1b2c3d4e5f6a1b2c3d4e5f6",
@@ -3360,8 +3437,7 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   word: { text: "今夜は機嫌がいい。財布は並びな。", at: Date.now() - 2 * 3_600_000 },
   xHandle: "mio_sama_ranch",
   accepting: true,
-  honor: { tierId: "offerer", label: "上納者" },
-  recommendedCount: 2,
+  vault: { level: 4, id: "treasury", label: "宝物庫" },
   activeContracts: 4,
   lastActiveAt: Date.now(),
 });
@@ -3454,7 +3530,7 @@ function previewCall(action, payload) {
           accepting: true,
           publicManagerId: "f".repeat(24),
           hidden: false,
-          honor: null,
+          vault: { ...previewVault },
           counts: { payerOpen: 1, managerActive: 1, managerPending: 1 },
           receiptCount: 3,
           wordsToday: 1,
@@ -3477,12 +3553,11 @@ function previewCall(action, payload) {
         ok: true,
         managers: [
           PREVIEW_MANAGER_CARD,
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, honor: null, recommendedCount: 0, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"] },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, honor: null, recommendedCount: 0, intro: "甘やかし担当。無理はさせない。", frame: "bara", frameColor: "pink", achievements: [] },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, honor: null, recommendedCount: 0, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "kusari", frameColor: "gold", achievements: [] },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, honor: null, recommendedCount: 0, intro: "毎日決まった額を、決まった時間に。", frame: "kurokawa", frameColor: "pink", achievements: ["battle_total_1"] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, vault: { level: 3 }, intro: "毎日決まった額を、決まった時間に。", frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane", achievements: ["battle_total_1"] },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
-        recommended: [PREVIEW_MANAGER_CARD],
       });
     case "manager":
       return Promise.resolve({
@@ -3517,32 +3592,38 @@ function previewCall(action, payload) {
         ok: true,
         monthKey,
         managers: [
-          { rank: 1, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, honor: { label: "上納者" }, payers: 4, rankScore: 1_850 },
-          { rank: 2, publicManagerId: "f".repeat(24), personaName: "レイ", disclosure: "as_is", sigil: 2, avatar: 5, honor: null, payers: 1, rankScore: 1_200, mine: true },
-          { rank: 3, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", sigil: 1, avatar: 0, honor: null, payers: 2, rankScore: 600 },
+          { rank: 1, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, vault: { level: 4 }, payers: 4, rankScore: 1_850 },
+          { rank: 2, publicManagerId: "f".repeat(24), personaName: "レイ", disclosure: "as_is", sigil: 2, avatar: 5, vault: previewVault.tier ? { level: previewVault.tier } : null, payers: 1, rankScore: 1_200, mine: true },
+          { rank: 3, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", sigil: 1, avatar: 0, vault: { level: 2 }, payers: 2, rankScore: 600 },
         ],
       });
-    case "fund":
+    case "vault":
       return Promise.resolve({
         ok: true,
-        monthKey,
-        fund: { balance: 3_058, contributed: 60, burned: 240, shopIncome: 3_000, subsidized: 2, subsidyCount: 1, policy: "first", votes: { both: 1, first: 2, renewal: 0 } },
-        me: {
-          googleProtected: true,
-          tributeCount: 9,
-          payers: 3,
-          receivedNet: 1_140,
-          offered: 300,
-          offerable: 840,
-          eligible: true,
-          honor: { offered: 300, tier: { tierId: "offerer", label: "上納者", recommendationSlots: 1 }, vote: "first", recommendations: [{ publicManagerId: "b".repeat(24), personaName: "サキ" }] },
-        },
-        tiers: [
-          { id: "offerer", label: "上納者", threshold: 300, recommendationSlots: 1 },
-          { id: "grand_offerer", label: "大上納者", threshold: 1_500, recommendationSlots: 2 },
-          { id: "master", label: "牧場の主", threshold: 5_000, recommendationSlots: 3 },
+        vault: previewVaultView(),
+        ranking: [
+          { rank: 1, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", sigil: 3, avatar: 10, vault: { level: 5 } },
+          { rank: 2, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, vault: { level: 4 } },
+          { rank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", sigil: 2, avatar: 11, vault: { level: 4 } },
+          ...(previewVault.tier ? [{ rank: 4, publicManagerId: "f".repeat(24), personaName: "レイ", disclosure: "as_is", sigil: 2, avatar: 5, vault: { level: previewVault.tier }, mine: true }] : []),
+          { rank: previewVault.tier ? 5 : 4, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", sigil: 1, avatar: 0, vault: { level: 2 } },
         ],
       });
+    case "vault_deposit":
+    case "vault_withdraw": {
+      // 見本では Pay を動かさず、画面の上でだけ金庫の額を変える。
+      if (!previewVault.qualified) return Promise.reject(Object.assign(new Error("金庫を作れるのは、累計3人以上の財布から、合わせて1,000 Pay以上を受け取った管理人だけです。"), { code: "failed-precondition" }));
+      const amount = Number(payload.amount) || 0;
+      const deposit = action === "vault_deposit";
+      const balance = state.walletBalance ?? 0;
+      if (deposit && amount > balance) return Promise.reject(Object.assign(new Error("AnjuPay残高が足りません。"), { code: "failed-precondition" }));
+      if (!deposit && amount > previewVault.amount) return Promise.reject(Object.assign(new Error("金庫の残りが足りません。"), { code: "failed-precondition" }));
+      const before = previewVault.bestTier;
+      previewVault.amount += deposit ? amount : -amount;
+      previewVault.tier = vaultTierFor(previewVault.amount);
+      previewVault.bestTier = Math.max(previewVault.bestTier, previewVault.tier);
+      return Promise.resolve({ ok: true, vault: { ...previewVault }, walletBalance: balance + (deposit ? -amount : amount), ...(previewVault.bestTier > before ? { reachedTier: previewVault.bestTier } : {}) });
+    }
     case "tribute": {
       const request = payload.requestId ? state.thread.raw?.pendingRequests?.[payload.requestId] : null;
       const purpose = request ? request.purpose || "" : payload.purpose || "";
@@ -3651,7 +3732,8 @@ function previewCall(action, payload) {
       return Promise.resolve({
         ok: true,
         owned: [...previewOwnedDecorations],
-        achievements: ["tribute_manager_10", "tribute_manager_3", "tribute_manager_1", "tribute_wallet_3", "tribute_wallet_1", "battle_total_1", "battle_total_10", "battle_total_30"],
+        achievements: ["tribute_manager_10", "tribute_manager_3", "tribute_manager_1", "tribute_wallet_3", "tribute_wallet_1", "tribute_honor_grand_offerer", "tribute_honor_offerer", "battle_total_1", "battle_total_10", "battle_total_30"],
+        vaultBestTier: previewVault.bestTier,
       });
     case "save_profile": {
       // 見本では保存せず、画面の上でだけカードを差し替える（印の見え方を確かめるため）。
@@ -3715,7 +3797,8 @@ function startPreview(screen) {
     receipts: () => navigate("receipts"),
     ledger: () => navigate("ledger"),
     ranking: () => navigate("ranking"),
-    fund: () => navigate("fund"),
+    vault: () => navigate("vault"),
+    "vault-new": () => navigate("vault"),
   };
   (map[screen] || map.hub)();
 }

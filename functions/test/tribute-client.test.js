@@ -31,11 +31,11 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-kidoku-v1"/);
-  assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-frame-color-v1"/);
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1"/);
+  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1"/);
+  assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
   assert.doesNotMatch(app, /id="valueMarketButton"/);
@@ -249,7 +249,7 @@ test("templates are harsh but never cross the stated lines, and lowering or leav
 
 test("server wiring: App Check callable, 15-minute expiry, block cleanup, closed market and patron program", () => {
   assert.match(indexSource, /exports\.tributeAction = onCall\(callableOptions\("tributeAction"\)/);
-  assert.match(indexSource, /const TRIBUTE_GOOGLE_ACTIONS = new Set\(\["fund", "offer", "apply", "set_caps"\]\);/);
+  assert.match(indexSource, /const TRIBUTE_GOOGLE_ACTIONS = new Set\(\["apply", "set_caps"\]\);/);
   assert.match(indexSource, /exports\.expireTributeContracts = onSchedule\(\{\s*schedule: "every 15 minutes"/);
   assert.match(indexSource, /tributeService\.endContractsBetween\(context\.firstUid, context\.secondUid\)/);
   assert.match(indexSource, /resolveTributeTarget: \(uid, data\) => tributeService\.resolveSafetyTarget\(uid, data\)/);
@@ -300,7 +300,8 @@ test("the contract screen shows both ranch achievement lines and forwards unlock
   assert.match(panel, /実績は自動では公開されず、展示するかは実績コレクションで選べます。/);
   assert.match(panel, /data-t="open-achievements"/);
   const notify = sourceBlock(client, "function notifyAchievementUnlocks", "async function refreshState");
-  assert.match(notify, /byId\?\.get\?\.\(id\)\?\.scope === "tribute"/);
+  assert.match(notify, /isRanchAchievement\(catalog\.byId\?\.get\?\.\(id\)\)/);
+  assert.match(client, /return definition\?\.scope === "tribute" \|\| definition\?\.family === "tribute_honor";/, "the ended fund's limited honors are announced in the ranch too");
   assert.match(notify, /new CustomEvent\("hariai-achievements-unlocked"/);
   assert.match(notify, /action: "ack_achievements", achievementIds: ids/);
   assert.match(notify, /if \(previewScreen\) return;/);

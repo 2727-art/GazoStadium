@@ -19,8 +19,15 @@ export const RANCH_DECORATION_PRODUCTS = Object.freeze([
   Object.freeze({ id: "ranch_ink_kin", type: "ranchSealInk", deco: "kin", name: "金の朱肉", price: 3000, description: "金の朱肉。レシートでは金茶、画面では金に光る。" }),
 ]);
 
-// 売上のうち牧場基金に積む割合（%）。サーバーの DECORATION_FUND_BASIS_POINTS と同じ。
-export const DECORATION_FUND_PERCENT = 20;
+// 金庫の段階で手に入る非売品の飾り（ストアでは売らない）。サーバーの VAULT_DECORATIONS と同じ。
+// 一度その段階に届けば、金庫から出してもずっと使える。
+export const VAULT_DECORATION_ITEMS = Object.freeze([
+  Object.freeze({ slot: "sealInk", deco: "kogane", tier: 1, name: "古金", description: "くすんだ古い金色の朱肉。金庫が「木箱」に届くと使える。" }),
+  Object.freeze({ slot: "sealShape", deco: "senryo", tier: 2, name: "千両箱", description: "千両箱の形の受取印。金庫が「金庫」に届くと使える。" }),
+  Object.freeze({ slot: "frame", deco: "kura", tier: 3, name: "蔵", description: "白壁となまこ壁の蔵。金庫が「蔵」に届くと使える枠。" }),
+  Object.freeze({ slot: "frame", deco: "houmotsu", tier: 4, name: "宝物庫", description: "金貨と宝石で囲む枠。金庫が「宝物庫」に届くと使える。" }),
+  Object.freeze({ slot: "frame", deco: "kinjo", tier: 5, name: "金の城", description: "金の天守としゃちほこ。ゆっくり光る、金庫の最高段階の枠。" }),
+]);
 
 export const DEFAULT_FRAME = "";
 export const DEFAULT_SEAL_SHAPE = "date";
@@ -33,22 +40,29 @@ const INK_COLORS = Object.freeze({
   sumi: Object.freeze({ paper: "#24202b", dark: "#d9d3e2" }),
   sakura: Object.freeze({ paper: "#d4447e", dark: "#ff8fbf" }),
   kin: Object.freeze({ paper: "#a8781c", dark: "#f0c66b" }),
+  kogane: Object.freeze({ paper: "#7a6327", dark: "#cfb26f" }),
 });
 
 const productsOf = (type) => RANCH_DECORATION_PRODUCTS.filter((product) => product.type === type);
 const choice = (product) => Object.freeze({ id: product.deco, productId: product.id, name: product.name, price: product.price, special: product.special === true });
+// 金庫の飾りは商品IDを持たず、必要な金庫の段階（vaultTier）を持つ。
+const vaultChoices = (slot) => VAULT_DECORATION_ITEMS.filter((item) => item.slot === slot)
+  .map((item) => Object.freeze({ id: item.deco, productId: "", name: item.name, price: 0, special: item.tier >= 5, vaultTier: item.tier, ...(INK_COLORS[item.deco] || {}) }));
 
 export const CARD_FRAMES = Object.freeze([
   Object.freeze({ id: DEFAULT_FRAME, productId: "", name: "標準", price: 0, special: false }),
   ...productsOf("ranchFrame").map(choice),
+  ...vaultChoices("frame"),
 ]);
 export const SEAL_SHAPES = Object.freeze([
   Object.freeze({ id: DEFAULT_SEAL_SHAPE, productId: "", name: "日付印", price: 0, special: false }),
   ...productsOf("ranchSealShape").map(choice),
+  ...vaultChoices("sealShape"),
 ]);
 export const SEAL_INKS = Object.freeze([
   Object.freeze({ id: DEFAULT_SEAL_INK, productId: "", name: "朱", price: 0, special: false, ...INK_COLORS.shu }),
   ...productsOf("ranchSealInk").map((product) => Object.freeze({ ...choice(product), name: product.name.replace("の朱肉", ""), ...INK_COLORS[product.deco] })),
+  ...vaultChoices("sealInk"),
 ]);
 
 const SLOTS = Object.freeze({
@@ -98,6 +112,30 @@ export const FRAME_PALETTES = Object.freeze({
     Object.freeze({ id: "violet", name: "紫紺", a: "#3e1a5c", b: "#1a0b2a", c: "#0e0618", glow: "rgba(200, 150, 255, 0.26)", line: "rgba(220, 190, 255, 0.35)", m: ["#8a6a24", "#fff0bf", "#c79a3a", "#fff3c8"], metal: ["#fff4c9", "#e2b04f", "#8a6a24"], crownLine: "#5c4210", jewels: ["#9b5cff", "#ff4fa3"], dot: ["#3e1a5c", "#e2b04f"] }),
     Object.freeze({ id: "lapis", name: "瑠璃", a: "#163a7a", b: "#0a1a3a", c: "#060e22", glow: "rgba(170, 200, 255, 0.26)", line: "rgba(210, 225, 255, 0.38)", m: ["#5d626c", "#f4f6fa", "#9aa0ab", "#ffffff"], metal: ["#ffffff", "#b9bfca", "#5d626c"], crownLine: "#3e434c", jewels: ["#3a7bd5", "#9fe6ff"], dot: ["#163a7a", "#d9dde6"] }),
   ]),
+  // 金庫の飾りの枠。tile/grout はなまこ壁の瓦と目地、plaster は白壁、roof は屋根瓦。
+  kura: Object.freeze([
+    Object.freeze({ id: "shirakabe", name: "白壁", a: "#22242a", b: "#121318", tile: "#2c2f37", grout: "#f2efe6", plaster: "#e8e3d6", roof: "#3b3f4a", roofEdge: "#8a8f9c", dot: ["#2c2f37", "#f2efe6"] }),
+    Object.freeze({ id: "pink", name: "桃漆喰", a: "#3a1428", b: "#1c0a14", tile: "#6b2a4c", grout: "#ffe1ee", plaster: "#f6c9dc", roof: "#4f1b37", roofEdge: "#d98aae", dot: ["#6b2a4c", "#ffc6dc"] }),
+    Object.freeze({ id: "kurokabe", name: "黒漆喰", a: "#18181b", b: "#0b0b0d", tile: "#121214", grout: "#bdb9b0", plaster: "#6e6b65", roof: "#202024", roofEdge: "#6a6a72", dot: ["#121214", "#bdb9b0"] }),
+    Object.freeze({ id: "shu", name: "朱", a: "#2e110c", b: "#170806", tile: "#8a2a17", grout: "#fde6d4", plaster: "#f0d2bd", roof: "#4a1a10", roofEdge: "#c8664d", dot: ["#8a2a17", "#fde6d4"] }),
+    Object.freeze({ id: "ai", name: "藍", a: "#151d33", b: "#0a0f1c", tile: "#22356a", grout: "#e3ebff", plaster: "#cfdaf2", roof: "#172447", roofEdge: "#6f88c4", dot: ["#22356a", "#e3ebff"] }),
+  ]),
+  // metal は金貨（明→暗）、gems は角の宝石。
+  houmotsu: Object.freeze([
+    Object.freeze({ id: "gold", name: "金", a: "#24190f", b: "#120c07", glow: "rgba(255, 200, 90, 0.22)", metal: ["#fff3c4", "#e0ad48", "#7d5a1a"], gems: ["#e0245e", "#2f7de1"], dot: ["#24190f", "#e0ad48"] }),
+    Object.freeze({ id: "pinkgold", name: "ピンクゴールド", a: "#2c1220", b: "#160810", glow: "rgba(255, 140, 200, 0.22)", metal: ["#ffe9f2", "#f08cb4", "#8c3f5c"], gems: ["#ff4fa3", "#9b5cff"], dot: ["#2c1220", "#f08cb4"] }),
+    Object.freeze({ id: "silver", name: "銀", a: "#1b1d24", b: "#0e0f14", glow: "rgba(200, 215, 240, 0.18)", metal: ["#ffffff", "#b9c0cc", "#5d636e"], gems: ["#3a7bd5", "#b48cff"], dot: ["#1b1d24", "#d9dde6"] }),
+    Object.freeze({ id: "ruby", name: "紅玉", a: "#2e0d14", b: "#16060a", glow: "rgba(255, 80, 110, 0.22)", metal: ["#fff3c4", "#e0ad48", "#7d5a1a"], gems: ["#d3264f", "#ff8fb0"], dot: ["#2e0d14", "#d3264f"] }),
+    Object.freeze({ id: "lapis", name: "瑠璃", a: "#10224a", b: "#081126", glow: "rgba(120, 170, 255, 0.24)", metal: ["#fff3c4", "#e0ad48", "#7d5a1a"], gems: ["#2b5fd9", "#9fe6ff"], dot: ["#10224a", "#2b5fd9"] }),
+  ]),
+  // 玉座と同じ作り。castleLine は天守の線。
+  kinjo: Object.freeze([
+    Object.freeze({ id: "gold", name: "金", a: "#1e2340", b: "#0d1022", c: "#070914", glow: "rgba(255, 205, 100, 0.32)", line: "rgba(255, 220, 140, 0.4)", m: ["#8a6a24", "#fff0bf", "#c79a3a", "#fff3c8"], metal: ["#fff4c9", "#e2b04f", "#8a6a24"], castleLine: "#5c4210", dot: ["#1e2340", "#e2b04f"] }),
+    Object.freeze({ id: "pink", name: "ピンク", a: "#5a1640", b: "#2a081e", c: "#160410", glow: "rgba(255, 130, 200, 0.32)", line: "rgba(255, 200, 225, 0.42)", m: ["#8c3f5c", "#ffe0ec", "#e48fb4", "#fff2f8"], metal: ["#fff2f8", "#f0a0c4", "#8c3f5c"], castleLine: "#6e2a48", dot: ["#5a1640", "#f0a0c4"] }),
+    Object.freeze({ id: "blackgold", name: "黒金", a: "#1c1a17", b: "#0c0b09", c: "#050504", glow: "rgba(255, 200, 90, 0.26)", line: "rgba(255, 215, 130, 0.36)", m: ["#8a6a24", "#fff0bf", "#c79a3a", "#fff3c8"], metal: ["#fff4c9", "#e2b04f", "#8a6a24"], castleLine: "#5c4210", dot: ["#1c1a17", "#e2b04f"] }),
+    Object.freeze({ id: "shu", name: "朱", a: "#6a1a12", b: "#300a06", c: "#180503", glow: "rgba(255, 170, 80, 0.3)", line: "rgba(255, 215, 150, 0.4)", m: ["#8a6a24", "#fff0bf", "#c79a3a", "#fff3c8"], metal: ["#fff4c9", "#e2b04f", "#8a6a24"], castleLine: "#5c4210", dot: ["#6a1a12", "#e2b04f"] }),
+    Object.freeze({ id: "violet", name: "紫", a: "#3e1a5c", b: "#1a0b2a", c: "#0e0618", glow: "rgba(210, 160, 255, 0.3)", line: "rgba(225, 200, 255, 0.4)", m: ["#8a6a24", "#fff0bf", "#c79a3a", "#fff3c8"], metal: ["#fff4c9", "#e2b04f", "#8a6a24"], castleLine: "#5c4210", dot: ["#3e1a5c", "#e2b04f"] }),
+  ]),
 });
 
 export function framePalette(frame, color) {
@@ -125,6 +163,12 @@ export function decorationChoice(slot, id) {
 export function requiredDecorationProducts(decorations) {
   const normalized = normalizeDecorations(decorations);
   return Object.keys(SLOTS).map((key) => decorationChoice(key, normalized[key])?.productId || "").filter(Boolean);
+}
+
+// 選んだ金庫の飾りに必要な段階（いちばん高いもの）。サーバーの requiredVaultTier と同じ。
+export function requiredVaultTier(decorations) {
+  const normalized = normalizeDecorations(decorations);
+  return Object.keys(SLOTS).reduce((highest, key) => Math.max(highest, decorationChoice(key, normalized[key])?.vaultTier || 0), 0);
 }
 
 // ───────────── 枠の色の CSS 変数 ─────────────
@@ -175,6 +219,56 @@ function flourishArt([high, middle, low], transform) {
     <g transform='${transform}' fill='none' stroke='url(#k)' stroke-width='2.4' stroke-linecap='round'><path d='${FLOURISH_PATH}'/><circle cx='9' cy='9' r='3.2' fill='url(#k)' stroke='none'/></g></svg>`);
 }
 
+// なまこ壁（斜めの格子に、白い目地が盛り上がる）。縁は同じ柄の繰り返し。
+function namakoArt(tile, grout) {
+  const lines = [];
+  for (let offset = -72; offset <= 72; offset += 18) {
+    lines.push(`M${offset} 0 L${offset + 72} 72`, `M${offset} 72 L${offset + 72} 0`);
+  }
+  return svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='72' height='72' viewBox='0 0 72 72'>
+    <rect width='72' height='72' fill='${tile}'/>
+    <path d='${lines.join(" ")}' stroke='${grout}' stroke-width='3.2' stroke-linecap='round'/></svg>`);
+}
+
+// 蔵の屋根瓦（上の縁に並べる）。
+function roofArt(roof, edge) {
+  return svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='20' height='14' viewBox='0 0 20 14'>
+    <rect y='9' width='20' height='5' fill='${roof}'/><path d='M0 11 A10 9 0 0 1 20 11 Z' fill='${roof}' stroke='${edge}' stroke-width='1.4'/></svg>`);
+}
+
+// 金貨（四角い穴の開いた古い金貨）。縁は同じ柄の繰り返し。
+function coinArt([high, middle, low]) {
+  const coins = [];
+  for (const cy of [12, 36, 60]) {
+    for (const cx of [12, 36, 60]) coins.push(`<circle cx='${cx}' cy='${cy}' r='10' fill='url(#c)' stroke='${low}' stroke-width='1.2'/><rect x='${cx - 3}' y='${cy - 3}' width='6' height='6' fill='rgba(0,0,0,.55)'/>`);
+  }
+  return svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='72' height='72' viewBox='0 0 72 72'><defs><radialGradient id='c' cx='.35' cy='.3' r='.8'><stop offset='0' stop-color='${high}'/><stop offset='.55' stop-color='${middle}'/><stop offset='1' stop-color='${low}'/></radialGradient></defs>${coins.join("")}</svg>`);
+}
+
+// 角の宝石。
+export const GEM_PATH = "M14 2 L25 11 L14 26 L3 11 Z";
+function gemArt([main, light]) {
+  return svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'><path d='${GEM_PATH}' fill='${main}' stroke='rgba(255,255,255,.55)' stroke-width='1'/><path d='M14 2 L20 11 L14 14 L8 11 Z' fill='${light}' opacity='.75'/><path d='M3 11 H25' stroke='rgba(255,255,255,.4)' stroke-width='.8'/></svg>`);
+}
+
+// 金の天守としゃちほこ（canvas でも同じ形を描く）。viewBox は 0 -4 84 50。
+export const CASTLE_PATHS = Object.freeze({
+  base: "M12 46 L18 36 L66 36 L72 46 Z",
+  floors: "M24 28 H60 V36 H24 Z M30 17 H54 V24 H30 Z M35 8 H49 V13 H35 Z",
+  roofs: "M8 30 Q24 27 34 22 L50 22 Q60 27 76 30 L70 31 Q58 29 50 26 L34 26 Q26 29 14 31 Z M16 19 Q30 16 36 12 L48 12 Q54 16 68 19 L63 20 Q53 18 47 15 L37 15 Q31 18 21 20 Z M25 9 Q35 7 38 3 L46 3 Q49 7 59 9 L55 10 Q47 8 45 6 L39 6 Q37 8 29 10 Z",
+  shachi: "M38 3 C35 1 35 -2 38 -3.5 C38.6 -1.5 39.6 0.6 38 3 Z M46 3 C49 1 49 -2 46 -3.5 C45.4 -1.5 44.4 0.6 46 3 Z",
+  windows: "M28 30 H32 V33 H28 Z M40 30 H44 V33 H40 Z M52 30 H56 V33 H52 Z M34 19 H38 V22 H34 Z M46 19 H50 V22 H46 Z",
+});
+function castleArt(palette) {
+  const [high, middle, low] = palette.metal;
+  return svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 -4 84 50'><defs><linearGradient id='k' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='${high}'/><stop offset='.55' stop-color='${middle}'/><stop offset='1' stop-color='${low}'/></linearGradient></defs>
+    <path d='${CASTLE_PATHS.base}' fill='${low}' stroke='${palette.castleLine}' stroke-width='1'/>
+    <path d='${CASTLE_PATHS.floors}' fill='${middle}' stroke='${palette.castleLine}' stroke-width='.8'/>
+    <path d='${CASTLE_PATHS.windows}' fill='${palette.castleLine}'/>
+    <path d='${CASTLE_PATHS.roofs}' fill='url(#k)' stroke='${palette.castleLine}' stroke-width='.9'/>
+    <path d='${CASTLE_PATHS.shachi}' fill='${high}' stroke='${palette.castleLine}' stroke-width='.6'/></svg>`);
+}
+
 function crownArt(palette) {
   const [high, middle, low] = palette.metal;
   const [center, side] = palette.jewels;
@@ -207,6 +301,14 @@ export function frameVars(frame, color) {
     });
   }
   if (frame === "gyokuza") vars["--fr-crown"] = crownArt(palette);
+  if (frame === "kura") Object.assign(vars, { "--fr-namako": namakoArt(palette.tile, palette.grout), "--fr-plaster": palette.plaster, "--fr-roof": roofArt(palette.roof, palette.roofEdge) });
+  if (frame === "houmotsu") Object.assign(vars, { "--fr-glow": palette.glow, "--fr-coins": coinArt(palette.metal), "--fr-gem": gemArt(palette.gems) });
+  if (frame === "kinjo") {
+    Object.assign(vars, { "--fr-glow": palette.glow, "--fr-line": palette.line, "--fr-castle": castleArt(palette) });
+    palette.m.forEach((value, index) => {
+      vars[`--fr-m${index + 1}`] = value;
+    });
+  }
   return vars;
 }
 
@@ -258,6 +360,9 @@ export function mixColor(hex, other, amount) {
 export const HEART_PATH = "M150 272 C 58 206 16 150 16 100 C 16 54 50 24 92 24 C 120 24 140 40 150 62 C 160 40 180 24 208 24 C 250 24 284 54 284 100 C 284 150 242 206 150 272 Z";
 export const CROWN_PATH = "M94 64 L84 18 L120 42 L150 6 L180 42 L216 18 L206 64 Z";
 export const CROWN_JEWELS = Object.freeze([[84, 18], [150, 6], [216, 18]]);
+// 千両箱：角の金具と、蓋の線の鋲。
+export const SENRYO_FITTINGS = Object.freeze([[16, 40], [262, 40], [16, 250], [262, 250]]);
+export const SENRYO_RIVETS = Object.freeze([[60, 104], [150, 104], [240, 104]]);
 
 // 蝋のふち。決まった波で、毎回同じ形にする。
 export function waxPoints() {
@@ -312,6 +417,13 @@ export function sealTextLayout(shape, label, name) {
         date: { y: 192, size: 30 },
         name: { text: owner, y: 226, size: 26, width: 110, fit: ownerFit },
       };
+    case "senryo":
+      // 蓋に名前、箱に印の言葉と日付。
+      return {
+        label: { text: top, y: 190, size: pick([76, 68, 54, 44, 36]), width: 214, fit: length >= 5 },
+        date: { y: 244, size: 34 },
+        name: { text: owner, y: 86, size: 34, width: 196, fit: ownerFit },
+      };
     default:
       return {
         label: { text: top, y: length >= 6 ? 92 : 98, size: length >= 6 ? 30 : length >= 4 ? 40 : 52, width: 226, fit: length >= 6 },
@@ -358,6 +470,11 @@ function svgOutline(shape, color) {
       <line x1="52" y1="186" x2="248" y2="186" stroke-width="3"/>
       <path d="${CROWN_PATH}" fill="${color}" stroke-width="2" stroke-linejoin="round"/>
       ${CROWN_JEWELS.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="7" fill="${color}" stroke="none"/>`).join("")}`;
+    case "senryo":
+      return `<rect x="16" y="40" width="268" height="232" rx="10" stroke-width="10"/><rect x="32" y="56" width="236" height="200" rx="4" stroke-width="2.5"/>
+      <line x1="16" y1="104" x2="284" y2="104" stroke-width="6"/>
+      ${SENRYO_FITTINGS.map(([x, y]) => `<rect x="${x}" y="${y}" width="22" height="22" rx="3" fill="${color}" stroke="none"/>`).join("")}
+      ${SENRYO_RIVETS.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="6" fill="${color}" stroke="none"/>`).join("")}`;
     default:
       return `<circle cx="150" cy="150" r="138" stroke-width="10"/>
       <line x1="18" y1="112" x2="282" y2="112" stroke-width="6"/><line x1="18" y1="188" x2="282" y2="188" stroke-width="6"/>`;

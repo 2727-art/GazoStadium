@@ -501,6 +501,26 @@
     hint: "同じ管理人へは日本時間の1日1回だけ数える",
     autoPublic: false,
   });
+  // 終わった牧場基金（2026年10月まで）の上納の称号。当時の記録から一度だけ解除する限定称号（新しくは取れない）。
+  [
+    ["tribute_honor_offerer", 1, "納", "上納者", 300],
+    ["tribute_honor_grand_offerer", 2, "献", "大上納者", 1500],
+    ["tribute_honor_master", 3, "主", "牧場の主", 5000],
+  ].forEach(([id, level, icon, name, threshold]) => definitions.push(Object.freeze({
+    id,
+    scope: "special",
+    category: "tribute_honor",
+    family: "tribute_honor",
+    familyLabel: "牧場基金の限定称号",
+    icon,
+    level,
+    target: level,
+    name,
+    description: `お貢ぎ牧場の牧場基金（2026年10月に終了）で、ひと月に${threshold.toLocaleString("ja-JP")} Pay以上を上納した`,
+    hint: "牧場基金の終了とともに、新しくは取れなくなった限定称号",
+    autoPublic: false,
+    legacy: true,
+  })));
 
   definitions.unshift(Object.freeze({
     id: "special_dollmaster",
@@ -539,6 +559,7 @@
     { id: "flea_listing", label: "AnjuPayフリマ・一日棚", copy: "連続日数ではなく、自分のペースで一品を言葉にした日々の記録" },
     { id: "flea_connections", label: "AnjuPayフリマ・ご縁", copy: "売上額や順位ではなく、一品が届いた回数と出会いの記録" },
     { id: "tribute_ranch", label: "お貢ぎ牧場", copy: "金額や順位ではなく、管理する側と財布の側で管理が続いた記録。同じ相手とは日本時間の1日1回だけ数え、展示するかは本人が選べます" },
+    { id: "tribute_honor", label: "牧場基金の限定称号", copy: "2026年10月に終わった牧場基金で上納した管理人だけが持つ、もう取れない称号" },
     { id: "market_roles", label: "市場の役割", copy: "売り手・買い手として成立させた取引の記録" },
     { id: "market_balance", label: "市場を回す", copy: "両方の役割を体験した記録" },
     { id: "market_community", label: "市場の交流", copy: "日数と異なる取引相手の記録" },
@@ -652,7 +673,7 @@
         .filter((definition) => definition.category === category.id
           && (!definition.legacy || profile.unlocked[definition.id]))
         .map((definition) => definition.family))];
-      if (!families.length && ["danwaku_note", "flea_listing", "flea_connections"].includes(category.id)) return "";
+      if (!families.length && ["danwaku_note", "flea_listing", "flea_connections", "tribute_honor"].includes(category.id)) return "";
       const cards = families.map((family) => {
         const familyDefinitions = catalog.filter((definition) => definition.family === family).sort((a, b) => a.level - b.level);
         const current = highest.get(family);
