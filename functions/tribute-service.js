@@ -2398,10 +2398,11 @@ function createTributeService(deps) {
     requireAge(await readOwnProfile(uid));
     const now = currentTime();
     const monthKey = jstMonthKey(now);
+    // 番付加算（同じ組で1日500 Payまで）の多い順、同じなら財布の人数。毎日満額を貢ぐ財布を多く抱える管理人が上に来る。
     const snapshot = await firestore.collection("tributeManagerMonths")
       .where("monthKey", "==", monthKey)
-      .orderBy("payers", "desc")
       .orderBy("rankScore", "desc")
+      .orderBy("payers", "desc")
       .limit(LIMITS.rankingLimit * 2)
       .get();
     const rows = snapshot.docs.map((document) => ({ uid: String(document.get("managerUid") || ""), value: object(document.data()) }));

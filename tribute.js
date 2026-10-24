@@ -1301,7 +1301,7 @@ function renderPayableRequest(event, view, purpose) {
   const ratio = balance === null || !amount ? 0 : Math.min(100, Math.round((balance / amount) * 100));
   return `${balance === null ? "" : `<div class="tribute-request-progress"><i style="--ratio:${ratio}%"></i><span>${short ? `財布 ${escapeHtml(formatPay(balance))} ・ あと <b>${escapeHtml(formatPay(short))}</b>` : "財布で払えます"}</span></div>`}
     ${problem ? `<div class="tribute-limit-warn"><b>限度額が足りません。</b>${escapeHtml(problem)}限度額を上げると、日本時間の翌日0時から効きます。<button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="caps">限度額を変える</button></div>` : ""}
-    ${short && !demo ? `<div class="tribute-earn"><small>Payを貯める</small><button type="button" data-t="earn" data-mode="missions">デイリーミッション</button><button type="button" data-t="earn" data-mode="ai">文字コラトレーニング</button><button type="button" data-t="earn" data-mode="roulette">ルーレットの台本</button></div>` : ""}
+    ${short && !demo ? `<div class="tribute-earn"><small>Payを貯める</small><button type="button" data-t="earn" data-mode="battle">1on1で稼ぐ</button><button type="button" data-t="earn" data-mode="missions">デイリーミッション</button><button type="button" data-t="earn" data-mode="ai">文字コラトレーニング</button><button type="button" data-t="earn" data-mode="roulette">ルーレットの台本</button></div>` : ""}
     <button class="button button-primary button-small" type="button" data-t="give-request" data-request="${escapeHtml(event.requestId)}" data-amount="${amount}" data-purpose="${escapeHtml(purpose)}" ${payable ? "" : "disabled"}>差し出す（${escapeHtml(formatPay(amount))}）</button>
     <small class="tribute-request-two">払うか、解約するか。請求を断ることはできません。</small>`;
 }
@@ -1958,11 +1958,11 @@ function renderLedger() {
 function renderRanking() {
   const ranking = state.ranking;
   return frame(`<div class="tribute-ranking">
-    <p class="tribute-note">管理人番付：今月の異なる財布の人数、次に番付加算（同じ組で1日500 Payまで）で並べます。実際の献上額とレシートは制限しません。</p>
+    <p class="tribute-note">管理人番付：今月の番付加算（同じ財布から1日500 Payまで）の多い順、同じなら財布の人数で並べます。毎日満額を貢ぐ財布を多く抱える管理人が上に来ます。実際の献上額とレシートは制限しません。</p>
     ${ranking.status === "loading" ? `<p class="tribute-empty">番付を読み込んでいます…</p>` : ranking.managers.length
     ? `<ol class="tribute-manager-ranking">${ranking.managers.map((row) => `<li class="${row.mine ? "is-mine" : ""}"><b>${row.rank}</b>
         <button type="button" data-t="open-manager" data-id="${escapeHtml(row.publicManagerId)}">${sigil(row)}<span><strong>${escapeHtml(row.personaName)}</strong>${disclosureTag(row.disclosure)}${honorTag(row.honor)}</span></button>
-        <em>${row.payers}人 ・ ${escapeHtml(formatPay(row.rankScore))}</em></li>`).join("")}</ol>`
+        <em>${escapeHtml(formatPay(row.rankScore))} ・ 財布${row.payers}人</em></li>`).join("")}</ol>`
     : `<p class="tribute-empty">今月の番付はまだありません。</p>`}
   </div>`, { title: "番付" });
 }
@@ -2711,7 +2711,8 @@ async function handleClick(target) {
           else showToast("デイリーミッションを開けませんでした。ホームから開いてください。");
           return;
         }
-        const button = document.querySelector(mode === "ai" ? "#aiTextTrainingButton" : "#rouletteTrainingButton");
+        // 1on1 はトップの「いますぐ貼り合う」と同じ入口から始める。
+        const button = document.querySelector(mode === "battle" ? "#onlineButton" : mode === "ai" ? "#aiTextTrainingButton" : "#rouletteTrainingButton");
         if (button) button.click();
         else showToast("開けませんでした。ホームから開いてください。");
       }, 0);
@@ -3517,8 +3518,8 @@ function previewCall(action, payload) {
         monthKey,
         managers: [
           { rank: 1, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, honor: { label: "上納者" }, payers: 4, rankScore: 1_850 },
-          { rank: 2, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", sigil: 1, avatar: 0, honor: null, payers: 2, rankScore: 600 },
-          { rank: 3, publicManagerId: "f".repeat(24), personaName: "レイ", disclosure: "as_is", sigil: 2, avatar: 5, honor: null, payers: 1, rankScore: 1_200, mine: true },
+          { rank: 2, publicManagerId: "f".repeat(24), personaName: "レイ", disclosure: "as_is", sigil: 2, avatar: 5, honor: null, payers: 1, rankScore: 1_200, mine: true },
+          { rank: 3, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", sigil: 1, avatar: 0, honor: null, payers: 2, rankScore: 600 },
         ],
       });
     case "fund":

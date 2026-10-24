@@ -773,6 +773,36 @@ test("offering needs Google protection and eligibility, splits 80/20, grants hon
   assert.deepEqual(board.recommended.map((entry) => entry.publicManagerId), [otherId]);
 });
 
+test("the manager ranking puts the ranking points (500 per wallet per day) first and the number of wallets second", async () => {
+  const harness = createHarness({ balances: { whale: 5_000, p1: 1_000, p2: 1_000, p3: 1_000, p4: 1_000 } });
+  await confirmAge(harness, "viewer");
+  const daily = { caps: { perTribute: 1_000, perDay: 1_000, total: 10_000 } };
+  const many = await openManager(harness, "many", { personaName: "サキ", entryFee: 0 });
+  const steady = await openManager(harness, "steady", { personaName: "ミオ様", entryFee: 0 });
+  const tribute = (payer, contractId, amount) => harness.act(payer, "tribute", { contractId, kind: "silent", amount, clientRequestId: nextRequestId() });
+
+  // サキ: 3人の財布が少しずつ。ミオ様: 1人の財布が毎日満額。
+  for (const payer of ["p1", "p2", "p3"]) {
+    const contractId = await startContract(harness, "many", payer, many, daily, 0);
+    await tribute(payer, contractId, 30);
+  }
+  const whaleContract = await startContract(harness, "steady", "whale", steady, daily, 0);
+  await tribute("whale", whaleContract, 800);
+  const order = async () => (await harness.act("viewer", "rankings")).managers.map((row) => [row.personaName, row.payers, row.rankScore]);
+  assert.deepEqual(await order(), [["ミオ様", 1, 500], ["サキ", 3, 90]], "800 Pay in one day counts as 500");
+
+  harness.advance(DAY);
+  await tribute("whale", whaleContract, 500);
+  assert.deepEqual(await order(), [["ミオ様", 1, 1_000], ["サキ", 3, 90]], "every day at the full 500 keeps the manager on top");
+
+  // 番付加算が同じなら、財布の人数が多い方が上。
+  const p4Contract = await startContract(harness, "many", "p4", many, daily, 0);
+  await tribute("p4", p4Contract, 500);
+  harness.advance(DAY);
+  await tribute("p4", p4Contract, 410);
+  assert.deepEqual(await order(), [["サキ", 4, 1_000], ["ミオ様", 1, 1_000]]);
+});
+
 test("rankings show only opted-in wallet names and cap ranking points per pair per day", async () => {
   const harness = createHarness({ balances: { manager: 0, p1: 5_000, p2: 5_000 } });
   const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });

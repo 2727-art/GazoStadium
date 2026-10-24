@@ -87,7 +87,10 @@ test("payers see 既読 on their messages and 既読無視 only while a request 
   assert.match(request, /払うか、解約するか。請求を断ることはできません。/);
   assert.match(request, /<b>限度額が足りません。<\/b>/);
   assert.match(request, /限度額を上げると、日本時間の翌日0時から効きます。/);
-  for (const mode of ["missions", "ai", "roulette"]) assert.match(request, new RegExp(`data-t="earn" data-mode="${mode}"`));
+  for (const mode of ["battle", "missions", "ai", "roulette"]) assert.match(request, new RegExp(`data-t="earn" data-mode="${mode}"`));
+  // 稼ぐ近道の先頭は1on1（トップの「いますぐ貼り合う」と同じ入口）。
+  assert.match(request, /<small>Payを貯める<\/small><button type="button" data-t="earn" data-mode="battle">1on1で稼ぐ<\/button>/);
+  assert.match(sourceBlock(client, 'case "earn": {', "return;\n    }"), /mode === "battle" \? "#onlineButton" :/);
   assert.match(request, /data-t="give-request"[^]*?\$\{payable \? "" : "disabled"\}/);
 
   // 管理人の請求は10,000まで、財布の残り枠には関係しない。徴収も限度額を見せない。

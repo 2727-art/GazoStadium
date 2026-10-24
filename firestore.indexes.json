@@ -587,6 +587,24 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "tributeManagerMonths",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "monthKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rankScore",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "payers",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
