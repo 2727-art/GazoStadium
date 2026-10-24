@@ -1,0 +1,456 @@
+{
+  "checkedAt": "2026-10-24T09:21:11.502Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "214e351",
+  "releaseHead": "3382031",
+  "baseCommit": "1f74495",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-vault, no upstream)",
+  "scope": {
+    "firestoreIndexes": [
+      "tributeProfiles: vaultTier DESC, vaultTierAt ASC (new; the recommended-shelf index stays)"
+    ],
+    "functions": "all 37 (old functions drop the new limited-honor achievement ids when they write achievements back)",
+    "firestoreRules": false,
+    "realtimeDatabaseRules": false,
+    "packages": false,
+    "hosting": true,
+    "hostingFiles": 139,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "online.js",
+      "account.js",
+      "achievements.js",
+      "tribute-core.mjs",
+      "tribute-share.mjs",
+      "tribute-deco.mjs"
+    ],
+    "serverCodeChanged": true,
+    "dataMigration": false
+  },
+  "decisions": {
+    "replaces": "the ranch fund (offerings, honors, recommended shelf, policy votes, fee subsidy, 20% of decoration sales) ends and becomes each manager's vault (user decision)",
+    "qualification": "cumulative 3+ distinct wallets and 1,000+ Pay received in the ranch, checked once on the first deposit; 推し値市場 seller history does not count (user decision); 9 of 28 managers qualified before release",
+    "moves": "deposit and withdraw freely, any Pay (user decision)",
+    "tiers": "木箱 1,000 / 金庫 5,000 / 蔵 10,000 / 宝物庫 30,000 / 金の城 100,000 (user decision)",
+    "visibility": "only the tier is public; the amount goes to the owner only (user decision)",
+    "ranking": "金庫番付 by tier, then who reached it first, top 30 (user decision)",
+    "decorations": "non-sale decorations per tier, usable forever once reached: 古金 ink, 千両箱 seal, 蔵 / 宝物庫 / 金の城 frames (user decision)",
+    "honors": "上納者・大上納者・牧場の主 become limited achievements, granted lazily the next time the manager opens the ranch (user decision)",
+    "sourceInvestigation": "none (user decision)"
+  },
+  "tests": {
+    "total": 2043,
+    "passed": 2012,
+    "failed": 0,
+    "skipped": 31
+  },
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "unchangedSinceBeforeRelease": [],
+    "sourceHashes": [
+      {
+        "sourceHash": "bd1fe90724dc260c449e7e57447900f10139f0f3",
+        "count": 33,
+        "previous": [
+          "1199347b708616d76ae6ab8cb15fef93317d67cb",
+          "fba1f0d1def269b26a8c3cda75222efd34c599df"
+        ]
+      },
+      {
+        "sourceHash": "7fddff5edcfd9a04ee575d0d2a406c0781a83df1",
+        "count": 1,
+        "functions": [
+          "getP2pIceServers"
+        ],
+        "previous": [
+          "c207b9fabbb8d6e59e9ac116dc4f0aa0f5a88137"
+        ]
+      },
+      {
+        "sourceHash": "13d06efcf41342277521de26566389d8f6c3ace4",
+        "count": 1,
+        "functions": [
+          "redeemAchievementCode"
+        ],
+        "previous": [
+          "a02c5adea6ce4bfaae9dcf7165864432ca199702"
+        ]
+      },
+      {
+        "sourceHash": "29d2c57ee9459ec9204a2c26ef68b041b9d9bda1",
+        "count": 2,
+        "functions": [
+          "reportMarketP2pConnectivity",
+          "reportP2pConnectivity"
+        ],
+        "previous": [
+          "1046fffc174e700d9afdf49d9360fa4e0abbb8a0"
+        ]
+      }
+    ],
+    "note": "Functions that use secrets get their own source hash, as in earlier releases."
+  },
+  "vaultIndex": {
+    "checked": true,
+    "indexes": [
+      {
+        "fields": "recommendedMonthKey:ASCENDING,recommendedCount:DESCENDING",
+        "state": "READY"
+      },
+      {
+        "fields": "vaultTier:DESCENDING,vaultTierAt:ASCENDING",
+        "state": "READY"
+      },
+      {
+        "fields": "accepting:ASCENDING,lastActiveAt:DESCENDING",
+        "state": "READY"
+      }
+    ],
+    "vaultIndexState": "READY",
+    "ready": true
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-24T09:19:35Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-vault-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "achievements.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/achievements.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/report-tribute-vault-distribution.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-vault-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-vault-report.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "achievements.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/achievements.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/report-tribute-vault-distribution.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-vault-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-vault-report.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "achievements.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/achievements.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/report-tribute-vault-distribution.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-vault-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-vault-report.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/mocks/recruit-render.html",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "loadedWithVaultKey": [
+      "tribute.css",
+      "achievements.js",
+      "account.js",
+      "online.js",
+      "tribute.js",
+      "tribute-deco.mjs",
+      "tribute-core.mjs",
+      "tribute-share.mjs"
+    ],
+    "servedClientHas": {
+      "tributeVaultNav": true,
+      "tributeVaultForm": true,
+      "tributeFundScreenGone": true,
+      "tributeFundAlias": true,
+      "accountVaultButton": true,
+      "vaultDecorations": true,
+      "achievementsLimitedHonors": true,
+      "cssCastleFrame": true
+    },
+    "consoleErrors": 0,
+    "ranchActionsInProduction": false
+  },
+  "limits": [
+    "Clients loaded before the release (HTML max-age 3600) keep the old screens until reloaded; their fund screen fails to open and fund actions ask for a reload.",
+    "Limited honors appear only after the manager opens the ranch; who qualifies was not checked (production data reads are left to the user).",
+    "No two-player run, iPhone/Android device or Safari check in production."
+  ]
+}
