@@ -1,0 +1,312 @@
+{
+  "checkedAt": "2026-10-24T06:53:58.772Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "e95eebe",
+  "releaseHead": "b3b10ca",
+  "baseCommit": "da2ae14",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-rank-score, no upstream)",
+  "scope": {
+    "firestoreIndexes": [
+      "tributeManagerMonths: monthKey ASC, rankScore DESC, payers DESC (new; the payers-first index stays)"
+    ],
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreRules": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 139,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js"
+    ],
+    "serverCodeChanged": true,
+    "dataMigration": false
+  },
+  "decisions": {
+    "ranking": "manager ranking by this month's ranking points (each wallet up to 500 Pay a day), then by wallets (user decision)",
+    "intent": "wallets tribute to lift their manager, they earn AnjuPay in 1on1, and the main 1on1 content fills up; the top manager is the one whose wallets give the full 500 every day",
+    "earnShortcut": "「1on1で稼ぐ」 first among the unpaid request's earn shortcuts, opening the same entry as 「いますぐ貼り合う」 (user decision)",
+    "dailyEarningReference": "missions 300 Pay + daily play 220 Pay at 50 matches; about 50 matches a day reach 500"
+  },
+  "tests": {
+    "total": 2040,
+    "passed": 2009,
+    "failed": 0,
+    "skipped": 31
+  },
+  "incident": {
+    "summary": "The index and Functions deploys and the first push were first run from the main folder (branch codex/security-hardening-20261023 at f143b39) instead of the worktree.",
+    "effects": [
+      "firestore:indexes from the main folder matched production (no change, nothing deleted).",
+      "tributeAction went back to the pre-photo-icon build 1199347b708616d76ae6ab8cb15fef93317d67cb (icons 13-23 not accepted) until it was redeployed from the worktree.",
+      "git push origin HEAD:main from the main folder was rejected as non-fast-forward, so nothing reached main."
+    ],
+    "recovery": "The user reran each step with a one-line guard (Set-Location into the worktree, then run only if git rev-parse HEAD is b3b10ca…).",
+    "notChecked": "Whether any manager saved a card with icon 13-23 while the old server was live (that save would have stored the letter sigil); reading production data is left to the user."
+  },
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changedSincePreviousRelease": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "224adef0f8ed8340866cd7ed4ef032950c7f0b85",
+        "sourceHash": "fba1f0d1def269b26a8c3cda75222efd34c599df",
+        "state": "ACTIVE",
+        "runtime": "nodejs24"
+      }
+    ]
+  },
+  "rankingIndex": {
+    "checked": true,
+    "indexes": [
+      {
+        "fields": "monthKey:ASCENDING,payers:DESCENDING,rankScore:DESCENDING",
+        "state": "READY"
+      },
+      {
+        "fields": "monthKey:ASCENDING,rankScore:DESCENDING,payers:DESCENDING",
+        "state": "READY"
+      }
+    ],
+    "rankingIndexState": "READY",
+    "ready": true
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-24T06:51:16Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-rank-score-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-rank-score-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-rank-score-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-rank-score-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "cacheKeys": {
+      "tribute.js": "…-ranch-photo-icons-v1-ranch-rank-score-v1",
+      "tribute.css": "…-ranch-photo-icons-v1 (unchanged)"
+    },
+    "servedClientHas": [
+      "data-mode=\"battle\">1on1で稼ぐ",
+      "今月の番付加算（同じ財布から1日500 Payまで）の多い順"
+    ],
+    "landingOnlineButton": true,
+    "consoleErrors": "one 403 without a URL, as in earlier releases (automated browser)",
+    "ranchActionsInProduction": false
+  },
+  "limits": [
+    "Clients loaded before the release (HTML max-age 3600) keep the old ranking text and earn shortcuts until reloaded; the ranking order itself comes from the server.",
+    "No two-player run, iPhone/Android device or Safari check in production."
+  ]
+}
