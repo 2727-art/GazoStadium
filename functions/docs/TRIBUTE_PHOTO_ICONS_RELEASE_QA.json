@@ -1,0 +1,490 @@
+{
+  "checkedAt": "2026-10-24T04:54:08.143Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "4068df4",
+  "releaseHead": "ab07250",
+  "baseCommit": "f143b39",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-photo-icons, no upstream)",
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 139,
+    "newPublicFiles": [
+      "assets/tribute-avatars/avatar-13.webp",
+      "assets/tribute-avatars/avatar-14.webp",
+      "assets/tribute-avatars/avatar-15.webp",
+      "assets/tribute-avatars/avatar-16.webp",
+      "assets/tribute-avatars/avatar-17.webp",
+      "assets/tribute-avatars/avatar-18.webp",
+      "assets/tribute-avatars/avatar-19.webp",
+      "assets/tribute-avatars/avatar-20.webp",
+      "assets/tribute-avatars/avatar-21.webp",
+      "assets/tribute-avatars/avatar-22.webp",
+      "assets/tribute-avatars/avatar-23.webp"
+    ],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "serverCodeChanged": true,
+    "dataMigration": false
+  },
+  "decisions": {
+    "price": "free (user decision)",
+    "icons": {
+      "jirai": [
+        13,
+        14,
+        15,
+        16
+      ],
+      "gal": [
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ]
+    },
+    "excluded": [
+      "Kuromi plush (Sanrio)",
+      "Monster Energy can",
+      "Louis Vuitton monogram bag"
+    ],
+    "fictionalLabel": "not shown; participants treat the ranch as role-play (user decision)",
+    "crop": "face-centered 256x256 WebP from the user's uncompressed sheets; cleavage kept out",
+    "source": "ChatGPT-generated fictional people (user statement)"
+  },
+  "tests": {
+    "total": 2039,
+    "passed": 2008,
+    "failed": 0,
+    "skipped": 31
+  },
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changedSincePreviousRelease": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "1199347b708616d76ae6ab8cb15fef93317d67cb",
+        "sourceHash": "224adef0f8ed8340866cd7ed4ef032950c7f0b85",
+        "state": "ACTIVE",
+        "runtime": "nodejs24"
+      }
+    ]
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-24T04:52:50Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-photo-icons-v1",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-13.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-14.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-15.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-16.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-17.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-18.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-19.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-20.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-21.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-22.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-23.webp",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-photo-icons-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-client.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-13.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-14.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-15.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-16.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-17.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-18.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-19.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-20.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-21.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-22.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-23.webp",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-photo-icons-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-client.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexAndInviteMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-13.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-14.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-15.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-16.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-17.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-18.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-19.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-20.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-21.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-22.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-23.webp",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/firestore.rules",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-photo-icons-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-client.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "cacheKeys": {
+      "tribute.js": "…-ranch-board-fresh-v1-ranch-photo-icons-v1",
+      "tribute.css": "…-ranch-board-fresh-v1-ranch-photo-icons-v1"
+    },
+    "catalog": {
+      "avatarMax": 23,
+      "groups": [
+        "イラスト",
+        "写真・地雷系",
+        "写真・夜ギャル"
+      ],
+      "avatar20": "256x256"
+    },
+    "consoleErrors": 0,
+    "ranchActionsInProduction": false
+  },
+  "limits": [
+    "Clients loaded before the release (HTML max-age 3600) show icons 13-23 as the letter sigil until reloaded.",
+    "No two-player run, iPhone/Android device or Safari check in production."
+  ]
+}
