@@ -415,16 +415,24 @@ test("apply and accept charge the entry fee as a capped tribute with a burned 5%
   assert.deepEqual(received.components.map((component) => [component.kind, component.delta]), [["tribute_gross", 10], ["tribute_fee", -1]]);
 });
 
-test("manager wording is filtered for contact routes and the payer's NG words, and messages are rate limited", async () => {
+test("after a contract only real money and the payer's NG words are refused, and messages are rate limited", async () => {
   const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
   const publicManagerId = await openManager(harness, "manager");
   const contractId = await startContract(harness, "manager", "payer", publicManagerId);
   await rejects(harness.act("manager", "message", { contractId, text: "お前ほんとブスな財布だな" }), /言われたくない言葉/);
-  await rejects(harness.act("manager", "message", { contractId, text: "ディスコードでやろ" }), /外部の連絡先/);
-  await rejects(harness.act("manager", "message", { contractId, text: "明日会おうよ" }), /会う約束/);
   await rejects(harness.act("manager", "message", { contractId, text: "1000円振り込んで" }), /外部の決済|現実のお金/);
-  await rejects(harness.act("manager", "message", { contractId, text: "住所教えろ" }), /個人情報/);
-  await rejects(harness.act("manager", "message", { contractId, text: "晒すぞ" }), /晒し/);
+  await rejects(harness.act("payer", "message", { contractId, text: "PayPayで送ります" }), /外部の決済/);
+  await rejects(harness.act("manager", "request", { contractId, amount: 100, note: "アマギフで払え", clientRequestId: nextRequestId() }), /外部の決済/);
+  // ロールプレイの幅を広げるため、連絡先・会う約束・個人情報・晒しの言葉は、契約後の会話では止めない（ユーザー決定）。
+  for (const [index, text] of ["ディスコードでやろ", "明日会おうよ", "住所教えろ", "晒すぞ", "管理口座に入れなさい"].entries()) {
+    harness.advance(2_000);
+    const sent = await harness.act(index % 2 ? "payer" : "manager", "message", { contractId, text });
+    assert.ok(sent.seq > 0, text);
+  }
+  harness.advance(2_000);
+  const request = await harness.act("manager", "request", { contractId, amount: 100, note: "会いたいなら払え", clientRequestId: nextRequestId() });
+  assert.ok(request.ok);
+  harness.advance(2_000);
   const sent = await harness.act("manager", "message", { contractId, text: "遅い。財布のくせに待たせるな。" });
   assert.ok(sent.seq > 0);
   await rejects(harness.act("manager", "message", { contractId, text: "まだ？" }), /2秒/);
@@ -433,6 +441,11 @@ test("manager wording is filtered for contact routes and the payer's NG words, a
   await harness.act("payer", "message", { contractId, text: "ブスって言わないで" });
   const texts = harness.events(contractId).filter((event) => event.type === "message").map((event) => [event.actor, event.text]);
   assert.deepEqual(texts, [
+    ["manager", "ディスコードでやろ"],
+    ["payer", "明日会おうよ"],
+    ["manager", "住所教えろ"],
+    ["payer", "晒すぞ"],
+    ["manager", "管理口座に入れなさい"],
     ["manager", "遅い。財布のくせに待たせるな。"],
     ["manager", "まだ？"],
     ["payer", "ブスって言わないで"],

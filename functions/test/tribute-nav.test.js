@@ -154,8 +154,8 @@ test("a manager's active row no longer reads 終了 because the payer's limits a
 });
 
 test("cache keys and the design note record the navigation release", () => {
-  for (const name of ["app.js", "tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-nav-v1"`), name);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-nav-v1"/);
+  for (const name of ["app.js", "tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-nav-v1(?:-[a-z0-9-]+)?"`), name);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-nav-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /やること/);
   assert.match(design, /\?open=ranch/);
 });

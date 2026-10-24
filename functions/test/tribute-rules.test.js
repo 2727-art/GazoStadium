@@ -45,6 +45,39 @@ test("forbidden wording blocks contact routes, outside payment, real money, meet
   }
 });
 
+test("after a contract, only real-money wording is refused; the ranch's own 管理口座 passes", () => {
+  for (const [text, reason] of Object.entries({
+    "PayPayで送れ": "external_payment",
+    "振り込んで": "external_payment",
+    "ギフト券で払え": "external_payment",
+    "銀行口座を教えろ": "external_payment",
+    "現金でちょうだい": "external_payment",
+    "500円ちょうだい": "real_money",
+    "５００円": "real_money",
+  })) {
+    assert.equal(rules.contractTextReason(text), reason, text);
+    assert.equal(rules.normalizeMessage(text).reason, reason, text);
+  }
+  for (const text of [
+    "管理口座に入れなさい",
+    "会いたいな",
+    "明日会おうよ",
+    "LINE IDおしえて",
+    "インスタ映えする顔",
+    "@mio_sama",
+    "https://x.com/mio_sama",
+    "住所教えろ",
+    "晒すぞ",
+    "雑魚財布、もっと出せ",
+  ]) {
+    assert.equal(rules.contractTextReason(text), "", text);
+    assert.equal(rules.normalizeMessage(text).text, text, text);
+  }
+  // カード・掲示板・財布名の判定は変えない。
+  assert.equal(rules.forbiddenReason("会いたいな"), "meeting");
+  assert.equal(rules.forbiddenReason("管理口座に入れなさい"), "external_payment");
+});
+
 test("full-width and half-width variants are normalized before filtering", () => {
   assert.equal(rules.forbiddenReason("ＰａｙＰａｙ"), "external_payment");
   assert.equal(rules.forbiddenReason("ﾗｲﾝ交換"), "contact_app");

@@ -9,7 +9,7 @@ export const PREMISES = Object.freeze([
   "会わない前提の遊びです。現実のお金・PayPay・現金化・外部送金はありません。使うのは、アプリ内で稼いだ換金できない AnjuPay だけです。",
   "限度額（1回・1日・契約合計）は自分だけが見られる設定で、管理する側には見えません。解約はいつでもできます。",
   "管理する側の請求は断れません。払うか、解約するかです。払えない請求は、未払いのまま残ります。",
-  "連絡先・SNSのID・外部決済・会う約束・住所や本名は、送ろうとしても送れません。",
+  "管理人カードと掲示板には、連絡先・SNSのID・外部決済・会う約束・住所や本名は書けません。契約後の会話では、外部決済・現金・現実の金額だけが送れません。",
   "辛口の侮蔑表現を含みます。言葉の強さ（甘め・普通・辛口）と「言われたくない言葉」は預ける側が決めます。",
 ]);
 
@@ -276,6 +276,24 @@ export function containsNgWord(text, ngWords) {
 
 export function messageProblem(text, { role = "payer", ngWords = [] } = {}) {
   const reason = forbiddenReason(text);
+  if (reason) return FORBIDDEN_MESSAGES[reason];
+  if (role === "manager" && containsNgWord(text, ngWords)) return FORBIDDEN_MESSAGES.ng_word;
+  return "";
+}
+
+// 契約後の会話と請求の一言。サーバーの contractTextReason と同じく、現実のお金の判定だけを残す（「管理口座」は通す）。
+const CONTRACT_TEXT_REASONS = Object.freeze(["external_payment", "real_money"]);
+
+export function contractTextReason(text) {
+  const normalized = String(text ?? "").normalize("NFKC").replace(/管理口座/gu, "");
+  for (const { reason, pattern } of FORBIDDEN_PATTERNS) {
+    if (CONTRACT_TEXT_REASONS.includes(reason) && pattern.test(normalized)) return reason;
+  }
+  return "";
+}
+
+export function contractTextProblem(text, { role = "payer", ngWords = [] } = {}) {
+  const reason = contractTextReason(text);
   if (reason) return FORBIDDEN_MESSAGES[reason];
   if (role === "manager" && containsNgWord(text, ngWords)) return FORBIDDEN_MESSAGES.ng_word;
   return "";

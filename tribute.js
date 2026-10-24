@@ -61,6 +61,7 @@ import {
   inviteText,
   inviteUrl,
   jstDateKey,
+  contractTextProblem,
   messageProblem,
   nextTodoContract,
   normalizeCaps,
@@ -84,7 +85,7 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -310,7 +311,7 @@ function setChrome(statusLabel = "OMITSUGI RANCH") {
   if (status) status.innerHTML = `<i></i> ${escapeHtml(statusLabel)}`;
   if (privacy) privacy.textContent = "会わない・換金できない・AnjuPayだけ";
   if (footerItems[0]) footerItems[0].textContent = "OMITSUGI RANCH / ANJUPAY ONLY";
-  if (footerItems[1]) footerItems[1].textContent = "現金・外部決済・換金・連絡先の交換はありません";
+  if (footerItems[1]) footerItems[1].textContent = "現金・外部決済・換金はありません";
 }
 
 // ───────────── 画面 ─────────────
@@ -817,13 +818,13 @@ function renderCardEditor() {
     </fieldset>
     <label class="tribute-field"><span>紹介（${LIMITS.intro}文字まで）</span><input name="intro" maxlength="${LIMITS.intro}" value="${escapeHtml(card.intro || "")}" /></label>
     <label class="tribute-field"><span>Xのプロフィール（任意）</span><input name="xProfile" maxlength="80" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://x.com/ユーザー名 または @ユーザー名" value="${cardXHandle(card) ? escapeHtml(`https://x.com/${cardXHandle(card)}`) : ""}" />
-      <small>管理人カードと掲示板に「自己申告・本人未確認」として表示され、開く前に外部サイトである確認が出ます。空にすると外します。スレッドでのSNSのID交換は、これまでどおりできません。</small></label>
+      <small>管理人カードと掲示板に「自己申告・本人未確認」として表示され、開く前に外部サイトである確認が出ます。空にすると外します。紹介文・ペルソナ名には、SNSのIDやリンクを書けません。</small></label>
     <fieldset><legend>中の人の札</legend><div class="tribute-radio-col">${Object.entries(DISCLOSURE_LABELS).map(([key, label]) => `<label><input type="radio" name="disclosure" value="${key}" ${card.disclosure === key ? "checked" : ""} required /><span>${escapeHtml(label)}</span></label>`).join("")}</div>
       <small>ネカマ貢がせは、男性であることを隠さず行うジャンルです。受け手の性別を女性に限る仕組みはありません。</small></fieldset>
     <fieldset><legend>管理の型</legend><div class="tribute-radio-row">${Object.entries(STYLE_LABELS).map(([key, label]) => `<label><input type="radio" name="style" value="${key}" ${(card.style || "harsh") === key ? "checked" : ""} /><span>${escapeHtml(label)}</span></label>`).join("")}</div></fieldset>
     <label class="tribute-field"><span>入場料</span><select name="entryFee">${optionList(ENTRY_FEE_OPTIONS, card.entryFee ?? 0)}</select></label>
     <label class="tribute-check"><input type="checkbox" name="accepting" ${profile.accepting || !profile.card ? "checked" : ""} /><span>受付する（掲示板に出す）</span></label>
-    <p class="tribute-note">連絡先・SNSのID・外部決済・現金・会う約束・住所や本名に関わる言葉は、カードにも会話にも書けません。</p>
+    <p class="tribute-note">連絡先・SNSのID・外部決済・現金・会う約束・住所や本名に関わる言葉は、カードに書けません。契約後の会話で送れないのは、外部決済・現金・現実の金額だけです。</p>
     <p class="tribute-form-error" data-form-error role="alert"></p>
     <div class="tribute-row"><button class="button button-primary" type="submit" data-card-save ${state.busy || decorationsTried(normalizeDecorations(card)).length || vaultDecorationsLocked(card).length ? "disabled" : ""}>保存する</button>
       <button class="button button-ghost" type="button" data-t="nav" data-screen="hub">戻る</button></div>
@@ -1716,7 +1717,7 @@ function renderSheet() {
 // 請求の一言の候補。選んだ名目に合わせて変え、言われたくない言葉を含む候補は出さない。
 function renderNoteChips(purpose, view) {
   const lines = (REQUEST_NOTES[purpose] || REQUEST_NOTES[""])
-    .filter((line) => !messageProblem(line, { role: "manager", ngWords: view.ngWords }));
+    .filter((line) => !contractTextProblem(line, { role: "manager", ngWords: view.ngWords }));
   return lines.map((line) => `<button type="button" data-t="pick-note" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("");
 }
 
@@ -2830,7 +2831,7 @@ async function handleSubmit(form) {
     case "message": {
       const text = String(form.elements.text.value || "");
       if (!text.trim()) return;
-      const problem = messageProblem(text, { role: view.role, ngWords: view.ngWords });
+      const problem = contractTextProblem(text, { role: view.role, ngWords: view.ngWords });
       if (problem) return setFormError(form, problem);
       const result = await mutate("message", contractPayload({ text, template: form.dataset.template === "1" }), { form });
       if (result) {
@@ -2856,7 +2857,7 @@ async function handleSubmit(form) {
       const amount = readAmount(form, LIMITS.requestMax);
       if (amount.error) return setFormError(form, amount.error);
       const note = String(form.elements.note.value || "");
-      const problem = note ? messageProblem(note, { role: "manager", ngWords: view.ngWords }) : "";
+      const problem = note ? contractTextProblem(note, { role: "manager", ngWords: view.ngWords }) : "";
       if (problem) return setFormError(form, problem);
       const purpose = String(new FormData(form).get("purpose") || "");
       const result = await mutate("request", contractPayload({ amount: amount.value, note, purpose }), { form, success: "請求を送りました。" });

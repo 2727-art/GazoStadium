@@ -13,6 +13,7 @@ const {
   FORBIDDEN_MESSAGES,
   cleanLine,
   forbiddenReason,
+  contractTextReason,
   containsNgWord,
   normalizeCaps,
   capsAreLowerOrEqual,
@@ -1688,8 +1689,9 @@ function createTributeService(deps) {
     });
   }
 
+  // 契約後の会話と請求の一言: 現実のお金の判定と、財布の「言われたくない言葉」だけ。
   function checkManagerText(ctx, text) {
-    const reason = forbiddenReason(text);
+    const reason = contractTextReason(text);
     if (reason) fail("invalid-argument", FORBIDDEN_MESSAGES[reason]);
     if (ctx.role === "manager" && containsNgWord(text, ctx.contract.ngWords)) {
       fail("invalid-argument", FORBIDDEN_MESSAGES.ng_word);

@@ -32,8 +32,8 @@ function sourceBlock(source, startText, endText) {
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
   assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1"/);
   assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
@@ -90,7 +90,17 @@ test("client filters and contract views mirror the server", async () => {
     "090-1234-5678", "PayPayで", "ＰａｙＰａｙ", "アマギフ", "現金", "500円", "５００円", "会おうよ", "オフ会", "住所", "晒すぞ",
     "オンラインで", "出会ってくれて", "deadline", "雑魚財布、もっと出せ", "まだ？", "今日の分、100 Pay",
   ];
-  for (const text of corpus) assert.equal(core.forbiddenReason(text), rules.forbiddenReason(text), text);
+  for (const text of [...corpus, "管理口座に入れなさい", "銀行口座", "会いたいな", "住所教えろ"]) {
+    assert.equal(core.forbiddenReason(text), rules.forbiddenReason(text), text);
+    assert.equal(core.contractTextReason(text), rules.contractTextReason(text), text);
+  }
+  assert.equal(core.contractTextProblem("会いたいな", { role: "manager", ngWords: [] }), "");
+  assert.equal(core.contractTextProblem("お前ﾌﾞｽ", { role: "manager", ngWords: ["ブス"] }), core.FORBIDDEN_MESSAGES.ng_word);
+  assert.equal(core.contractTextProblem("PayPayで", { role: "payer" }), core.FORBIDDEN_MESSAGES.external_payment);
+  // 契約後の会話と請求の一言は contractTextProblem、カードは messageProblem で判定する。
+  assert.match(client, /const problem = contractTextProblem\(text, \{ role: view\.role, ngWords: view\.ngWords \}\);/);
+  assert.match(client, /const problem = note \? contractTextProblem\(note, \{ role: "manager", ngWords: view\.ngWords \}\) : "";/);
+  assert.match(client, /const problem = messageProblem\(`\$\{personaName\} \$\{data\.get\("intro"\) \|\| ""\}`\);/);
   assert.deepEqual(core.FORBIDDEN_MESSAGES, rules.FORBIDDEN_MESSAGES);
   assert.deepEqual([...core.PER_TRIBUTE_OPTIONS], [...rules.PER_TRIBUTE_OPTIONS]);
   assert.deepEqual([...core.PER_DAY_OPTIONS], [...rules.PER_DAY_OPTIONS]);
@@ -328,7 +338,7 @@ test("the X profile link is optional, mirrors the server rule, and always asks b
   assert.match(core.X_EXTERNAL_CONFIRM_MESSAGE, /自己申告/);
   assert.match(core.X_EXTERNAL_CONFIRM_MESSAGE, /お貢ぎ牧場の上限・解約・通報の保護の外です/);
   assert.match(client, /<input name="xProfile" maxlength="80"[^>]*placeholder="https:\/\/x\.com\/ユーザー名 または @ユーザー名"/);
-  assert.match(client, /スレッドでのSNSのID交換は、これまでどおりできません。/);
+  assert.match(client, /紹介文・ペルソナ名には、SNSのIDやリンクを書けません。/);
   assert.match(client, /const x = normalizeXProfile\(data\.get\("xProfile"\)\);\s*if \(x\.error\) return setFormError\(form, x\.error\);/);
   const open = sourceBlock(client, 'case "open-x": {', 'case "open-achievements":');
   assert.match(open, /!window\.confirm\(X_EXTERNAL_CONFIRM_MESSAGE\)/);

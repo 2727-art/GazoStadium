@@ -225,6 +225,18 @@ function forbiddenReason(text) {
   return "";
 }
 
+// 契約後の会話と請求の一言は、ロールプレイの幅を広げるため、現実のお金の判定だけを残す（ユーザー決定）。
+// 連絡先・会う約束・個人情報・晒しの判定は、カード・掲示板・財布名にだけかける。牧場の「管理口座」は通す。
+const CONTRACT_TEXT_REASONS = Object.freeze(["external_payment", "real_money"]);
+
+function contractTextReason(text) {
+  const normalized = String(text ?? "").normalize("NFKC").replace(/管理口座/gu, "");
+  for (const { reason, pattern } of FORBIDDEN_PATTERNS) {
+    if (CONTRACT_TEXT_REASONS.includes(reason) && pattern.test(normalized)) return reason;
+  }
+  return "";
+}
+
 const FORBIDDEN_MESSAGES = Object.freeze({
   url: "URLやドメインは送れません。",
   email: "メールアドレスは送れません。",
@@ -515,7 +527,7 @@ function normalizeReward(value, { tone = "normal", ngWords = [] } = {}) {
 function normalizeMessage(value) {
   const text = cleanMultiline(value, LIMITS.message);
   if (!text) return { error: "メッセージを入力してください。" };
-  const reason = forbiddenReason(text);
+  const reason = contractTextReason(text);
   if (reason) return { error: FORBIDDEN_MESSAGES[reason], reason };
   return { text };
 }
@@ -652,6 +664,7 @@ module.exports = {
   cleanMultiline,
   textLength,
   forbiddenReason,
+  contractTextReason,
   normalizeNgWords,
   containsNgWord,
   normalizeCaps,
