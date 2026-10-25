@@ -5,9 +5,9 @@ const path = require("node:path");
 const test = require("node:test");
 
 const root = path.resolve(__dirname, "..", "..");
-const canonicalUrl = "https://gazostadium.anjugames.workers.dev/";
+const canonicalUrl = "https://hariaistadium.com/";
 // 共有画像は内容のSHA-256先頭12桁を名前に含める。差し替えるとURLが変わり、Xなどの取得済み画像が残らない。
-const imagePattern = /^https:\/\/gazostadium\.anjugames\.workers\.dev\/assets\/ogp\/ogp\.([0-9a-f]{12})\.png$/;
+const imagePattern = /^https:\/\/hariaistadium\.com\/assets\/ogp\/ogp\.([0-9a-f]{12})\.png$/;
 const title = "貼り合いスタジアム";
 const description = "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。";
 

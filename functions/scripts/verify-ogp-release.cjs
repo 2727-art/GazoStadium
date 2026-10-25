@@ -8,7 +8,7 @@ const crypto = require("node:crypto");
 const { ORIGINS, sha256LF } = require("./verify-player-safety-release.cjs");
 
 const ROOT = path.resolve(__dirname, "../..");
-const CANONICAL = "https://gazostadium.anjugames.workers.dev/";
+const CANONICAL = "https://hariaistadium.com/";
 const WORKER = new URL(CANONICAL).origin;
 const TIMEOUT_MS = 20_000;
 const MAX_BODY_BYTES = 5_000_000;
@@ -16,7 +16,7 @@ const USER_AGENT = "Twitterbot/1.0";
 const TITLE = "貼り合いスタジアム";
 const DESCRIPTION = "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。";
 // 共有画像は内容のSHA-256先頭12桁を名前に含む。期待するURLは手元の index.html から読み、名前と中身の一致も確かめる。
-const IMAGE_PATTERN = /^https:\/\/gazostadium\.anjugames\.workers\.dev\/(assets\/ogp\/ogp\.([0-9a-f]{12})\.png)$/;
+const IMAGE_PATTERN = /^https:\/\/hariaistadium\.com\/(assets\/ogp\/ogp\.([0-9a-f]{12})\.png)$/;
 const expectedMeta = (imageUrl) => Object.freeze({
   "og:type": "website",
   "og:url": CANONICAL,

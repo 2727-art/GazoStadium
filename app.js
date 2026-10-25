@@ -32,7 +32,7 @@
   const GAME_AUDIO_SAMPLE_RATE = 22_050;
   const GAME_AUDIO_MAX_SOURCE_BYTES = 20 * 1024 * 1024;
   const GAME_AUDIO_MAX_OUTPUT_BYTES = 480 * 1024;
-  const OFFICIAL_GAME_URL = "https://gazostadium.anjugames.workers.dev/";
+  const OFFICIAL_GAME_URL = "https://hariaistadium.com/";
   const FREE_TABLE_INVITE_QUERY_KEY = "freeTableInvite";
   const OVERALL_RATING_CLASSES = Object.freeze([
     { key: "beginner", label: "Beginner", emblem: "◇", min: 100, max: 1024, range: "100–1024" },
@@ -754,7 +754,7 @@
     context.textAlign = "right";
     context.fillStyle = "#aab1c0";
     context.font = "700 21px system-ui, sans-serif";
-    context.fillText("貼り合いスタジアム  gazostadium.anjugames.workers.dev", 1100, 566);
+    context.fillText("貼り合いスタジアム  hariaistadium.com", 1100, 566);
     return canvasToBlob(canvas, "image/png");
   }
 

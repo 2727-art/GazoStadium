@@ -14,6 +14,7 @@ const ORIGINS = Object.freeze([
   "https://gazostadium.web.app",
   "https://gazostadium.firebaseapp.com",
   "https://gazostadium.anjugames.workers.dev",
+  "https://hariaistadium.com",
 ]);
 // Explicit list derived from `git diff --name-only 92d5724 --` for this release.
 // A mismatch with that diff fails before any network request.
