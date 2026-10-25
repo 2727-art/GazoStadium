@@ -3,7 +3,36 @@
   <url>
     <loc>https://gazostadium.anjugames.workers.dev/</loc>
     <lastmod>2026-10-25</lastmod>
-    <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://gazostadium.anjugames.workers.dev/modes/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://gazostadium.anjugames.workers.dev/how-to-play/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://gazostadium.anjugames.workers.dev/strategy/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://gazostadium.anjugames.workers.dev/solo-training/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://gazostadium.anjugames.workers.dev/safety/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://gazostadium.anjugames.workers.dev/faq/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <priority>0.8</priority>
   </url>
 </urlset>
