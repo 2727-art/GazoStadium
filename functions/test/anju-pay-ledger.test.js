@@ -348,7 +348,7 @@ test("business entries cover rewards, spending, both tip wallets, and both marke
 
 test("history API is bounded, sanitized, and pinned to the wallet sequence snapshot", () => {
   const history = between("function anjuPayHistoryRequest", "exports.economyAction");
-  assert.match(server, /action === "get_anju_pay_wallet"\) return await getAnjuPayWallet/);
+  assert.match(server, /action === "get_anju_pay_wallet"\)[\s\S]*?diagnoseAccountOperation\(request, "wallet_history", \(\) => getAnjuPayWallet/);
   assert.match(history, /ANJU_PAY_HISTORY_DEFAULT_LIMIT/);
   assert.match(history, /ANJU_PAY_HISTORY_MAX_LIMIT/);
   assert.match(history, /available: false/);

@@ -585,6 +585,22 @@ Google保護を本番で利用する前に、Firebase ConsoleのAuthentication�
 
 ウォレットではGoogle連携・アカウント切替・引き継ぎの成功と、その後の残高取得の成否を別々に表示します。取得失敗でも成功通知と現在のUIDを保ち、残高の再読み込みで認証操作を繰り返しません。App CheckエラーやCallableの未認証応答には、サイトデータ・Cookieを削除せずページ全体を再読み込みする案内を表示します。Callableの未認証応答だけではApp Check拒否と断定せず、ログイン状態の確認失敗も含む表現を使います。この表示改善でApp Checkの判定基準・強制設定やサーバーの認証・移行処理は変更しません。
 
+旧URL（Workers・Firebaseの3ホスト）では `domain-move.js` が引き継ぎ案内を表示し、同じURLのウォレットと `/account-guide/` へ案内します。新URLへ自動転送はせず、閉じた状態はそのタブのsessionStorageにだけ保存します。`/?account=1` は本人が押した案内リンクからウォレットを開くための入口です。終了日は確定していないため告知に含めません。
+
+アカウント画面の残高・履歴取得とコード発行・無効化・復元には、画面が想定する `expectedUid` を付けます。サーバーは認証済みUIDとの一致を処理前に確認し、不一致なら書き込み前に停止します。旧クライアントの省略は受け付け、認可は引き続き認証済みUIDで行います。保存済みの残高・予約額の不正な値、読み込み中に消えたウォレット、引き継ぎコードと発行元の不整合も停止対象です。正常な旧形式の整数文字列と省略可能な予約額は互換を維持し、既存データの一括修復・移行はしません。App Checkの判定基準・強制設定・コード有効期限・再試行条件は変更しません。
+
+`functions/account-diagnostics.js` は、残高初期化・履歴取得・コード操作ごとに `account_operation_v1` の構造化ログをCloud Loggingへ記録します。問い合わせ番号、処理種類、成否、エラーコード、整合性エラー分類、所要時間、認証方式、許可リストで分類したアクセス元、App Check状態、UIDの片方向ハッシュを含みます。生のUID・表示名・メール・残高・コード・トークン・任意の入力・例外本文はこの追加ログへ保存しません。ハッシュは調査用の仮名識別子で、本人確認の根拠にはしません。診断の出力失敗は処理結果を変えません。保持はCloud Loggingの既存設定に従います。
+
+サーバーまで到達した失敗には画面に「お問い合わせ番号」を表示します。Logs Explorerで次の条件を使い、利用URL・発生時刻と照合してください。App CheckやAuthがCallable本体の前で拒否したリクエストにはこの番号は発行されず、既存のCallable検証ログで確認します（[Firebaseのログ仕様](https://firebase.google.com/docs/functions/writing-and-viewing-logs)、[App Checkの強制](https://firebase.google.com/docs/app-check/cloud-functions)）。
+
+```text
+jsonPayload.event="account_operation_v1"
+jsonPayload.diagnosticId="画面に表示された番号"
+```
+
+回帰確認は通常の全テストに加え、Auth/Firestore/Databaseを `demo-account-integrity` のループバックエミュレーターに限定して `RUN_ACCOUNT_INTEGRITY_EMULATOR=1 node --test functions/test/account-integrity-emulator.test.js` を実行します。これは実際のCallableハンドラーを呼び出してデータ整合性を確認する試験で、App Checkの入口判定は別途本番設定・既存テストで確認します。画面は `functions/scripts/qa-auth-session.cjs` と `functions/scripts/qa-account-migration.cjs` で確認できます。
+
+
 App CheckはreCAPTCHA Enterpriseを使用します。`firebase-client.js`が全モード共通のFirebase AppとApp Checkを初期化し、その後`firebase-services.js`がAuth・Realtime Database・Firestore・Functionsを生成します。サイトキーは`firebase-config.js`の`appCheckRecaptchaEnterpriseSiteKey`へ設定します。初回リリースでは強制せず、3本番ドメインで最新版を配信してから、App Checkの`Verified`比率とFunctionsログを監視します。localhostから本番バックエンドへ接続してデバッグトークンを使う場合だけ`?appCheckDebug=1`を付けます。`?firebaseEmulators=1`と`?marketPreview=1`では本番App Checkを初期化しません。
 
 強制適用は「経過日数」ではなく、実通信の確認結果を基準にします。各ドメインで通常型・戦略型・推し値市場、ショップ、デイリー、期間報酬、ランキングコメントを能動テストし、正規通信が概ね99%以上`Verified`で、`Outdated client`と`Invalid`に正規ユーザーが含まれないことを確認します。サービスごとの推奨順は次のとおりです。

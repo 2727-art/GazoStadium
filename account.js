@@ -572,6 +572,7 @@ async function loadAnjuPayHistory({
     }
     const request = {
       action: "get_anju_pay_wallet",
+      expectedUid: operationUid,
       limit: ANJU_PAY_HISTORY_PAGE_SIZE,
     };
     if (append && requestState.historyNextCursor !== null) {
@@ -933,7 +934,7 @@ async function loadAccountData({ notice = "" } = {}) {
     }
     if (isGoogleLinked(user)) clearTransferCode();
     else restoreTransferCode(user.uid);
-    const response = await economyActionCallable({ action: "initialize" });
+    const response = await economyActionCallable({ action: "initialize", expectedUid: operationUid });
     if (!requestIsCurrent()) return false;
     requestState.balance = requireWalletBalance(response.data?.balance);
     requestState.patron = normalizePatronage(response.data?.patron);
@@ -1230,6 +1231,13 @@ function render({ focus = true } = {}) {
 }
 
 function friendlyError(error, fallback) {
+  const message = accountErrorMessage(error, fallback);
+  const diagnosticId = error?.details?.diagnosticId;
+  return typeof diagnosticId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(diagnosticId)
+    ? `${message} お問い合わせ番号: ${diagnosticId}` : message;
+}
+
+function accountErrorMessage(error, fallback) {
   const code = String(error?.code || "");
   if (code.startsWith("appCheck/")) return "ブラウザの安全性確認が通らず、処理を続けられませんでした。ページ全体を再読み込みしてお試しください。";
   // Callable 401 does not identify which token was rejected. Never claim that
@@ -1579,7 +1587,7 @@ async function createTransfer() {
       state.transferCode = "7KMP-9RDX-W4HZ-3QCV";
       state.transferExpiresAt = Date.now() + (10 * 60 * 1000);
     } else {
-      const response = await accountTransferCallable({ action: "create" });
+      const response = await accountTransferCallable({ action: "create", expectedUid: operationUid });
       requireOperationUid(operationUid);
       state.transferCode = String(response.data?.code || "");
       state.transferExpiresAt = Number(response.data?.expiresAt || 0);
@@ -1611,7 +1619,7 @@ async function cancelTransfer() {
   render();
   try {
     if (!useAccountPreview) {
-      await accountTransferCallable({ action: "cancel" });
+      await accountTransferCallable({ action: "cancel", expectedUid: operationUid });
       requireOperationUid(operationUid);
     }
     clearTransferCode();
@@ -1674,7 +1682,7 @@ async function redeemTransfer(code) {
       state.notice = "引き継ぎコードで発行元データを復元したプレビュー状態です。";
       return;
     }
-    const response = await accountTransferCallable({ action: "redeem", code });
+    const response = await accountTransferCallable({ action: "redeem", code, expectedUid: operationUid });
     requireOperationUid(operationUid);
     const token = String(response.data?.token || "");
     if (!token) throw new Error("引き継ぎ用の認証情報を受け取れませんでした。");
@@ -1901,11 +1909,17 @@ window.dispatchEvent(new Event("hariai-account-ready"));
 
 // A deliberate recovery step reloads first so no game retains the old UID.
 function openRequestedAccountRecovery() {
+  const url = new URL(location.href);
+  let requested = url.searchParams.get("account") === "1";
+  if (requested) {
+    url.searchParams.delete("account");
+    history.replaceState(history.state, "", url.href);
+  }
   try {
-    if (sessionStorage.getItem("hariai-open-account-recovery-v1") !== "1") return;
+    requested ||= sessionStorage.getItem("hariai-open-account-recovery-v1") === "1";
     sessionStorage.removeItem("hariai-open-account-recovery-v1");
-  } catch { return; }
-  start();
+  } catch { /* Explicit wallet links work even when sessionStorage is unavailable. */ }
+  if (requested) start();
 }
 if (document.readyState === "complete") openRequestedAccountRecovery();
 else window.addEventListener("load", openRequestedAccountRecovery, { once: true });

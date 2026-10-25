@@ -37,6 +37,8 @@ const server = http.createServer(async (req, res) => {
     for await (const chunk of req) chunks.push(chunk);
     const data = JSON.parse(Buffer.concat(chunks).toString()).data || {};
     assert.ok(req.headers.authorization?.startsWith("Bearer "), "fixture RPC requires a real emulator ID token");
+    const claims = JSON.parse(Buffer.from(req.headers.authorization.split(".")[1], "base64url"));
+    assert.equal(data.expectedUid, claims.user_id || claims.sub, "wallet/transfer requests must match their real authenticated UID");
     res.setHeader("Content-Type", "application/json");
     const transfer = url.pathname.endsWith("/accountTransfer");
     if ((transfer && fixture.rejectTransfer) || (!transfer && fixture.rejectWallet)) {

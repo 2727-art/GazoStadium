@@ -1,6 +1,8 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const { assertWalletIntegrity, assertLegacyBalance, integrityError, createAccountDiagnostics } = require("./account-diagnostics");
+const diagnoseAccountOperation = createAccountDiagnostics();
 const { createEconomyInitializeRateLimiter } = require("./economy-rate-limit");
 const { createPlayerSafetyService } = require("./player-safety");
 const { createPlayerSafetyContextResolver } = require("./player-safety-context");
@@ -1883,6 +1885,7 @@ async function ensureWallet(uid, legacyEconomy = null) {
     ]);
     const now = Date.now();
     if (snapshot.exists) {
+      assertWalletIntegrity(snapshot.data(), MAX_POINTS);
       balance = safeBalance(snapshot.get("balance"));
       const walletState = walletData(snapshot);
       const activated = stageAnjuPayOpening(
@@ -1895,6 +1898,10 @@ async function ensureWallet(uid, legacyEconomy = null) {
       persistAnjuPayOpening(transaction, ref, walletState, activated, now);
       return;
     }
+    if (existing.exists) {
+      throw integrityError("wallet-disappeared", "残高情報が読み込み中に変更されました。データを初期化せず停止しました。再読み込みしてください。");
+    }
+    assertLegacyBalance(legacy, MAX_POINTS);
     balance = safeBalance(legacy.points);
     const walletState = {
       balance,
@@ -6400,6 +6407,7 @@ async function getAnjuPayWallet(uid, data) {
     wallet.get(),
     anjuPayLedgerConfigRef().get(),
   ]);
+  assertWalletIntegrity(walletSnapshot.data(), MAX_POINTS);
   const availableBalance = safeBalance(walletSnapshot.get("balance"));
   if (!anjuPayLedgerEnabled(ledgerConfigSnapshot)) {
     return {
@@ -11265,10 +11273,14 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
   const action = cleanText(request.data?.action, 32);
   try {
     if (action === "initialize") {
-      await consumeEconomyInitializeRate(uid);
-      return await initializeEconomy(uid);
+      return await diagnoseAccountOperation(request, "wallet_initialize", async () => {
+        await consumeEconomyInitializeRate(uid);
+        return initializeEconomy(uid);
+      });
     }
-    if (action === "get_anju_pay_wallet") return await getAnjuPayWallet(uid, request.data);
+    if (action === "get_anju_pay_wallet") {
+      return await diagnoseAccountOperation(request, "wallet_history", () => getAnjuPayWallet(uid, request.data));
+    }
     if (action === "claim_daily") return await claimDaily(uid, cleanText(request.data?.missionId, 40));
     if (action === "claim_daily_play") return await claimDailyPlayRewards(uid);
     if (action === "reconcile_solo_profile") {
@@ -11939,6 +11951,8 @@ async function redeemAccountTransferCode(request, rawCode) {
   let sourceUid = "";
   let failure = "";
   await firestore.runTransaction(async (transaction) => {
+    sourceUid = "";
+    failure = "";
     const [
       attemptSnapshot,
       codeSnapshot,
@@ -12087,10 +12101,16 @@ async function redeemAccountTransferCode(request, rawCode) {
       return;
     }
 
+    if (decision.sourceUid !== preliminaryDecision.sourceUid) {
+      throw integrityError("transfer-source-changed", "引き継ぎ情報が変更されました。発行元でコードを確認してください。");
+    }
     sourceUid = decision.sourceUid;
     const sourceRef = transferSourceRef(sourceUid);
     const sourceSnapshot = await transaction.get(sourceRef);
     if (decision.outcome === "redeem") {
+      if (sourceSnapshot.get("activeCodeHash") !== codeHash) {
+        throw integrityError("transfer-source-mismatch", "発行元の引き継ぎ情報を確認できません。コードを再発行してください。");
+      }
       transaction.update(codeRef, {
         usedAt: now,
         usedByUid: targetUid,
@@ -12158,16 +12178,12 @@ async function cancelAccountTransferCode(uid) {
 exports.accountTransfer = onCall(callableOptions("accountTransfer"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
-  try {
+  return diagnoseAccountOperation(request, `transfer_${action}`, async () => {
     if (action === "create") return await createAccountTransferCode(uid);
     if (action === "redeem") return await redeemAccountTransferCode(request, request.data?.code);
     if (action === "cancel") return await cancelAccountTransferCode(uid);
     throw new HttpsError("invalid-argument", "未対応の引き継ぎ操作です。");
-  } catch (error) {
-    if (error instanceof HttpsError) throw error;
-    console.error("accountTransfer failed", { uid, action, error });
-    throw new HttpsError("internal", "アカウントの引き継ぎ処理を完了できませんでした。");
-  }
+  });
 });
 
 function marketQueueRef(uid) {

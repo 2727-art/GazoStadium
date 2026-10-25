@@ -32,7 +32,7 @@ function harness() {
     timestampMillis: (value) => Number(value) || 0, normalizeHistoryEntry: (value) => value,
     friendlyError: (error) => error.message,
   });
-  vm.runInContext(["createState", "resetHistoryState", "requireWalletBalance", "walletBalanceIsKnown", "loadAccountData", "reloadAccountData", "applyHistoryResponse", "upgradePatron", "isAccountAccessError", "renderAccountAccessHelp", "friendlyError", "refreshAfterAccountSignIn"].map(fn).join("\n"), context);
+  vm.runInContext(["createState", "resetHistoryState", "requireWalletBalance", "walletBalanceIsKnown", "loadAccountData", "reloadAccountData", "applyHistoryResponse", "upgradePatron", "isAccountAccessError", "renderAccountAccessHelp", "friendlyError", "accountErrorMessage", "refreshAfterAccountSignIn"].map(fn).join("\n"), context);
   context.state = context.createState();
   return { context, calls };
 }
@@ -247,4 +247,17 @@ test("a late post-sign-in error cannot modify a different current account", asyn
   await result;
   assert.equal(c.state.balance, 123);
   assert.equal(c.state.error, "");
+});
+
+test("wallet sends the UID whose balance it is requesting", async () => {
+  const { context: c, calls } = harness();
+  await c.loadAccountData();
+  assert.equal(calls.find(call => call.action === "initialize").expectedUid, c.auth.currentUser.uid);
+});
+
+test("server diagnostic numbers can be shared without displaying arbitrary details", () => {
+  const { context: c } = harness();
+  const diagnosticId = "01234567-89ab-4cde-8fab-0123456789ab";
+  assert.match(c.friendlyError({ code: "functions/unavailable", details: { diagnosticId } }), /お問い合わせ番号: 01234567/);
+  assert.doesNotMatch(c.friendlyError({ code: "functions/unavailable", details: { diagnosticId: "private-token" } }), /private-token|お問い合わせ番号/);
 });
