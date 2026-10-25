@@ -28,6 +28,7 @@ function harness() {
     applyPatronEconomyResponse() {}, loadAnjuPayHistory: async () => true,
     render() { calls.push({ render: true }); }, isGoogleLinked: () => false,
     ensureUser: async () => context.auth.currentUser,
+    getPreviousAccount: async () => null, restoreSwitchNotice() {},
     economyActionCallable: async (request) => { calls.push(request); return { data: { balance: 125 } }; },
     timestampMillis: (value) => Number(value) || 0, normalizeHistoryEntry: (value) => value,
     friendlyError: (error) => error.message,
@@ -162,8 +163,14 @@ function signInHarness(kind) {
     accountKind: () => c.state.user?.isAnonymous ? "guest" : "protected",
     requireCurrentAccount: () => c.auth.currentUser,
     requireOperationUid: () => {}, formatAnjuPay: String,
+    maskedEmail: () => "", confirmAccountSwitch: () => c.window.confirm(),
     persistTransferCode() {},
     runHariaiAccountTransition: (operation) => operation(),
+    runSafeAccountSwitch: (_uid, operation) => operation(),
+    reloadAfterAccountSwitch(user, notice) {
+      c.state.user = user;
+      c.reloadPending = c.refreshAfterAccountSignIn(user, notice);
+    },
     linkWithPopup: async () => { counts.link++; c.auth.currentUser = target; return { user: target }; },
     signInWithCredential: async () => { counts.credential++; c.auth.currentUser = target; return { user: target }; },
     signInWithCustomToken: async () => { counts.custom++; c.auth.currentUser = target; return { user: target }; },
@@ -171,7 +178,10 @@ function signInHarness(kind) {
   });
   vm.runInContext(["protectWithGoogle", "restoreWithGoogle", "useExistingGoogleData", "redeemTransfer", "createTransfer"].map(fn).join("\n"), c);
   c.state.pendingGoogleCredential = {};
-  const invoke = () => kind === "protect" ? c.protectWithGoogle() : kind === "restore-new" ? c.restoreWithGoogle() : kind === "existing-google" ? c.useExistingGoogleData() : c.redeemTransfer("valid-code");
+  const invoke = async () => {
+    await (kind === "protect" ? c.protectWithGoogle() : kind === "restore-new" ? c.restoreWithGoogle() : kind === "existing-google" ? c.useExistingGoogleData() : c.redeemTransfer("valid-code"));
+    await c.reloadPending;
+  };
   return { ...h, target, counts, invoke };
 }
 
@@ -211,6 +221,28 @@ test("Google cancellation does not announce success or alter the guest", async (
   assert.equal(c.state.authNotice, "");
   assert.match(c.state.error, /キャンセル/);
   assert.equal(c.state.accessIssue, false);
+});
+
+for (const kind of ["existing-google", "transfer"]) {
+  test(`${kind}: declining the confirmation performs no authentication or code redemption`, async () => {
+    const { context: c, counts, invoke } = signInHarness(kind);
+    c.window.confirm = () => false;
+    await invoke();
+    assert.deepEqual(counts, { link: 0, credential: 0, custom: 0, transfer: 0 });
+    assert.equal(c.auth.currentUser.uid, "old");
+  });
+}
+
+test("switch confirmation labels an unread balance as unknown and explains preservation", () => {
+  const { context: c } = signInHarness("transfer");
+  let message;
+  c.window.confirm = text => { message = text; return false; };
+  vm.runInContext(fn("confirmAccountSwitch"), c);
+  assert.equal(c.confirmAccountSwitch("旧URL"), false);
+  assert.match(message, /未確認/);
+  assert.match(message, /合算・削除しません/);
+  assert.match(message, /Google連携も変更しません/);
+  assert.match(message, /直前.*1件/);
 });
 
 for (const action of ["create", "redeem"]) {

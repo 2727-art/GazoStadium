@@ -75,7 +75,12 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/qa-auth-facade.js") {
     res.setHeader("Content-Type", "text/javascript");
-    res.end(`export * from '${sdk}'; import {GoogleAuthProvider,linkWithCredential} from '${sdk}';
+    res.end(`export * from '${sdk}'; import {GoogleAuthProvider,linkWithCredential,signInWithCredential} from '${sdk}';
+      export function signInWithPopup(auth){
+        if(window.qa.cancelGoogle) return Promise.reject(Object.assign(new Error('cancelled'),{code:'auth/popup-closed-by-user'}));
+        const token=JSON.stringify({sub:window.qa.googleSubject,email:window.qa.googleSubject+'@example.test',email_verified:true});
+        return signInWithCredential(auth,GoogleAuthProvider.credential(token));
+      }
       export function linkWithPopup(user){
         if(window.qa.cancelGoogle) return Promise.reject(Object.assign(new Error('cancelled'),{code:'auth/popup-closed-by-user'}));
         const token=JSON.stringify({sub:window.qa.googleSubject,email:window.qa.googleSubject+'@example.test',email_verified:true});
@@ -99,7 +104,7 @@ const server = http.createServer(async (req, res) => {
     body = body.replace('127.0.0.1:9099', authHost)
       .replace('"127.0.0.1", 5001', `"127.0.0.1", ${port}`);
   }
-  if (url.pathname === "/account.js") body = body.replace(sdk, "/qa-auth-facade.js");
+  if (["/account.js", "/account-switch.js"].includes(url.pathname)) body = body.replace(sdk, "/qa-auth-facade.js");
   res.setHeader("Content-Type", file.endsWith(".css") ? "text/css" : "text/javascript");
   res.end(body);
 });
@@ -253,6 +258,78 @@ async function main() {
     assert.equal(await uid(transferred), fixture.sourceUid);
     assert.equal(await transferred.evaluate(() => JSON.parse(localStorage.getItem("hariai-auth-session-v1")).uid), fixture.sourceUid);
     recordCheck("custom-token handoff restores the original UID and survives a full page reload");
+
+    const acceptDialogs = target => { target.removeAllListeners("dialog"); target.on("dialog", dialog => dialog.accept()); };
+    const rejectNextConfirmation = target => {
+      target.removeAllListeners("dialog");
+      target.once("dialog", dialog => {
+        assert.match(dialog.message(), /合算・削除しません/);
+        assert.match(dialog.message(), /Google連携も変更しません/);
+        return dialog.dismiss();
+      });
+    };
+    const waitForSwitch = async (target, expectedUid, action) => {
+      await Promise.all([target.waitForNavigation(), action()]);
+      await target.waitForFunction(() => window.qa?.ready);
+      await target.waitForSelector("#accountReturnPrevious");
+      assert.equal(await uid(target), expectedUid);
+    };
+
+    await page.waitForSelector("#accountReturnPrevious");
+    rejectNextConfirmation(page);
+    await page.click("#accountReturnPrevious");
+    assert.equal(await uid(page), googleUid);
+    acceptDialogs(page);
+    await waitForSwitch(page, guestUid, () => page.click("#accountReturnPrevious"));
+    assert.equal(await page.evaluate(() => window.qa.auth.currentUser.isAnonymous), true);
+    recordCheck("return confirmation can be canceled; the played anonymous session is recoverable after reload");
+
+    await linked.evaluate(() => { window.qa.googleSubject='qa-existing-google'; window.qa.cancelGoogle=true; });
+    await linked.click("#accountRestoreGoogle");
+    await linked.waitForFunction(() => document.querySelector(".account-error")?.textContent.includes("キャンセル"));
+    assert.equal(await uid(linked), linkUid);
+    await linked.evaluate(() => { window.qa.cancelGoogle=false; });
+    rejectNextConfirmation(linked);
+    await linked.click("#accountRestoreGoogle");
+    await linked.waitForFunction(() => !document.querySelector("#accountRestoreGoogle").disabled);
+    assert.equal(await uid(linked), linkUid);
+    recordCheck("Google-linked account survives OAuth cancellation and cancellation after selecting another Google identity");
+    acceptDialogs(linked);
+    await waitForSwitch(linked, googleUid, () => linked.click("#accountRestoreGoogle"));
+    assert.match(await linked.locator("[data-account-auth-notice]").innerText(), /切り替えが完了/);
+    await waitForSwitch(linked, linkUid, () => linked.click("#accountReturnPrevious"));
+    assert.equal(await linked.evaluate(() => window.qa.auth.currentUser.providerData[0].providerId), "google.com");
+    recordCheck("Google-to-Google switching and return preserve both Google identities across full reloads");
+
+    const beforeBlockedSwitch = fixture.calls;
+    await linked.evaluate(() => {
+      const original = Storage.prototype.setItem;
+      window.qa.restoreStorage = () => { Storage.prototype.setItem = original; };
+      Storage.prototype.setItem = function(key, value) {
+        if (key === "hariai-account-return-storage-check-v1") throw new Error("storage blocked for QA");
+        return original.call(this, key, value);
+      };
+    });
+    await linked.fill("#transferCodeInput", "7KMP-9RDX-W4HZ-3QCV");
+    await linked.locator("#redeemTransferForm button").click();
+    await linked.waitForFunction(() => document.querySelector(".account-error")?.textContent.includes("切り替えを中止"));
+    assert.equal(await uid(linked), linkUid);
+    assert.equal(fixture.calls, beforeBlockedSwitch);
+    await linked.evaluate(() => window.qa.restoreStorage());
+    recordCheck("unavailable backup storage aborts before any code is redeemed or identity changes");
+
+    rejectNextConfirmation(linked);
+    await linked.fill("#transferCodeInput", "7KMP-9RDX-W4HZ-3QCV");
+    await linked.locator("#redeemTransferForm button").click();
+    assert.equal(await uid(linked), linkUid);
+    assert.equal(fixture.calls, beforeBlockedSwitch);
+    acceptDialogs(linked);
+    await waitForSwitch(linked, fixture.sourceUid, () => linked.locator("#redeemTransferForm button").click());
+    assert.equal(await linked.evaluate(() => window.qa.auth.currentUser.providerData.length), 0);
+    await linked.screenshot({ path: path.join(output, "switch-with-return-mobile.png"), animations: "disabled", fullPage: true });
+    await waitForSwitch(linked, linkUid, () => linked.click("#accountReturnPrevious"));
+    assert.equal(await linked.evaluate(() => window.qa.auth.currentUser.providerData[0].providerId), "google.com");
+    recordCheck("a played Google-linked account can switch by code and return with its original Google link intact");
     assert.deepEqual(errors, []);
     const report = { ok: true, project: "demo-gazostadium", checks, anonymousRequests, rpcFixtureCalls: fixture.calls, errors };
     fs.writeFileSync(path.join(output, "result.json"), JSON.stringify(report, null, 2));

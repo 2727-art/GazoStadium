@@ -1,4 +1,5 @@
 import { ensureHariaiUser, assertHariaiUser, runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1";
+import { getPreviousAccount, selectGoogleAccount, useSelectedAccount, runSafeAccountSwitch } from "./account-switch.js?v=account-switch-v1";
 import {
   GoogleAuthProvider,
   linkWithPopup,
@@ -161,6 +162,7 @@ function createState() {
     historyError: "",
     historyRequestId: 0,
     pendingGoogleCredential: null,
+    previousAccount: null,
     transferCode: "",
     transferExpiresAt: 0,
     notice: "",
@@ -926,6 +928,13 @@ async function loadAccountData({ notice = "" } = {}) {
     if (!requestIsCurrent()) return false;
     requestState.user = user;
     operationUid = user.uid;
+    restoreSwitchNotice(user);
+    // A slow return-session lookup must not delay the current wallet.
+    getPreviousAccount().then(previous => {
+      if (!requestIsCurrent()) return;
+      requestState.previousAccount = previous;
+      if (!requestState.loading) render();
+    }).catch(() => {});
     if (previousUid && previousUid !== user.uid) {
       requestState.balance = null;
       requestState.patron = normalizePatronage(null);
@@ -1063,7 +1072,8 @@ function renderAccountStatus() {
       </div>`
     : "";
   const actions = kind === "protected"
-    ? `<div class="account-protected-note"><span>PRIVATE</span><p>Googleの名前・メールアドレスはゲーム内表示名やランキングへ使用しません。</p></div>`
+    ? `<div class="account-protected-note"><span>PRIVATE</span><p>Googleの名前・メールアドレスはゲーム内表示名やランキングへ使用しません。</p></div>
+       <button class="button button-ghost" type="button" id="accountRestoreGoogle" ${state.busyAction ? "disabled" : ""}>別のGoogleデータへ切り替える</button>`
     : `<div class="account-auth-actions">
         <button class="button button-primary" type="button" id="accountProtectGoogle" ${state.busyAction ? "disabled" : ""}>${state.busyAction === "protect" ? "Googleへ接続中…" : "Googleでこのデータを保護"}</button>
         <button class="button button-ghost" type="button" id="accountRestoreGoogle" ${state.busyAction ? "disabled" : ""}>${state.busyAction === "restore" ? "復元中…" : "別端末のGoogleデータを復元"}</button>
@@ -1071,7 +1081,8 @@ function renderAccountStatus() {
   return `<section class="account-protection-card ${status.className}">
     <div class="account-status-icon" aria-hidden="true">${escapeHtml(status.icon)}</div>
     <div class="account-status-copy"><span>${escapeHtml(status.eyebrow)}</span><h2>${escapeHtml(status.title)}</h2><p>${escapeHtml(status.copy)}</p>${actions}
-      <p class="account-device-local-note">別端末へ戻るのはAnjuPay残高・購入品・実績・戦績です。プロフィール画像、対戦画像・音声、端末設定はこの端末だけに残ります。</p>
+      <p class="account-device-local-note">切り替えでは残高・購入品・実績・戦績を合算・削除しません。Google連携もそれぞれのデータに残ります。プロフィール画像、対戦画像・音声、端末設定はこの端末だけに残ります。</p>
+      ${state.previousAccount ? `<aside class="account-notice"><p>このブラウザに、直前のログイン情報を保存しています。</p><button class="button button-ghost" type="button" id="accountReturnPrevious" ${state.busyAction ? "disabled" : ""}>切り替え前のデータへ戻る</button><p>保存はこのURL・ブラウザの直前1件です。次の切り替えで入れ替わります。サイトデータの削除や認証の失効後は戻れないため、大切なデータはGoogleで保護してください。</p></aside>` : ""}
     </div>
     ${pendingChoice}
   </section>`;
@@ -1107,7 +1118,6 @@ function renderTransfer() {
         <div><time id="transferCodeCountdown">${transferCountdownText()}</time><button class="button button-ghost button-small" type="button" id="copyTransferCode">コードをコピー</button><button class="button button-danger button-small" type="button" id="cancelTransferCode">コードを無効化</button></div>
       </div>`
     : "";
-  const canRedeem = accountKind() === "guest";
   const canCreate = !isGoogleLinked();
   const sourcePanel = canCreate
     ? `<p>16文字・1回限り・10分間有効です。新しく発行すると前のコードは無効になります。</p>
@@ -1115,12 +1125,12 @@ function renderTransfer() {
     : `<div class="transfer-protected-note">このデータはGoogleで保護済みです。別端末ではGoogleから復元できるため、コードは発行しません。</div>`;
   return `<section class="account-transfer-section">
     <div class="account-section-head"><div><span class="eyebrow">OPTIONAL DEVICE HANDOFF</span><h2>使い捨て引き継ぎコード</h2>
-      <p>Googleを使えない場合に、同じ匿名UIDを別端末で開くための補助手段です。</p></div></div>
+      <p>Googleを使わず、コード発行元のデータへ切り替える方法です。新URLでプレイ済み・Google連携済みでも入力できます。</p></div></div>
     <div class="account-transfer-grid">
       <article><span>OLD DEVICE</span><h3>このデータからコードを発行</h3>${sourcePanel}</article>
-      <article><span>NEW DEVICE</span><h3>コードで同じデータを開く</h3><p>現在この端末で使っているゲストデータとは合算されず、発行元のデータへ切り替わります。</p>
-        ${canRedeem ? `<form id="redeemTransferForm"><label for="transferCodeInput">引き継ぎコード</label><input id="transferCodeInput" maxlength="19" inputmode="text" autocomplete="one-time-code" placeholder="XXXX-XXXX-XXXX-XXXX" required />
-          <button class="button button-primary" ${state.busyAction ? "disabled" : ""}>${state.busyAction === "redeem-code" ? "引き継ぎ中…" : "コードで復元"}</button></form>` : `<div class="transfer-protected-note">${accountKind() === "protected" ? "Google保護済みのデータを使用中です。別端末ではGoogleから復元してください。" : "別のコードを復元する場合は、対戦や購入をしていない新しいゲスト端末で入力してください。"}</div>`}
+      <article><span>NEW DEVICE</span><h3>コードで同じデータを開く</h3><p>現在この端末で使っているデータとは合算せず、確認後に発行元のデータへ切り替えます。</p>
+        <form id="redeemTransferForm"><label for="transferCodeInput">引き継ぎコード</label><input id="transferCodeInput" maxlength="19" inputmode="text" autocomplete="one-time-code" placeholder="XXXX-XXXX-XXXX-XXXX" required />
+          <button class="button button-primary" ${state.busyAction ? "disabled" : ""}>${state.busyAction === "redeem-code" ? "引き継ぎ中…" : "コードで復元"}</button></form>
       </article>
     </div>
     <p class="account-fine-print">コードを知った人はゲームデータへアクセスできます。SNSやチャットへ投稿しないでください。復元後も元端末は自動ログアウトされません。</p>
@@ -1293,8 +1303,88 @@ async function protectWithGoogle() {
   }
 }
 
+function confirmAccountSwitch(destination) {
+  const balance = walletBalanceIsKnown() ? formatAnjuPay(state.balance) : "未確認";
+  const current = maskedEmail() || "Google未連携のデータ";
+  return window.confirm(`現在：${current}（AnjuPay残高 ${balance}）\n切り替え先：${destination}\n\n残高・購入品・実績・戦績は合算・削除しません。現在のGoogle連携も変更しません。\n直前のログイン情報をこのURL・ブラウザに1件保存します。サイトデータの削除や認証の失効後は戻れない場合があります。\n\n切り替えますか？`);
+}
+
+function reloadAfterAccountSwitch(user, notice) {
+  // Discard all game modules' cached state before any further play.
+  try {
+    sessionStorage.setItem("hariai-account-switch-notice-v1", JSON.stringify({ uid: user.uid, notice, at: Date.now() }));
+  } catch { /* The persisted Firebase session is already authoritative. */ }
+  const destination = new URL(location.href);
+  destination.pathname = "/";
+  destination.hash = "";
+  destination.searchParams.set("account", "1");
+  window.location.replace(destination.href);
+}
+
+function restoreSwitchNotice(user) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("hariai-account-switch-notice-v1") || "null");
+    sessionStorage.removeItem("hariai-account-switch-notice-v1");
+    if (saved?.uid === user.uid && Date.now() - saved.at < 60_000 && typeof saved.notice === "string") {
+      state.authNotice = saved.notice;
+      state.authNoticeUid = user.uid;
+    }
+  } catch { /* Optional success message only; never changes identity. */ }
+}
+
+async function switchGoogleAccount() {
+  if (state.busyAction) return;
+  let operationUid;
+  try { operationUid = requireCurrentAccount().uid; } catch (error) {
+    state.error = friendlyError(error, "ログイン状態を確認できませんでした。"); render(); return;
+  }
+  state.busyAction = "restore";
+  state.error = "";
+  state.accessIssue = false;
+  render();
+  try {
+    const selected = await selectGoogleAccount(googleProvider);
+    requireOperationUid(operationUid);
+    if (selected.user.uid === operationUid) {
+      state.notice = "選択したGoogleアカウントのデータをすでに使用しています。";
+      return;
+    }
+    if (!confirmAccountSwitch(`${maskedEmail(selected.user) || "選択したGoogleアカウント"}のデータ`)) return;
+    const result = await runSafeAccountSwitch(operationUid, () => useSelectedAccount(selected.user));
+    reloadAfterAccountSwitch(result.user, "Googleで保護済みのアカウントへの切り替えが完了しました。");
+  } catch (error) {
+    state.accessIssue = isAccountAccessError(error);
+    state.error = friendlyError(error, "Googleデータへ切り替えられませんでした。");
+  } finally { state.busyAction = ""; render(); }
+}
+
+async function returnPreviousAccount() {
+  if (state.busyAction || !state.previousAccount) return;
+  const previous = state.previousAccount;
+  let operationUid;
+  try { operationUid = requireCurrentAccount().uid; } catch (error) {
+    state.error = friendlyError(error, "ログイン状態を確認できませんでした。"); render(); return;
+  }
+  if (!confirmAccountSwitch(`${maskedEmail(previous) || "このブラウザに保存した直前のアカウント"}のデータ`)) return;
+  state.busyAction = "restore";
+  state.error = "";
+  state.accessIssue = false;
+  render();
+  try {
+    await previous.getIdToken(true);
+    const saved = await getPreviousAccount();
+    if (saved?.uid !== previous.uid) throw new Error("保存されたログイン情報が変わりました。ページを再読み込みしてください。");
+    const result = await runSafeAccountSwitch(operationUid, () => useSelectedAccount(previous));
+    reloadAfterAccountSwitch(result.user, "切り替え前のデータへの復元が完了しました。");
+  } catch (error) {
+    state.accessIssue = isAccountAccessError(error);
+    state.error = friendlyError(error, "切り替え前のデータを開けませんでした。");
+  } finally { state.busyAction = ""; render(); }
+}
+
 async function restoreWithGoogle() {
-  if (state.busyAction || isGoogleLinked()) return;
+  if (state.busyAction) return;
+  if (isGoogleLinked() && !useAccountPreview) return switchGoogleAccount();
   try {
     requireCurrentAccount();
   } catch (error) {
@@ -1302,7 +1392,7 @@ async function restoreWithGoogle() {
     render();
     return;
   }
-  if (!window.confirm(`この端末の現在のデータ（AnjuPay残高 ${formatAnjuPay(state.balance)}）から、選択したGoogleアカウントのデータへ切り替えます。AnjuPay残高は合算されません。続けますか？`)) return;
+  if (!confirmAccountSwitch("旧URLなどで保護したGoogleアカウントのデータ（未連携のGoogleを選ぶと現在のデータを保護します）")) return;
   state.busyAction = "restore";
   state.error = "";
   state.authNotice = "";
@@ -1354,14 +1444,18 @@ async function restoreWithGoogle() {
 
 async function useExistingGoogleData() {
   if (!state.pendingGoogleCredential || state.busyAction) return;
-  if (!window.confirm("現在のゲストデータは合算せず、Google側の既存データへ切り替えます。続けますか？")) return;
+  let operationUid;
+  try { operationUid = requireCurrentAccount().uid; } catch (error) {
+    state.error = friendlyError(error, "ログイン状態を確認できませんでした。"); render(); return;
+  }
+  if (!confirmAccountSwitch("選択したGoogleアカウントの既存データ")) return;
   state.busyAction = "restore";
   state.error = "";
   state.authNotice = "";
   state.accessIssue = false;
   render();
   try {
-    const result = await runHariaiAccountTransition(() => signInWithCredential(auth, state.pendingGoogleCredential));
+    const result = await runSafeAccountSwitch(operationUid, () => signInWithCredential(auth, state.pendingGoogleCredential));
     state.pendingGoogleCredential = null;
     state.user = result.user;
     state.balance = null;
@@ -1369,7 +1463,7 @@ async function useExistingGoogleData() {
     resetPatronEconomyState();
     resetHistoryState();
     clearTransferCode();
-    await refreshAfterAccountSignIn(result.user, "Googleで保護済みのアカウントへの切り替えが完了しました。");
+    reloadAfterAccountSwitch(result.user, "Googleで保護済みのアカウントへの切り替えが完了しました。");
   } catch (error) {
     state.accessIssue = isAccountAccessError(error);
     state.error = friendlyError(error, "既存のGoogleデータを開けませんでした。");
@@ -1634,16 +1728,16 @@ async function cancelTransfer() {
 }
 
 async function redeemTransfer(code) {
-  if (state.busyAction || accountKind() !== "guest") return;
+  if (state.busyAction) return;
   let operationUid = "";
   try {
-    operationUid = requireCurrentAccount({ anonymous: true }).uid;
+    operationUid = requireCurrentAccount().uid;
   } catch (error) {
-    state.error = friendlyError(error, "復元先のゲスト状態を確認できませんでした。");
+    state.error = friendlyError(error, "現在のログイン状態を確認できませんでした。");
     render();
     return;
   }
-  if (!window.confirm(`現在の端末データ（AnjuPay残高 ${formatAnjuPay(state.balance)}）から、コード発行元のデータへ切り替えます。AnjuPay残高は合算されません。続けますか？`)) return;
+  if (!confirmAccountSwitch("引き継ぎコードを発行したアカウントのデータ")) return;
   state.busyAction = "redeem-code";
   state.error = "";
   state.authNotice = "";
@@ -1682,18 +1776,20 @@ async function redeemTransfer(code) {
       state.notice = "引き継ぎコードで発行元データを復元したプレビュー状態です。";
       return;
     }
-    const response = await accountTransferCallable({ action: "redeem", code, expectedUid: operationUid });
-    requireOperationUid(operationUid);
-    const token = String(response.data?.token || "");
-    if (!token) throw new Error("引き継ぎ用の認証情報を受け取れませんでした。");
-    const credential = await runHariaiAccountTransition(() => signInWithCustomToken(auth, token));
+    const credential = await runSafeAccountSwitch(operationUid, async () => {
+      const response = await accountTransferCallable({ action: "redeem", code, expectedUid: operationUid, switchMode: "preserve-accounts-v1" });
+      requireOperationUid(operationUid);
+      const token = String(response.data?.token || "");
+      if (!token) throw new Error("引き継ぎ用の認証情報を受け取れませんでした。");
+      return signInWithCustomToken(auth, token);
+    });
     state.user = credential.user;
     state.balance = null;
     state.patron = normalizePatronage(null);
     resetPatronEconomyState();
     resetHistoryState();
     clearTransferCode();
-    await refreshAfterAccountSignIn(credential.user, "引き継ぎが完了しました。コード発行元のアカウントに切り替えました。");
+    reloadAfterAccountSwitch(credential.user, "引き継ぎが完了しました。コード発行元のアカウントに切り替えました。");
   } catch (error) {
     state.accessIssue = isAccountAccessError(error);
     state.error = friendlyError(error, "引き継ぎコードで復元できませんでした。");
@@ -1716,6 +1812,7 @@ function updateCountdown() {
 }
 
 function openAccountDestination(destination) {
+  if (state.busyAction) return;
   if (destination === "patron") {
     const section = document.querySelector("#accountPatronSection");
     section?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1787,6 +1884,7 @@ function bindEvents() {
   }));
   document.querySelector("#accountProtectGoogle")?.addEventListener("click", protectWithGoogle);
   document.querySelector("#accountRestoreGoogle")?.addEventListener("click", restoreWithGoogle);
+  document.querySelector("#accountReturnPrevious")?.addEventListener("click", returnPreviousAccount);
   document.querySelector("#accountUseExistingGoogle")?.addEventListener("click", useExistingGoogleData);
   document.querySelector("#accountCancelGoogleChoice")?.addEventListener("click", () => {
     state.pendingGoogleCredential = null;
@@ -1794,6 +1892,7 @@ function bindEvents() {
     render();
   });
   document.querySelector("#accountOpenTributeVault")?.addEventListener("click", () => {
+    if (state.busyAction) return;
     requestHome();
     window.setTimeout(() => window.HariaiApp?.openTribute?.({ initialScreen: "vault" }), 0);
   });
@@ -1888,7 +1987,7 @@ function start() {
 }
 
 function requestHome() {
-  if (!active) return;
+  if (!active || state.busyAction) return;
   active = false;
   state.historyRequestId += 1;
   state.historyLoading = false;

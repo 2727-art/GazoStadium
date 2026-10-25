@@ -8,7 +8,7 @@ const ROOT = path.resolve(__dirname, "../..");
 const CLIENTS = ["account.js", "online.js", "strategy.js", "tribute.js", "stadium.js",
   "roulette-training.js", "ai-text-training.js", "player-safety.js", "market.js",
   "flea-market.js", "danwaku-note.js", "free-table.js"];
-const HELPERS = ["auth-session.js", "auth-session-core.mjs"];
+const HELPERS = ["auth-session.js", "auth-session-core.mjs", "account-switch.js"];
 const FIREBASE = ["firebase-services.js", "firebase-client.js", "firebase-config.js", "firebase-app-check.js"];
 const PRIVATE = ["/functions/scripts/verify-auth-session-release.cjs", "/functions/test/auth-session.test.js",
   "/.firebase/auth-session-release/backend-before.json", "/firebase.json", "/firestore.rules"];
@@ -30,7 +30,7 @@ async function main() {
     const assets = [];
     for (const file of [...CLIENTS, ...HELPERS, ...FIREBASE]) {
       const reference = assetReference(html.body, file, origin);
-      const url = reference || `${origin}/${file}${HELPERS.includes(file) ? "?v=auth-session-v1" : ""}`;
+      const url = reference || `${origin}/${file}${file === "account-switch.js" ? "?v=account-switch-v1" : HELPERS.includes(file) ? "?v=auth-session-v1" : ""}`;
       const response = await read(url);
       const hashOk = sha256LF(response.body) === hashes[file];
       const authImportOk = !CLIENTS.includes(file)

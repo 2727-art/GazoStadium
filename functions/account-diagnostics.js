@@ -5,7 +5,7 @@ const logger = require("firebase-functions/logger");
 const { HttpsError } = require("firebase-functions/v2/https");
 
 const OPERATIONS = new Set(["wallet_initialize", "wallet_history", "transfer_create", "transfer_redeem", "transfer_cancel", "transfer_other"]);
-const REASONS = new Set(["account-mismatch", "invalid-expected-uid", "wallet-invalid", "wallet-disappeared", "legacy-balance-invalid", "transfer-source-changed", "transfer-source-mismatch"]);
+const REASONS = new Set(["account-mismatch", "invalid-expected-uid", "wallet-invalid", "wallet-disappeared", "legacy-balance-invalid", "transfer-source-changed", "transfer-source-mismatch", "transfer-switch-unconfirmed"]);
 const ORIGINS = new Map([
   ["https://hariaistadium.com", "primary"],
   ["https://gazostadium.anjugames.workers.dev", "legacy_worker"],
@@ -70,6 +70,9 @@ function createAccountDiagnostics({ write = (record) => logger.write(record), no
       appCheck: request.app ? "verified" : "missing",
       appCheckReplay: request.app?.alreadyConsumed === true,
       expectedAccount: Object.hasOwn(request.data || {}, "expectedUid") ? "provided" : "legacy_client",
+      ...(operation === "transfer_redeem" ? {
+        switchMode: request.data?.switchMode === "preserve-accounts-v1" ? "preserve_accounts" : "legacy",
+      } : {}),
     };
     const log = (fields) => {
       // Diagnostics must never change the result of an account operation.

@@ -24,7 +24,7 @@ if (process.env.RUN_ACCOUNT_INTEGRITY_EMULATOR !== "1") {
     rawRequest: { headers: { origin: "https://gazostadium.anjugames.workers.dev" } },
   });
   const economy = (uid, data, provider) => handlers.economyAction.run(request(uid, data, provider));
-  const transfer = (uid, data) => handlers.accountTransfer.run(request(uid, data));
+  const transfer = (uid, data, provider) => handlers.accountTransfer.run(request(uid, data, provider));
   const wallet = uid => db.collection("wallets").doc(uid);
   const legacy = uid => rtdb.ref(`online/economy/${uid}`);
   const user = uid => auth.createUser({ uid });
@@ -135,5 +135,74 @@ if (process.env.RUN_ACCOUNT_INTEGRITY_EMULATOR !== "1") {
     assert.equal((await transfer("cancel-source", { action: "cancel", expectedUid: "cancel-source" })).outcome, "canceled");
     await assert.rejects(transfer("cancel-target", { action: "redeem", code: created.code }), { code: "not-found" });
     assert.equal((await wallet("cancel-source").get()).get("balance"), 95);
+  });
+
+  for (const provider of ["anonymous", "google.com", "custom"]) {
+    test(`confirmed switch from a played ${provider} account leaves both accounts and their data intact`, async () => {
+      const suffix = provider.replace(/\W/g, ""), source = `switch-source-${suffix}`, target = `played-${suffix}`;
+      await user(source); await user(target);
+      if (provider === "google.com") await auth.updateUser(target, { providerToLink: { providerId: provider, uid: `subject-${suffix}` } });
+      const refs = [];
+      for (const [uid, balance] of [[source, 850], [target, 275]]) {
+        for (const [collection, data] of [
+          ["wallets", { balance, reservedIncoming: 11, ledgerSequence: 7 }],
+          ["danwakuProfiles", { preserved: uid, wins: 4 }],
+          ["anjuPayFleaSellerCards", { displayName: "preserved" }],
+        ]) {
+          const ref = db.collection(collection).doc(uid); await ref.set(data); refs.push(ref);
+        }
+        const entry = wallet(uid).collection("anjuPayEntries").doc("existing");
+        await entry.set({ sequence: 7, balanceAfter: balance }); refs.push(entry);
+        await legacy(uid).set({ points: balance, inventory: { preserved: true }, equipped: { title: "retained" } });
+      }
+      const before = await Promise.all(refs.map(async ref => (await ref.get()).data()));
+      const beforeLegacy = await Promise.all([source, target].map(async uid => (await legacy(uid).get()).val()));
+      const beforeProviders = (await auth.getUser(target)).providerData.map(p => p.toJSON());
+      const created = await transfer(source, { action: "create", expectedUid: source });
+      // Old clients remain protected from silently replacing a played account.
+      await assert.rejects(transfer(target, { action: "redeem", code: created.code }, provider), { code: "failed-precondition" });
+      assert.equal((await db.doc(`accountTransferCodes/${hashTransferCode(created.code)}`).get()).get("usedAt"), 0);
+      for (let retry = 0; retry < 2; retry++) {
+        const result = await transfer(target, { action: "redeem", code: created.code, expectedUid: target, switchMode: "preserve-accounts-v1" }, provider);
+        const response = await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=fake-key`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: result.token, returnSecureToken: true }),
+        });
+        assert.equal(response.status, 200);
+        assert.equal((await auth.verifyIdToken((await response.json()).idToken)).uid, source);
+      }
+      assert.deepEqual(await Promise.all(refs.map(async ref => (await ref.get()).data())), before);
+      assert.deepEqual(await Promise.all([source, target].map(async uid => (await legacy(uid).get()).val())), beforeLegacy);
+      assert.deepEqual((await auth.getUser(target)).providerData.map(p => p.toJSON()), beforeProviders);
+      assert.equal((await auth.getUser(source)).providerData.length, 0);
+    });
+  }
+
+  test("switch opt-in requires the confirmed UID and never consumes a code on invalid requests", async () => {
+    await user("confirm-source"); await user("confirm-target");
+    const created = await transfer("confirm-source", { action: "create" });
+    for (const extra of [{ switchMode: "preserve-accounts-v1" }, { switchMode: true, expectedUid: "confirm-target" }, { switchMode: "future-mode", expectedUid: "confirm-target" }]) {
+      await assert.rejects(transfer("confirm-target", { action: "redeem", code: created.code, ...extra }), errorReason("transfer-switch-unconfirmed"));
+    }
+    assert.equal((await db.doc(`accountTransferCodes/${hashTransferCode(created.code)}`).get()).get("usedAt"), 0);
+    assert.equal((await db.doc("accountTransferAttempts/confirm-target").get()).exists, false);
+  });
+
+  test("confirmed switching still rejects active sessions, disabled users, and Google-linked sources", async () => {
+    await user("guard-source"); await user("guard-target");
+    const created = await transfer("guard-source", { action: "create" });
+    const input = { action: "redeem", code: created.code, expectedUid: "guard-target", switchMode: "preserve-accounts-v1" };
+    for (const uid of ["guard-source", "guard-target"]) {
+      const ref = db.doc(`aiTextTrainingActiveUses/${uid}`);
+      await ref.set({ active: true });
+      await assert.rejects(transfer("guard-target", input), { code: "failed-precondition" });
+      assert.equal((await db.doc(`accountTransferCodes/${hashTransferCode(created.code)}`).get()).get("usedAt"), 0);
+      await ref.delete();
+    }
+    await auth.updateUser("guard-target", { disabled: true });
+    await assert.rejects(transfer("guard-target", input), { code: "permission-denied" });
+    await auth.updateUser("guard-target", { disabled: false });
+    await auth.updateUser("guard-source", { providerToLink: { providerId: "google.com", uid: "guard-google" } });
+    await assert.rejects(transfer("guard-target", input), { code: "failed-precondition" });
+    assert.equal((await auth.getUser("guard-source")).providerData[0].providerId, "google.com");
   });
 }

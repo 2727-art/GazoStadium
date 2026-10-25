@@ -11903,6 +11903,16 @@ async function createAccountTransferCode(uid) {
 
 async function redeemAccountTransferCode(request, rawCode) {
   const targetUid = requireUid(request);
+  // New clients explicitly confirm an account switch and retain the previous
+  // login locally. Legacy clients keep their original pristine-guest contract.
+  const preserveAccounts = request.data?.switchMode === "preserve-accounts-v1";
+  if (request.data?.switchMode !== undefined && (!preserveAccounts || request.data?.expectedUid !== targetUid)) {
+    throw integrityError("transfer-switch-unconfirmed", "切り替え内容を確認し、ページを再読み込みしてからお試しください。");
+  }
+  if (preserveAccounts) {
+    const targetUser = await adminAuth.getUser(targetUid);
+    if (targetUser.disabled) throw new HttpsError("permission-denied", "現在のアカウントを利用できません。");
+  }
   const compactCode = normalizeTransferCode(rawCode);
   if (!compactCode) {
     const attempt = await registerTransferFailure(targetUid);
@@ -11934,7 +11944,7 @@ async function redeemAccountTransferCode(request, rawCode) {
     await cancelAccountTransferCode(preliminaryDecision.sourceUid);
     throw new HttpsError("failed-precondition", "発行元データはGoogleから復元してください。");
   }
-  if (!await transferTargetIsPristine(targetUid, request)) {
+  if (!preserveAccounts && !await transferTargetIsPristine(targetUid, request)) {
     throw new HttpsError(
       "failed-precondition",
       "復元先は対戦・購入履歴のない新しいゲストデータで開いてください。",
@@ -12057,12 +12067,12 @@ async function redeemAccountTransferCode(request, rawCode) {
       transaction.set(attemptRef, nextAttemptState(attempt, { now }));
       return;
     }
-    if (safeBalance(targetWalletSnapshot.get("balance")) > 0
-        || integer(targetWalletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0) > 0) {
+    if (!preserveAccounts && (safeBalance(targetWalletSnapshot.get("balance")) > 0
+        || integer(targetWalletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0) > 0)) {
       failure = "target-not-empty";
       return;
     }
-    if (integer(
+    if (!preserveAccounts && integer(
       targetWalletSnapshot.get("ledgerSequence"),
       0,
       Number.MAX_SAFE_INTEGER,
@@ -12071,7 +12081,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       failure = "target-not-empty";
       return;
     }
-    if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
+    if (!preserveAccounts && ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
         || targetDanwakuProfileSnapshot.exists
         || achievementProfileHasActivity(targetAchievementSnapshot.data())
         || targetAchievementCodeReceiptSnapshot.exists
@@ -12096,7 +12106,7 @@ async function redeemAccountTransferCode(request, rawCode) {
         || targetRouletteTrainingSellerProfileSnapshot.exists
         || retiredTrainingHistoryHasActivity(targetTrainingProfileSnapshot.data())
         || targetFamiliarBookSnapshot.exists
-        || targetFamiliarBlockSnapshot.exists) {
+        || targetFamiliarBlockSnapshot.exists)) {
       failure = "target-not-empty";
       return;
     }
