@@ -16,7 +16,7 @@ if (process.env.GCLOUD_PROJECT !== "demo-gazostadium") throw new Error("Only dem
 const sdk = "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 const output = path.join(root, ".firebase/auth-session-qa");
 fs.mkdirSync(output, { recursive: true });
-const fixture = { fail: false, sourceUid: "", balance: 875, calls: 0 };
+const fixture = { fail: false, rejectWallet: false, rejectTransfer: false, sourceUid: "", balance: 875, calls: 0 };
 const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
 const customToken = (uid) => `${encode({ alg: "none", typ: "JWT" })}.${encode({
   uid, iss: "qa@example.test", sub: "qa@example.test",
@@ -38,7 +38,11 @@ const server = http.createServer(async (req, res) => {
     const data = JSON.parse(Buffer.concat(chunks).toString()).data || {};
     assert.ok(req.headers.authorization?.startsWith("Bearer "), "fixture RPC requires a real emulator ID token");
     res.setHeader("Content-Type", "application/json");
-    if (fixture.fail) {
+    const transfer = url.pathname.endsWith("/accountTransfer");
+    if ((transfer && fixture.rejectTransfer) || (!transfer && fixture.rejectWallet)) {
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: { status: "UNAUTHENTICATED", message: "Unauthenticated" } }));
+    } else if (fixture.fail) {
       res.statusCode = 503;
       res.end(JSON.stringify({ error: { status: "UNAVAILABLE", message: "QA: 一時的な通信エラー" } }));
     } else if (url.pathname.endsWith("/accountTransfer")) {
@@ -189,26 +193,61 @@ async function main() {
     await page.click("#accountRestoreGoogle");
     await page.waitForSelector("#accountUseExistingGoogle");
     assert.equal(await uid(page), guestUid);
+    fixture.rejectWallet = true;
     await page.click("#accountUseExistingGoogle");
     await page.waitForFunction((expected) => window.qa.auth.currentUser?.uid === expected && document.querySelector(".account-notice")?.textContent.includes("保護済み"), googleUid);
+    await page.waitForSelector("#accountPageReload");
+    assert.match(await page.locator(".account-wallet strong").innerText(), /--/);
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("hariai-auth-session-v1")).uid), googleUid);
     recordCheck("Google cancellation and collision preserve the guest until an explicit successful switch");
+    recordCheck("existing Google sign-in success remains visible when the wallet is rejected");
+    fixture.rejectWallet = false;
+    await page.click("#accountReload");
+    await page.waitForFunction(() => document.querySelector(".account-wallet strong")?.textContent.includes("875"));
+    assert.match(await page.locator("[data-account-auth-notice]").innerText(), /保護済み/);
 
     const linked = await newPage();
     await openWallet(linked);
     const linkUid = await uid(linked);
     await linked.evaluate(() => { window.qa.googleSubject='qa-new-google'; });
+    fixture.rejectWallet = true;
     await linked.click("#accountProtectGoogle");
-    await linked.waitForFunction(() => document.querySelector(".account-notice")?.textContent.includes("同じUID"));
+    await linked.waitForSelector("#accountPageReload");
+    assert.match(await linked.locator("[data-account-auth-notice]").innerText(), /Google連携が完了/);
+    assert.match(await linked.locator(".account-error").innerText(), /ログイン状態またはブラウザの安全性/);
     assert.equal(await uid(linked), linkUid);
+    await linked.screenshot({ path: path.join(output, "google-success-wallet-rejected.png"), animations: "disabled" });
+    await linked.locator('[aria-label="安全性確認の案内"]').screenshot({ path: path.join(output, "access-help.png"), animations: "disabled" });
     recordCheck("new Google protection links in place without changing UID");
+    fixture.rejectWallet = false;
+    await linked.click("#accountReload");
+    await linked.waitForFunction(() => document.querySelector(".account-wallet strong")?.textContent.includes("875"));
+    assert.match(await linked.locator("[data-account-auth-notice]").innerText(), /Google連携が完了/);
+    assert.equal(await uid(linked), linkUid);
+    recordCheck("Google success and wallet failure are separate; wallet retry preserves the success");
 
     const transferred = await newPage();
     await openWallet(transferred);
+    const beforeTransferUid = await uid(transferred);
+    fixture.rejectTransfer = true;
     await transferred.fill("#transferCodeInput", "7KMP-9RDX-W4HZ-3QCV");
     await transferred.locator("#redeemTransferForm button").click();
-    await transferred.waitForFunction((expected) => window.qa.auth.currentUser?.uid === expected && document.querySelector(".account-notice")?.textContent.includes("復元しました"), fixture.sourceUid);
-    await transferred.reload(); await transferred.waitForFunction(() => window.qa?.ready); await openWallet(transferred);
+    await transferred.waitForSelector("#accountPageReload");
+    assert.equal(await uid(transferred), beforeTransferUid);
+    assert.equal(await transferred.locator("[data-account-auth-notice]").count(), 0);
+    recordCheck("a rejected transfer shows safety guidance without switching the guest");
+    fixture.rejectTransfer = false;
+    fixture.rejectWallet = true;
+    await transferred.fill("#transferCodeInput", "7KMP-9RDX-W4HZ-3QCV");
+    await transferred.locator("#redeemTransferForm button").click();
+    await transferred.waitForFunction((expected) => window.qa.auth.currentUser?.uid === expected && document.querySelector("[data-account-auth-notice]")?.textContent.includes("引き継ぎが完了"), fixture.sourceUid);
+    await transferred.waitForSelector("#accountPageReload");
+    assert.match(await transferred.locator(".account-wallet strong").innerText(), /--/);
+    recordCheck("successful handoff stays successful despite a later rejected wallet read");
+    fixture.rejectWallet = false;
+    await Promise.all([transferred.waitForNavigation(), transferred.click("#accountPageReload")]);
+    await transferred.waitForFunction(() => window.qa?.ready);
+    await transferred.waitForFunction(() => document.querySelector(".account-wallet strong")?.textContent.includes("875"));
     assert.equal(await uid(transferred), fixture.sourceUid);
     assert.equal(await transferred.evaluate(() => JSON.parse(localStorage.getItem("hariai-auth-session-v1")).uid), fixture.sourceUid);
     recordCheck("custom-token handoff restores the original UID and survives a full page reload");

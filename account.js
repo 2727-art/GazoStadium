@@ -144,6 +144,9 @@ function createState() {
     user: null,
     balance: null,
     balanceError: "",
+    accessIssue: false,
+    authNotice: "",
+    authNoticeUid: "",
     accountRequestId: 0,
     patron: normalizePatronage(null),
     patronFund: normalizePatronFund(null),
@@ -581,6 +584,7 @@ async function loadAnjuPayHistory({
     return true;
   } catch (error) {
     if (historyRequestIsCurrent(requestState, requestId, operationUid)) {
+      if (isAccountAccessError(error)) requestState.accessIssue = true;
       requestState.historyError = friendlyError(error, "AnjuPay利用履歴を読み込めませんでした。");
     }
     return false;
@@ -911,6 +915,7 @@ async function loadAccountData({ notice = "" } = {}) {
   requestState.loading = true;
   requestState.error = "";
   requestState.balanceError = "";
+  requestState.accessIssue = false;
   requestState.balance = null;
   resetHistoryState();
   render();
@@ -940,6 +945,7 @@ async function loadAccountData({ notice = "" } = {}) {
   } catch (error) {
     if (!requestIsCurrent()) return false;
     requestState.balance = null;
+    requestState.accessIssue = isAccountAccessError(error);
     requestState.balanceError = "残高を取得できませんでした。データが消えたとは限りません。時間を置いて再読み込みしてください。";
     requestState.patron = normalizePatronage(null);
     resetPatronEconomyState(requestState);
@@ -975,6 +981,51 @@ async function reloadAccountData() {
       render();
     }
   }
+}
+
+// Authentication has already succeeded. A later token refresh or wallet read
+// must not turn that success into a Google/transfer failure or repeat sign-in.
+async function refreshAfterAccountSignIn(user, notice) {
+  const requestState = state;
+  const requestIsCurrent = () => active && state === requestState
+    && auth.currentUser?.uid === user.uid && requestState.user?.uid === user.uid;
+  if (!requestIsCurrent()) return;
+  requestState.authNotice = notice;
+  requestState.authNoticeUid = user.uid;
+  requestState.notice = "";
+  requestState.error = "";
+  requestState.balance = null;
+  requestState.balanceError = "";
+  requestState.accessIssue = false;
+  render();
+  try {
+    await user.getIdToken(true);
+    if (!requestIsCurrent()) return;
+    await loadAccountData();
+  } catch (error) {
+    if (!requestIsCurrent()) return;
+    requestState.balance = null;
+    requestState.balanceError = "残高を取得できませんでした。アカウントの切り替え・連携は完了しています。";
+    requestState.accessIssue = isAccountAccessError(error);
+    requestState.error = friendlyError(error, "残高などのアカウント情報を読み込めませんでした。");
+    requestState.loading = false;
+    render();
+  }
+}
+
+function isAccountAccessError(error) {
+  const code = String(error?.code || "");
+  return code.startsWith("appCheck/") || code === "functions/unauthenticated";
+}
+
+function renderAccountAccessHelp() {
+  if (!state.accessIssue) return "";
+  return `<aside class="account-notice" aria-label="安全性確認の案内">
+    <p>サイトデータやCookieは削除しないでください。ログイン情報が失われることがあります。</p>
+    <p>まずページ全体を再読み込みしてください。改善しない場合は、このサイトで通信を遮断する拡張機能やブラウザ設定を確認し、時間を置いてお試しください。</p>
+    <p>Google連携や引き継ぎの完了が上に表示されている場合、その操作をやり直す必要はありません。</p>
+    <button class="button button-primary" type="button" id="accountPageReload" ${state.busyAction ? "disabled" : ""}>ページ全体を再読み込み</button>
+  </aside>`;
 }
 
 function renderAccountStatus() {
@@ -1150,18 +1201,22 @@ function renderAnjuPayHistory() {
 
 function render({ focus = true } = {}) {
   if (!active) return;
+  const authNotice = state.authNotice && state.authNoticeUid === state.user?.uid
+    ? `<div class="account-notice" data-account-auth-notice role="status">${escapeHtml(state.authNotice)}</div>` : "";
   if (state.loading) {
-    appRoot.innerHTML = `<section class="screen account-screen account-loading"><div class="loader"></div><span class="eyebrow">ANJUPAY WALLET</span><h1>AnjuPayウォレットを確認しています</h1><p>残高、利用履歴、データ保護状態を読み込んでいます。</p></section>`;
+    appRoot.innerHTML = `<section class="screen account-screen account-loading">${authNotice}<div class="loader"></div><span class="eyebrow">ANJUPAY WALLET</span><h1>AnjuPayウォレットを確認しています</h1><p>残高、利用履歴、データ保護状態を読み込んでいます。</p></section>`;
     return;
   }
   const kind = accountKind();
   appRoot.innerHTML = `<section class="screen account-screen">
+    ${authNotice}
     <div class="account-hero">
       <div><span class="eyebrow">ANJUPAY WALLET</span><h1>AnjuPayウォレット</h1><p>貼り合いスタジアムで稼いだ価値を、残高と利用履歴で確かめられます。</p></div>
       <div class="account-wallet"><span>${kind === "protected" ? "PROTECTED ANJUPAY" : kind === "transferred" ? "TRANSFERRED ANJUPAY" : "GUEST ANJUPAY"}</span><strong>${formatAnjuPayNumber(state.balance)} <small>${ANJU_PAY_UNIT}</small></strong><em>${walletBalanceIsKnown() ? "利用可能残高" : "残高は未確認です"}</em>${state.balanceError ? `<p role="status">${escapeHtml(state.balanceError)}</p>` : ""}${!walletBalanceIsKnown() ? `<button class="button button-primary button-small" type="button" id="accountReload" ${state.busyAction ? "disabled" : ""}>残高を再読み込み</button>` : ""}<button class="button button-ghost button-small" type="button" id="accountBackHome">トップへ戻る</button></div>
     </div>
     ${state.notice ? `<div class="account-notice" role="status">${escapeHtml(state.notice)}</div>` : ""}
     ${state.error ? `<div class="account-error" role="alert">${escapeHtml(state.error)}</div>` : ""}
+    ${renderAccountAccessHelp()}
     ${renderAnjuPayPolicy()}
     ${renderAnjuPayQuickActions()}
     ${renderAnjuPayHistory()}
@@ -1176,6 +1231,11 @@ function render({ focus = true } = {}) {
 
 function friendlyError(error, fallback) {
   const code = String(error?.code || "");
+  if (code.startsWith("appCheck/")) return "ブラウザの安全性確認が通らず、処理を続けられませんでした。ページ全体を再読み込みしてお試しください。";
+  // Callable 401 does not identify which token was rejected. Never claim that
+  // an account was lost, or that App Check definitely caused this response.
+  if (code === "functions/unauthenticated") return "ログイン状態またはブラウザの安全性を確認できず、処理を続けられませんでした。ページ全体を再読み込みしてお試しください。";
+  if (code === "functions/unavailable" || code === "functions/deadline-exceeded" || code === "auth/network-request-failed") return "通信に失敗しました。接続を確認してから、もう一度お試しください。";
   if (code.includes("popup-closed-by-user") || code.includes("cancelled-popup-request")) return "Google認証をキャンセルしました。";
   if (code.includes("popup-blocked")) return "Google認証のポップアップがブロックされました。ブラウザ設定を確認してください。";
   if (code.includes("operation-not-allowed")) return "Firebase AuthenticationでGoogleログインを有効にしてください。";
@@ -1195,6 +1255,8 @@ async function protectWithGoogle() {
   }
   state.busyAction = "protect";
   state.error = "";
+  state.authNotice = "";
+  state.accessIssue = false;
   state.pendingGoogleCredential = null;
   render();
   try {
@@ -1207,14 +1269,14 @@ async function protectWithGoogle() {
     const user = requireCurrentAccount();
     const result = await runHariaiAccountTransition(() => linkWithPopup(user, googleProvider));
     state.user = result.user;
-    await result.user.getIdToken(true);
-    await loadAccountData({ notice: "現在のAnjuPay残高・購入品・戦績を同じUIDのままGoogleで保護しました。" });
+    await refreshAfterAccountSignIn(result.user, "Google連携が完了しました。現在のデータをそのまま保護しました。");
   } catch (error) {
     const credential = GoogleAuthProvider.credentialFromError(error);
     if (credential && ["auth/credential-already-in-use", "auth/email-already-in-use"].includes(error?.code)) {
       state.pendingGoogleCredential = credential;
       state.error = "";
     } else {
+      state.accessIssue = isAccountAccessError(error);
       state.error = friendlyError(error, "Googleでデータを保護できませんでした。");
     }
   } finally {
@@ -1235,6 +1297,8 @@ async function restoreWithGoogle() {
   if (!window.confirm(`この端末の現在のデータ（AnjuPay残高 ${formatAnjuPay(state.balance)}）から、選択したGoogleアカウントのデータへ切り替えます。AnjuPay残高は合算されません。続けますか？`)) return;
   state.busyAction = "restore";
   state.error = "";
+  state.authNotice = "";
+  state.accessIssue = false;
   render();
   try {
     if (useAccountPreview) {
@@ -1264,14 +1328,14 @@ async function restoreWithGoogle() {
     const user = requireCurrentAccount();
     const result = await runHariaiAccountTransition(() => linkWithPopup(user, googleProvider));
     state.user = result.user;
-    await result.user.getIdToken(true);
-    await loadAccountData({ notice: "このGoogleアカウントには既存データがなかったため、現在のデータを同じUIDのまま保護しました。" });
+    await refreshAfterAccountSignIn(result.user, "このGoogleアカウントとの連携が完了しました。現在のデータをそのまま保護しました。");
   } catch (error) {
     const credential = GoogleAuthProvider.credentialFromError(error);
     if (credential && ["auth/credential-already-in-use", "auth/email-already-in-use"].includes(error?.code)) {
       state.pendingGoogleCredential = credential;
       state.error = "";
     } else {
+      state.accessIssue = isAccountAccessError(error);
       state.error = friendlyError(error, "Googleデータを復元できませんでした。");
     }
   } finally {
@@ -1285,6 +1349,8 @@ async function useExistingGoogleData() {
   if (!window.confirm("現在のゲストデータは合算せず、Google側の既存データへ切り替えます。続けますか？")) return;
   state.busyAction = "restore";
   state.error = "";
+  state.authNotice = "";
+  state.accessIssue = false;
   render();
   try {
     const result = await runHariaiAccountTransition(() => signInWithCredential(auth, state.pendingGoogleCredential));
@@ -1295,9 +1361,9 @@ async function useExistingGoogleData() {
     resetPatronEconomyState();
     resetHistoryState();
     clearTransferCode();
-    await result.user.getIdToken(true);
-    await loadAccountData({ notice: "Googleで保護済みのゲームデータを開きました。" });
+    await refreshAfterAccountSignIn(result.user, "Googleで保護済みのアカウントへの切り替えが完了しました。");
   } catch (error) {
+    state.accessIssue = isAccountAccessError(error);
     state.error = friendlyError(error, "既存のGoogleデータを開けませんでした。");
   } finally {
     state.busyAction = "";
@@ -1506,6 +1572,7 @@ async function createTransfer() {
   if (!window.confirm("10分間有効な使い捨てコードを発行します。コードを他人へ見せないでください。")) return;
   state.busyAction = "create-code";
   state.error = "";
+  state.accessIssue = false;
   render();
   try {
     if (useAccountPreview) {
@@ -1520,6 +1587,7 @@ async function createTransfer() {
     persistTransferCode();
     state.notice = "引き継ぎコードを発行しました。新しい端末で10分以内に入力してください。";
   } catch (error) {
+    state.accessIssue = isAccountAccessError(error);
     state.error = friendlyError(error, "引き継ぎコードを発行できませんでした。");
   } finally {
     state.busyAction = "";
@@ -1539,6 +1607,7 @@ async function cancelTransfer() {
   }
   state.busyAction = "cancel-code";
   state.error = "";
+  state.accessIssue = false;
   render();
   try {
     if (!useAccountPreview) {
@@ -1548,6 +1617,7 @@ async function cancelTransfer() {
     clearTransferCode();
     state.notice = "引き継ぎコードを無効にしました。";
   } catch (error) {
+    state.accessIssue = isAccountAccessError(error);
     state.error = friendlyError(error, "引き継ぎコードを無効にできませんでした。");
   } finally {
     state.busyAction = "";
@@ -1568,6 +1638,8 @@ async function redeemTransfer(code) {
   if (!window.confirm(`現在の端末データ（AnjuPay残高 ${formatAnjuPay(state.balance)}）から、コード発行元のデータへ切り替えます。AnjuPay残高は合算されません。続けますか？`)) return;
   state.busyAction = "redeem-code";
   state.error = "";
+  state.authNotice = "";
+  state.accessIssue = false;
   render();
   try {
     if (useAccountPreview) {
@@ -1613,9 +1685,9 @@ async function redeemTransfer(code) {
     resetPatronEconomyState();
     resetHistoryState();
     clearTransferCode();
-    await credential.user.getIdToken(true);
-    await loadAccountData({ notice: "引き継ぎコードで発行元のゲームデータを復元しました。" });
+    await refreshAfterAccountSignIn(credential.user, "引き継ぎが完了しました。コード発行元のアカウントに切り替えました。");
   } catch (error) {
+    state.accessIssue = isAccountAccessError(error);
     state.error = friendlyError(error, "引き継ぎコードで復元できませんでした。");
   } finally {
     state.busyAction = "";
@@ -1688,6 +1760,11 @@ function openAccountDestination(destination) {
 function bindEvents() {
   document.querySelector("#accountBackHome")?.addEventListener("click", requestHome);
   document.querySelector("#accountReload")?.addEventListener("click", reloadAccountData);
+  document.querySelector("#accountPageReload")?.addEventListener("click", () => {
+    if (state.busyAction || state.loading) return;
+    try { sessionStorage.setItem("hariai-open-account-recovery-v1", "1"); } catch { /* Reload is still safe. */ }
+    window.location.reload();
+  });
   document.querySelectorAll("[data-anju-pay-destination]").forEach((button) => {
     button.addEventListener("click", () => openAccountDestination(button.dataset.anjuPayDestination));
   });

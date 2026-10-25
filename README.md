@@ -583,6 +583,8 @@ npx --yes firebase-tools deploy --only database,firestore:rules,hosting --non-in
 
 Google保護を本番で利用する前に、Firebase ConsoleのAuthenticationで匿名認証を維持したままGoogleプロバイダを有効化し、サポートメールを設定します。WorkerやGitHub Pagesで公開する場合は、それぞれのHTTPSホスト名をAuthenticationの承認済みドメインへ追加してください。`accountTransfer`は`consumeAppCheckToken: true`を常時指定しているため、第2世代Functionsの実行サービスアカウントへFirebase App Check Token Verifierロールが必要です。Custom Token作成に既定外のサービスアカウントを使う構成では、Firebase Admin SDKのトークン署名に必要なIAM権限も確認してください。
 
+ウォレットではGoogle連携・アカウント切替・引き継ぎの成功と、その後の残高取得の成否を別々に表示します。取得失敗でも成功通知と現在のUIDを保ち、残高の再読み込みで認証操作を繰り返しません。App CheckエラーやCallableの未認証応答には、サイトデータ・Cookieを削除せずページ全体を再読み込みする案内を表示します。Callableの未認証応答だけではApp Check拒否と断定せず、ログイン状態の確認失敗も含む表現を使います。この表示改善でApp Checkの判定基準・強制設定やサーバーの認証・移行処理は変更しません。
+
 App CheckはreCAPTCHA Enterpriseを使用します。`firebase-client.js`が全モード共通のFirebase AppとApp Checkを初期化し、その後`firebase-services.js`がAuth・Realtime Database・Firestore・Functionsを生成します。サイトキーは`firebase-config.js`の`appCheckRecaptchaEnterpriseSiteKey`へ設定します。初回リリースでは強制せず、3本番ドメインで最新版を配信してから、App Checkの`Verified`比率とFunctionsログを監視します。localhostから本番バックエンドへ接続してデバッグトークンを使う場合だけ`?appCheckDebug=1`を付けます。`?firebaseEmulators=1`と`?marketPreview=1`では本番App Checkを初期化しません。
 
 強制適用は「経過日数」ではなく、実通信の確認結果を基準にします。各ドメインで通常型・戦略型・推し値市場、ショップ、デイリー、期間報酬、ランキングコメントを能動テストし、正規通信が概ね99%以上`Verified`で、`Outdated client`と`Invalid`に正規ユーザーが含まれないことを確認します。サービスごとの推奨順は次のとおりです。

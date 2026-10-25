@@ -32,7 +32,7 @@ function harness() {
     timestampMillis: (value) => Number(value) || 0, normalizeHistoryEntry: (value) => value,
     friendlyError: (error) => error.message,
   });
-  vm.runInContext(["createState", "resetHistoryState", "requireWalletBalance", "walletBalanceIsKnown", "loadAccountData", "reloadAccountData", "applyHistoryResponse", "upgradePatron"].map(fn).join("\n"), context);
+  vm.runInContext(["createState", "resetHistoryState", "requireWalletBalance", "walletBalanceIsKnown", "loadAccountData", "reloadAccountData", "applyHistoryResponse", "upgradePatron", "isAccountAccessError", "renderAccountAccessHelp", "friendlyError", "refreshAfterAccountSignIn"].map(fn).join("\n"), context);
   context.state = context.createState();
   return { context, calls };
 }
@@ -145,4 +145,106 @@ test("wallet visibly distinguishes an unavailable balance and exposes a working 
   c.render();
   assert.match(root.innerHTML, /<strong>0 <small>Pay/);
   assert.doesNotMatch(root.innerHTML, /残高は未確認です/);
+});
+
+function signInHarness(kind) {
+  const h = harness(), c = h.context;
+  const guest = { uid: "old", isAnonymous: true, providerData: [], getIdToken: async () => "token" };
+  const target = { uid: kind === "protect" || kind === "restore-new" ? "old" : "restored", isAnonymous: false, providerData: kind === "transfer" ? [] : [{ providerId: "google.com" }], getIdToken: async () => "token" };
+  const counts = { link: 0, credential: 0, custom: 0, transfer: 0 };
+  c.auth.currentUser = guest;
+  c.state.user = guest;
+  c.state.loading = false;
+  Object.assign(c, {
+    window: { confirm: () => true },
+    GoogleAuthProvider: { credentialFromError: () => null }, googleProvider: {},
+    isGoogleLinked: () => !!c.state.user?.providerData?.some(p => p.providerId === "google.com"),
+    accountKind: () => c.state.user?.isAnonymous ? "guest" : "protected",
+    requireCurrentAccount: () => c.auth.currentUser,
+    requireOperationUid: () => {}, formatAnjuPay: String,
+    persistTransferCode() {},
+    runHariaiAccountTransition: (operation) => operation(),
+    linkWithPopup: async () => { counts.link++; c.auth.currentUser = target; return { user: target }; },
+    signInWithCredential: async () => { counts.credential++; c.auth.currentUser = target; return { user: target }; },
+    signInWithCustomToken: async () => { counts.custom++; c.auth.currentUser = target; return { user: target }; },
+    accountTransferCallable: async () => { counts.transfer++; return { data: { token: "handoff-token" } }; },
+  });
+  vm.runInContext(["protectWithGoogle", "restoreWithGoogle", "useExistingGoogleData", "redeemTransfer", "createTransfer"].map(fn).join("\n"), c);
+  c.state.pendingGoogleCredential = {};
+  const invoke = () => kind === "protect" ? c.protectWithGoogle() : kind === "restore-new" ? c.restoreWithGoogle() : kind === "existing-google" ? c.useExistingGoogleData() : c.redeemTransfer("valid-code");
+  return { ...h, target, counts, invoke };
+}
+
+for (const kind of ["protect", "restore-new", "existing-google", "transfer"]) {
+  for (const failure of ["functions/unauthenticated", "functions/unavailable", "auth/network-request-failed"]) {
+    test(`${kind}: successful authentication survives later ${failure} without repeating sign-in`, async () => {
+      const { context: c, target, counts, invoke } = signInHarness(kind);
+      const error = Object.assign(new Error("raw SDK message"), { code: failure });
+      if (failure.startsWith("auth/")) target.getIdToken = async () => { throw error; };
+      else c.economyActionCallable = async () => { throw error; };
+      await invoke();
+      assert.equal(c.auth.currentUser.uid, target.uid);
+      assert.equal(c.state.user.uid, target.uid);
+      assert.equal(c.state.authNoticeUid, target.uid);
+      assert.match(c.state.authNotice, /完了しました/);
+      assert.equal(c.state.balance, null);
+      assert.equal(c.state.accessIssue, failure === "functions/unauthenticated");
+      assert.doesNotMatch(c.state.error, /raw SDK|連携できません|引き継ぎ.*できません/);
+      const previous = { ...counts }, notice = c.state.authNotice;
+      target.getIdToken = async () => "token";
+      c.economyActionCallable = async () => ({ data: { balance: 875 } });
+      await c.reloadAccountData();
+      assert.deepEqual(counts, previous);
+      assert.equal(c.state.authNotice, notice);
+      assert.equal(c.state.balance, 875);
+      assert.equal(c.state.error, "");
+      assert.equal(c.state.accessIssue, false);
+    });
+  }
+}
+
+test("Google cancellation does not announce success or alter the guest", async () => {
+  const { context: c, invoke } = signInHarness("protect");
+  c.linkWithPopup = async () => { throw Object.assign(new Error("cancel"), { code: "auth/popup-closed-by-user" }); };
+  await invoke();
+  assert.equal(c.auth.currentUser.uid, "old");
+  assert.equal(c.state.authNotice, "");
+  assert.match(c.state.error, /キャンセル/);
+  assert.equal(c.state.accessIssue, false);
+});
+
+for (const action of ["create", "redeem"]) {
+  test(`rejected transfer ${action} gives reload guidance without switching identity`, async () => {
+    const { context: c, counts } = signInHarness("transfer");
+    c.accountTransferCallable = async () => { throw Object.assign(new Error("Unauthenticated"), { code: "functions/unauthenticated" }); };
+    await (action === "create" ? c.createTransfer() : c.redeemTransfer("valid-code"));
+    assert.equal(c.auth.currentUser.uid, "old");
+    assert.equal(counts.custom, 0);
+    assert.equal(c.state.authNotice, "");
+    assert.equal(c.state.accessIssue, true);
+    assert.match(c.state.error, /ログイン状態またはブラウザの安全性/);
+    assert.match(c.renderAccountAccessHelp(), /サイトデータやCookieは削除しない/);
+    assert.match(c.renderAccountAccessHelp(), /id="accountPageReload"/);
+  });
+}
+
+test("App Check guidance is specific only when the error identifies App Check", () => {
+  const { context: c } = harness();
+  assert.match(c.friendlyError({ code: "appCheck/throttled" }), /ブラウザの安全性確認が通らず/);
+  assert.match(c.friendlyError({ code: "functions/unauthenticated" }), /ログイン状態または/);
+  assert.equal(c.isAccountAccessError({ code: "functions/permission-denied" }), false);
+});
+
+test("a late post-sign-in error cannot modify a different current account", async () => {
+  const { context: c, target } = signInHarness("protect");
+  const wait = deferred();
+  target.getIdToken = () => wait.promise;
+  c.auth.currentUser = c.state.user = target;
+  const result = c.refreshAfterAccountSignIn(target, "Google連携が完了しました。");
+  c.auth.currentUser = c.state.user = { uid: "another" };
+  c.state.balance = 123;
+  wait.reject(new Error("late"));
+  await result;
+  assert.equal(c.state.balance, 123);
+  assert.equal(c.state.error, "");
 });
