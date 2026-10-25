@@ -45,7 +45,7 @@ function harness(handler = async () => ({})) {
     auth: { currentUser: { uid: "alice" } }, database: {}, functions: {}, useOfflineMarketPreview: false,
     httpsCallable: () => async (payload) => { calls.push(payload); return { data: await handler(payload) }; },
     onAuthStateChanged: (auth, callback) => { authListener = callback; },
-    signInAnonymously: async () => { throw new Error("unexpected sign in"); },
+    ensureHariaiUser: async () => sandbox.auth.currentUser,
     ref: (_, value) => value,
     onValue: (_, callback) => { eventListener = callback; return () => {}; },
     localStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) },

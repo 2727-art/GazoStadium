@@ -1,9 +1,5 @@
-import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, requestSafety, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2";
-import {
-  browserLocalPersistence,
-  setPersistence,
-  signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, requestSafety, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
 import {
   equalTo,
   get,
@@ -2777,8 +2773,7 @@ function validLeaderboardEntryId(value) {
 
 async function ensureRankingCommentUser() {
   if (useOfflineMarketPreview) throw new Error("LOCAL UI PREVIEW中はランキングコメントへ接続しません。");
-  await setPersistence(auth, browserLocalPersistence);
-  return auth.currentUser || (await signInAnonymously(auth)).user;
+  return ensureHariaiUser();
 }
 
 async function authenticatedDatabaseRequest(path, { method = "GET", body } = {}) {
@@ -4236,8 +4231,7 @@ async function refreshLeaderboard(period = leaderboardPeriod, { force = false, k
 }
 
 async function ensureAuthenticated() {
-  await setPersistence(auth, browserLocalPersistence);
-  const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
+  const credential = { user: await ensureHariaiUser() };
   if (!active) return;
   state.uid = credential.user.uid;
   const offsetPromise = new Promise((resolve) => {
@@ -8493,8 +8487,7 @@ async function recordOverallResult({
   deferPublicSync = false,
 } = {}) {
   if (!ACTIVE_BATTLE_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
-  await setPersistence(auth, browserLocalPersistence);
-  const user = auth.currentUser || (await signInAnonymously(auth)).user;
+  const user = await ensureHariaiUser();
   const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER").trim().slice(0, 16) || "PLAYER";
   const resultTimestamp = Date.now() + Number(sourceState.uid === user.uid ? sourceState.serverTimeOffset : publicServerTimeOffset || 0);
   // Keep first-use wallet/patron migration and day rollover, but do not repeat

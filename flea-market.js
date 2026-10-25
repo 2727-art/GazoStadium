@@ -1,9 +1,5 @@
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2";
-import {
-  browserLocalPersistence,
-  setPersistence,
-  signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
 import {
   httpsCallable,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
@@ -684,9 +680,7 @@ function scheduleBoundaryRefresh() {
 }
 
 async function ensureUser() {
-  await setPersistence(auth, browserLocalPersistence);
-  await auth.authStateReady?.();
-  return auth.currentUser || (await signInAnonymously(auth)).user;
+  return ensureHariaiUser();
 }
 
 async function refreshState({ silent = false } = {}) {

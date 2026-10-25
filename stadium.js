@@ -1,8 +1,4 @@
-import {
-  browserLocalPersistence,
-  setPersistence,
-  signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
 import {
   httpsCallable,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
@@ -113,9 +109,7 @@ function isCurrent(generation) {
 }
 
 async function ensureUser() {
-  await setPersistence(auth, browserLocalPersistence);
-  await auth.authStateReady?.();
-  return auth.currentUser || (await signInAnonymously(auth)).user;
+  return ensureHariaiUser();
 }
 
 async function call(action, payload = {}) {

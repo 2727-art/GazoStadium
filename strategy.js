@@ -1,10 +1,6 @@
-import { requestSafety, setActiveContact, clearActiveContact, renderContactControls } from "./player-safety.js?v=global-player-block-v1-copy-v2";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { requestSafety, setActiveContact, clearActiveContact, renderContactControls } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
 import { createStrategyHiddenSearchGuard, createStrategyPrestartGuard, strategyRoomHasStarted } from "./strategy-idle-guard.mjs?v=strategy-idle-guard-v1";
-import {
-  browserLocalPersistence,
-  setPersistence,
-  signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
   get,
   limitToLast,
@@ -1188,8 +1184,7 @@ function blockStrategyPreviewControl(event) {
 
 async function ensureAuthenticated() {
   const targetState = state;
-  await setPersistence(auth, browserLocalPersistence);
-  const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
+  const credential = { user: await ensureHariaiUser() };
   if (!active || state !== targetState) return;
   targetState.uid = credential.user.uid;
   targetState.persistDeck = localStorage.getItem(strategyDeckPersistenceKey(targetState.uid)) === "true";

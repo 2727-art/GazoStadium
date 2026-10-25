@@ -132,7 +132,7 @@ test("result retries keep server reward requests and never reapply a cached init
     INITIAL_RATING: 1000,
     state: { uid: "first-user", serverTimeOffset: 0, overallProfile: currentProfile },
     browserLocalPersistence: {},
-    setPersistence: async () => {},
+    ensureHariaiUser: async () => harness.auth.currentUser,
     localStorage: { getItem: () => null },
     PROFILE_NAME_KEY: "profile-name",
     publicServerTimeOffset: 0,

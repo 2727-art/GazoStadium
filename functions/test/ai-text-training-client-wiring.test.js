@@ -3247,8 +3247,9 @@ test("authentication must settle before start, and both authentication outcomes 
       auth: { currentUser: null },
       browserLocalPersistence: {},
       firestore: {},
-      setPersistence: async () => {
+      ensureHariaiUser: async () => {
         if (failure === "persistence") throw new Error("auth failed");
+        return { uid: "runtime-user" };
       },
       signInAnonymously: async () => ({ user: { uid: "runtime-user" } }),
       aiTextTrainingAction: async () => ({

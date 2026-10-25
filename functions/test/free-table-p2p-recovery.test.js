@@ -183,7 +183,7 @@ function createFrontendHarness() {
     RTCPeerConnection: MockPeerConnection,
     browserLocalPersistence: {},
     setPersistence: asyncNoop,
-    signInAnonymously: async () => ({ user: { uid: "mock-user" } }),
+    ensureHariaiUser: async () => ({ uid: "mock-user" }),
     get: async () => ({ exists: () => false, val: () => null }),
     limitToLast: (value) => value,
     onChildAdded: () => noop,

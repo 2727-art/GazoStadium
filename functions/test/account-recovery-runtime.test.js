@@ -1,0 +1,148 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const test = require("node:test");
+const source = fs.readFileSync(path.resolve(__dirname, "../../account.js"), "utf8");
+function fn(name) {
+  const start = new RegExp(`(?:async )?function ${name}\\(`).exec(source);
+  assert.ok(start, name);
+  const body = source.slice(start.index);
+  const end = /\n\}\r?\n/.exec(body);
+  return body.slice(0, end.index + 2);
+}
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+function harness() {
+  const calls = [];
+  const context = vm.createContext({
+    active: true, state: null, useAccountPreview: false,
+    auth: { currentUser: { uid: "old", isAnonymous: true } },
+    ANJU_PAY_MAX_BALANCE: 999999999,
+    normalizePatronage: () => ({}), normalizePatronFund: () => ({}),
+    normalizePatronImpact: () => ({}), normalizeOshijoPatronEligibility: () => ({}),
+    resetPatronEconomyState() {}, restoreTransferCode() {}, clearTransferCode() {},
+    applyPatronEconomyResponse() {}, loadAnjuPayHistory: async () => true,
+    render() { calls.push({ render: true }); }, isGoogleLinked: () => false,
+    ensureUser: async () => context.auth.currentUser,
+    economyActionCallable: async (request) => { calls.push(request); return { data: { balance: 125 } }; },
+    timestampMillis: (value) => Number(value) || 0, normalizeHistoryEntry: (value) => value,
+    friendlyError: (error) => error.message,
+  });
+  vm.runInContext(["createState", "resetHistoryState", "requireWalletBalance", "walletBalanceIsKnown", "loadAccountData", "reloadAccountData", "applyHistoryResponse", "upgradePatron"].map(fn).join("\n"), context);
+  context.state = context.createState();
+  return { context, calls };
+}
+
+test("failed wallet read is unknown, not zero; retry fetches the real balance", async () => {
+  const { context: c } = harness();
+  c.economyActionCallable = async () => { throw new Error("unavailable"); };
+  await assert.rejects(c.loadAccountData(), /unavailable/);
+  assert.equal(c.state.balance, null);
+  assert.equal(c.walletBalanceIsKnown(), false);
+  assert.match(c.state.balanceError, /取得できません/);
+  c.economyActionCallable = async () => ({ data: { balance: 375 } });
+  await c.reloadAccountData();
+  assert.equal(c.state.balance, 375);
+  assert.equal(c.state.balanceError, "");
+  assert.equal(c.walletBalanceIsKnown(), true);
+});
+
+for (const balance of [undefined, null, "", "0", NaN, -1, 9999999999]) {
+  test(`invalid wallet balance ${String(balance)} cannot become a confirmed zero`, async () => {
+    const { context: c } = harness();
+    c.economyActionCallable = async () => ({ data: { balance } });
+    await assert.rejects(c.loadAccountData(), /残高を確認できません/);
+    assert.equal(c.state.balance, null);
+    assert.equal(c.walletBalanceIsKnown(), false);
+  });
+}
+
+test("a server-confirmed zero is a known balance", async () => {
+  const { context: c } = harness();
+  c.economyActionCallable = async () => ({ data: { balance: 0 } });
+  await c.loadAccountData();
+  assert.equal(c.state.balance, 0);
+  assert.equal(c.walletBalanceIsKnown(), true);
+});
+
+test("late responses from an older account cannot replace the current account's balance", async () => {
+  const { context: c } = harness();
+  const old = deferred();
+  const started = deferred();
+  c.economyActionCallable = () => { started.resolve(); return old.promise; };
+  const request = c.loadAccountData();
+  await started.promise;
+  c.auth.currentUser = { uid: "google-restored" };
+  c.economyActionCallable = async () => ({ data: { balance: 700 } });
+  await c.loadAccountData();
+  old.resolve({ data: { balance: 1 } });
+  await request;
+  assert.equal(c.state.user.uid, "google-restored");
+  assert.equal(c.state.balance, 700);
+});
+
+test("a late failure cannot clear a newer successful refresh on the same UID", async () => {
+  const { context: c } = harness();
+  const old = deferred();
+  const started = deferred();
+  c.economyActionCallable = () => { started.resolve(); return old.promise; };
+  const request = c.loadAccountData();
+  await started.promise;
+  c.economyActionCallable = async () => ({ data: { balance: 400 } });
+  await c.loadAccountData();
+  old.reject(new Error("late network failure"));
+  await request;
+  assert.equal(c.state.balance, 400);
+  assert.equal(c.state.balanceError, "");
+});
+
+test("unknown balance prevents spending but does not remove Google or transfer actions", async () => {
+  const { context: c, calls } = harness();
+  c.state.loading = false;
+  c.isGoogleLinked = () => true;
+  await c.upgradePatron(1);
+  assert.equal(calls.filter((call) => call.action).length, 0);
+  assert.match(c.state.error, /支払いはできません/);
+  assert.doesNotMatch(fn("protectWithGoogle"), /walletBalanceIsKnown/);
+  assert.doesNotMatch(fn("restoreWithGoogle"), /walletBalanceIsKnown/);
+  assert.doesNotMatch(fn("redeemTransfer"), /walletBalanceIsKnown/);
+});
+
+test("history can supply a confirmed balance but null/missing history balance cannot fabricate zero", () => {
+  const { context: c } = harness();
+  for (const response of [{}, { balance: null }, { availableBalance: null }, { balance: "" }]) {
+    c.applyHistoryResponse(response);
+    assert.equal(c.state.balance, null);
+  }
+  c.applyHistoryResponse({ balance: 0 });
+  assert.equal(c.state.balance, 0);
+  c.applyHistoryResponse({ availableBalance: 83 });
+  assert.equal(c.state.balance, 83);
+});
+
+test("wallet visibly distinguishes an unavailable balance and exposes a working retry", async () => {
+  const { context: c } = harness();
+  const root = { innerHTML: "", focus() {} };
+  const { formatAnjuPayNumber, ANJU_PAY_UNIT } = await import("../../anju-pay-format.mjs");
+  Object.assign(c, {
+    appRoot: root, formatAnjuPayNumber, ANJU_PAY_UNIT,
+    accountKind: () => "guest", escapeHtml: (value) => String(value),
+    renderAnjuPayPolicy: () => "", renderAnjuPayQuickActions: () => "", renderAnjuPayHistory: () => "",
+    renderAccountStatus: () => "", renderPatronage: () => "", renderTransfer: () => "",
+    bindEvents() {}, updateCountdown() {},
+  });
+  vm.runInContext(fn("render"), c);
+  c.state.loading = false;
+  c.render();
+  assert.match(root.innerHTML, /<strong>-- <small>Pay/);
+  assert.match(root.innerHTML, /残高は未確認です/);
+  assert.match(root.innerHTML, /id="accountReload"/);
+  c.state.balance = 0;
+  c.render();
+  assert.match(root.innerHTML, /<strong>0 <small>Pay/);
+  assert.doesNotMatch(root.innerHTML, /残高は未確認です/);
+});

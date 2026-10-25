@@ -1,8 +1,4 @@
-import {
-  browserLocalPersistence,
-  setPersistence,
-  signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
 import {
   httpsCallable,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
@@ -19,7 +15,7 @@ import {
   firestore,
   functions,
 } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
 import {
   AVATAR_GROUPS,
   AVATARS,
@@ -225,9 +221,7 @@ function isCurrent(generation) {
 }
 
 async function ensureUser() {
-  await setPersistence(auth, browserLocalPersistence);
-  await auth.authStateReady?.();
-  return auth.currentUser || (await signInAnonymously(auth)).user;
+  return ensureHariaiUser();
 }
 
 async function call(action, payload = {}) {

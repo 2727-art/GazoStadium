@@ -1,10 +1,8 @@
+import { ensureHariaiUser, assertHariaiUser, runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1";
 import {
   GoogleAuthProvider,
-  browserLocalPersistence,
   linkWithPopup,
   onIdTokenChanged,
-  setPersistence,
-  signInAnonymously,
   signInWithCredential,
   signInWithCustomToken,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
@@ -144,7 +142,9 @@ function createState() {
     loading: true,
     busyAction: "",
     user: null,
-    balance: 0,
+    balance: null,
+    balanceError: "",
+    accountRequestId: 0,
     patron: normalizePatronage(null),
     patronFund: normalizePatronFund(null),
     patronImpact: normalizePatronImpact(null),
@@ -494,8 +494,13 @@ function previewHistory(protectedPreview) {
 function applyHistoryResponse(value, { append = false } = {}) {
   const response = value && typeof value === "object" ? value : {};
   state.historyAvailable = response.available !== false;
-  const balance = finiteInteger(response.availableBalance ?? response.balance, null);
-  if (balance !== null) state.balance = Math.max(0, Math.min(ANJU_PAY_MAX_BALANCE, balance));
+  const balanceValue = response.availableBalance ?? response.balance;
+  const balance = typeof balanceValue === "number" && Number.isSafeInteger(balanceValue)
+    && balanceValue >= 0 && balanceValue <= ANJU_PAY_MAX_BALANCE ? balanceValue : null;
+  if (balance !== null) {
+    state.balance = Math.max(0, Math.min(ANJU_PAY_MAX_BALANCE, balance));
+    state.balanceError = "";
+  }
   state.historyStartedAt = timestampMillis(response.historyStartedAt);
   const incoming = (Array.isArray(response.entries) ? response.entries : [])
     .map(normalizeHistoryEntry)
@@ -739,7 +744,7 @@ function isGoogleLinked(user = state.user) {
 
 function requireCurrentAccount({ google = false, anonymous = false } = {}) {
   if (useAccountPreview) return state.user;
-  const current = auth.currentUser;
+  const current = assertHariaiUser();
   if (!current || !state.user || current.uid !== state.user.uid) {
     throw new Error("ログイン状態が別のタブで変わりました。画面を開き直してから操作してください。");
   }
@@ -840,14 +845,17 @@ function modesAreActive() {
 }
 
 async function ensureUser() {
-  await setPersistence(auth, browserLocalPersistence);
-  await auth.authStateReady?.();
-  return auth.currentUser || (await signInAnonymously(auth)).user;
+  return ensureHariaiUser();
 }
 
 async function loadAccountData({ notice = "" } = {}) {
   const requestState = state;
-  const requestIsCurrent = () => active && state === requestState;
+  const requestId = ++requestState.accountRequestId;
+  let operationUid = "";
+  const requestIsCurrent = () => active && state === requestState
+    && requestState.accountRequestId === requestId
+    && (!operationUid || useAccountPreview
+      || (auth.currentUser?.uid === operationUid && requestState.user?.uid === operationUid));
   if (useAccountPreview) {
     const protectedPreview = previewKind === "protected";
     requestState.user = {
@@ -902,14 +910,18 @@ async function loadAccountData({ notice = "" } = {}) {
   }
   requestState.loading = true;
   requestState.error = "";
+  requestState.balanceError = "";
+  requestState.balance = null;
+  resetHistoryState();
   render();
   const previousUid = requestState.user?.uid || "";
   try {
     const user = await ensureUser();
     if (!requestIsCurrent()) return false;
     requestState.user = user;
+    operationUid = user.uid;
     if (previousUid && previousUid !== user.uid) {
-      requestState.balance = 0;
+      requestState.balance = null;
       requestState.patron = normalizePatronage(null);
       resetPatronEconomyState(requestState);
       resetHistoryState();
@@ -918,7 +930,7 @@ async function loadAccountData({ notice = "" } = {}) {
     else restoreTransferCode(user.uid);
     const response = await economyActionCallable({ action: "initialize" });
     if (!requestIsCurrent()) return false;
-    requestState.balance = Math.max(0, Math.floor(Number(response.data?.balance || 0)));
+    requestState.balance = requireWalletBalance(response.data?.balance);
     requestState.patron = normalizePatronage(response.data?.patron);
     applyPatronEconomyResponse(requestState, response.data);
     await loadAnjuPayHistory();
@@ -927,7 +939,8 @@ async function loadAccountData({ notice = "" } = {}) {
     return true;
   } catch (error) {
     if (!requestIsCurrent()) return false;
-    requestState.balance = 0;
+    requestState.balance = null;
+    requestState.balanceError = "残高を取得できませんでした。データが消えたとは限りません。時間を置いて再読み込みしてください。";
     requestState.patron = normalizePatronage(null);
     resetPatronEconomyState(requestState);
     resetHistoryState();
@@ -935,6 +948,30 @@ async function loadAccountData({ notice = "" } = {}) {
   } finally {
     if (requestIsCurrent()) {
       requestState.loading = false;
+      render();
+    }
+  }
+}
+
+function requireWalletBalance(value) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > ANJU_PAY_MAX_BALANCE) {
+    throw new Error("残高を確認できませんでした。再読み込みしてください。");
+  }
+  return value;
+}
+
+function walletBalanceIsKnown() {
+  return !state.loading && Number.isSafeInteger(state.balance) && state.balance >= 0;
+}
+
+async function reloadAccountData() {
+  if (state.loading || state.busyAction) return;
+  const requestState = state;
+  try {
+    await loadAccountData();
+  } catch (error) {
+    if (active && state === requestState) {
+      requestState.error = friendlyError(error, "アカウント情報を読み込めませんでした。");
       render();
     }
   }
@@ -1121,7 +1158,7 @@ function render({ focus = true } = {}) {
   appRoot.innerHTML = `<section class="screen account-screen">
     <div class="account-hero">
       <div><span class="eyebrow">ANJUPAY WALLET</span><h1>AnjuPayウォレット</h1><p>貼り合いスタジアムで稼いだ価値を、残高と利用履歴で確かめられます。</p></div>
-      <div class="account-wallet"><span>${kind === "protected" ? "PROTECTED ANJUPAY" : kind === "transferred" ? "TRANSFERRED ANJUPAY" : "GUEST ANJUPAY"}</span><strong>${formatAnjuPayNumber(state.balance)} <small>${ANJU_PAY_UNIT}</small></strong><em>利用可能残高</em><button class="button button-ghost button-small" type="button" id="accountBackHome">トップへ戻る</button></div>
+      <div class="account-wallet"><span>${kind === "protected" ? "PROTECTED ANJUPAY" : kind === "transferred" ? "TRANSFERRED ANJUPAY" : "GUEST ANJUPAY"}</span><strong>${formatAnjuPayNumber(state.balance)} <small>${ANJU_PAY_UNIT}</small></strong><em>${walletBalanceIsKnown() ? "利用可能残高" : "残高は未確認です"}</em>${state.balanceError ? `<p role="status">${escapeHtml(state.balanceError)}</p>` : ""}${!walletBalanceIsKnown() ? `<button class="button button-primary button-small" type="button" id="accountReload" ${state.busyAction ? "disabled" : ""}>残高を再読み込み</button>` : ""}<button class="button button-ghost button-small" type="button" id="accountBackHome">トップへ戻る</button></div>
     </div>
     ${state.notice ? `<div class="account-notice" role="status">${escapeHtml(state.notice)}</div>` : ""}
     ${state.error ? `<div class="account-error" role="alert">${escapeHtml(state.error)}</div>` : ""}
@@ -1168,7 +1205,7 @@ async function protectWithGoogle() {
       return;
     }
     const user = requireCurrentAccount();
-    const result = await linkWithPopup(user, googleProvider);
+    const result = await runHariaiAccountTransition(() => linkWithPopup(user, googleProvider));
     state.user = result.user;
     await result.user.getIdToken(true);
     await loadAccountData({ notice: "現在のAnjuPay残高・購入品・戦績を同じUIDのままGoogleで保護しました。" });
@@ -1225,7 +1262,7 @@ async function restoreWithGoogle() {
       return;
     }
     const user = requireCurrentAccount();
-    const result = await linkWithPopup(user, googleProvider);
+    const result = await runHariaiAccountTransition(() => linkWithPopup(user, googleProvider));
     state.user = result.user;
     await result.user.getIdToken(true);
     await loadAccountData({ notice: "このGoogleアカウントには既存データがなかったため、現在のデータを同じUIDのまま保護しました。" });
@@ -1250,10 +1287,10 @@ async function useExistingGoogleData() {
   state.error = "";
   render();
   try {
-    const result = await signInWithCredential(auth, state.pendingGoogleCredential);
+    const result = await runHariaiAccountTransition(() => signInWithCredential(auth, state.pendingGoogleCredential));
     state.pendingGoogleCredential = null;
     state.user = result.user;
-    state.balance = 0;
+    state.balance = null;
     state.patron = normalizePatronage(null);
     resetPatronEconomyState();
     resetHistoryState();
@@ -1276,6 +1313,11 @@ function newActionId() {
 
 async function upgradePatron(targetTier) {
   if (state.busyAction || !isGoogleLinked()) return;
+  if (!walletBalanceIsKnown()) {
+    state.error = "残高を確認できるまで支払いはできません。残高を再読み込みしてください。";
+    render();
+    return;
+  }
   const requestState = state;
   let operationUid = "";
   try {
@@ -1365,7 +1407,7 @@ async function upgradePatron(targetTier) {
     if (response.data?.outcome === "short-proceeds") {
       throw new Error("基金へ還元できる今月の推し嬢営業収益が不足しています。");
     }
-    requestState.balance = Math.max(0, Math.floor(Number(response.data?.balance || 0)));
+    requestState.balance = requireWalletBalance(response.data?.balance);
     requestState.patron = normalizePatronage(response.data?.patron);
     applyPatronEconomyResponse(requestState, response.data);
     await loadAnjuPayHistory({ force: true });
@@ -1564,9 +1606,9 @@ async function redeemTransfer(code) {
     requireOperationUid(operationUid);
     const token = String(response.data?.token || "");
     if (!token) throw new Error("引き継ぎ用の認証情報を受け取れませんでした。");
-    const credential = await signInWithCustomToken(auth, token);
+    const credential = await runHariaiAccountTransition(() => signInWithCustomToken(auth, token));
     state.user = credential.user;
-    state.balance = 0;
+    state.balance = null;
     state.patron = normalizePatronage(null);
     resetPatronEconomyState();
     resetHistoryState();
@@ -1645,6 +1687,7 @@ function openAccountDestination(destination) {
 
 function bindEvents() {
   document.querySelector("#accountBackHome")?.addEventListener("click", requestHome);
+  document.querySelector("#accountReload")?.addEventListener("click", reloadAccountData);
   document.querySelectorAll("[data-anju-pay-destination]").forEach((button) => {
     button.addEventListener("click", () => openAccountDestination(button.dataset.anjuPayDestination));
   });
@@ -1719,7 +1762,7 @@ function subscribeToAuthChanges() {
       return;
     }
     state.user = user;
-    state.balance = 0;
+    state.balance = null;
     state.patron = normalizePatronage(null);
     resetPatronEconomyState();
     resetHistoryState();
@@ -1778,3 +1821,14 @@ window.HariaiAccount = Object.freeze({
   start,
 });
 window.dispatchEvent(new Event("hariai-account-ready"));
+
+// A deliberate recovery step reloads first so no game retains the old UID.
+function openRequestedAccountRecovery() {
+  try {
+    if (sessionStorage.getItem("hariai-open-account-recovery-v1") !== "1") return;
+    sessionStorage.removeItem("hariai-open-account-recovery-v1");
+  } catch { return; }
+  start();
+}
+if (document.readyState === "complete") openRequestedAccountRecovery();
+else window.addEventListener("load", openRequestedAccountRecovery, { once: true });

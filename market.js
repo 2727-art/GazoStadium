@@ -1,9 +1,5 @@
-import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2";
-import {
-  browserLocalPersistence,
-  setPersistence,
-  signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
 import {
   doc,
   onSnapshot,
@@ -1485,9 +1481,7 @@ async function ensureAuthenticated(generation, { openLandingRankings = false } =
     render();
     return;
   }
-  await setPersistence(auth, browserLocalPersistence);
-  if (!isCurrentLifecycle(generation)) return;
-  const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
+  const credential = { user: await ensureHariaiUser() };
   if (!isCurrentLifecycle(generation)) return;
   state.uid = credential.user.uid;
   const response = await economyActionCallable({ action: "initialize" });

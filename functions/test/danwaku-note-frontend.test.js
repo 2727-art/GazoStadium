@@ -295,7 +295,7 @@ test("standalone lifecycle and responsive CSS are wired without existing-file co
   assert.match(frontendSource, /isActive,/);
   assert.match(frontendSource, /requestHome,/);
   assert.match(frontendSource, /hariai-danwaku-note-ready/);
-  assert.match(frontendSource, /signInAnonymously\(auth\)/);
+  assert.match(frontendSource, /ensureHariaiUser\(\)/);
   assert.match(frontendSource, /function escapeHtml/);
 
   for (const width of [900, 760, 480, 390, 340]) {

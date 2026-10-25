@@ -1,9 +1,5 @@
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2";
-import {
-  browserLocalPersistence,
-  setPersistence,
-  signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
 import {
   httpsCallable,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
@@ -2105,10 +2101,7 @@ function installPreview(requestedScreen) {
 
 async function initializeAuthenticatedState(targetState = state) {
   try {
-    await setPersistence(auth, browserLocalPersistence);
-    const credential = auth.currentUser
-      ? { user: auth.currentUser }
-      : await signInAnonymously(auth);
+    const credential = { user: await ensureHariaiUser() };
     if (!active || state !== targetState) return;
     targetState.uid = credential.user.uid;
     const response = await aiTextTrainingAction({

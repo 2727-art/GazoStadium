@@ -303,7 +303,7 @@ test("overall profile also uses a verified result token across a retry", async (
     state: { uid: "local-user", profile: {}, serverTimeOffset: 0 },
     auth: { currentUser: { uid: "local-user" } },
     browserLocalPersistence: {},
-    setPersistence: async () => {},
+    ensureHariaiUser: async () => sandbox.auth.currentUser,
     signInAnonymously: async () => ({ user: { uid: "local-user" } }),
     economyActionCallable: async () => ({}),
     localStorage: { getItem: () => "" },

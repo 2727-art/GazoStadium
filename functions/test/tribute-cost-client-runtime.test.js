@@ -56,7 +56,7 @@ async function harness(dispatch) {
   const context = vm.createContext({
     window, document: { visibilityState: "visible" }, location: { protocol: "https:" },
     auth: { currentUser: { uid: "player" }, authStateReady: async () => {} },
-    browserLocalPersistence: {}, setPersistence: async () => {}, signInAnonymously: async () => { throw new Error("unexpected auth"); },
+    ensureHariaiUser: async () => context.auth.currentUser,
     active: false, lifecycleGeneration: 0, state: {}, stateRequest: null,
     threadGeneration: 0, markReadProgress: new Map(), contractUnsubscribe: null, eventsUnsubscribe: null, limitsUnsubscribe: null,
     walletUnsubscribe: null, markReadTimer: null, tickTimer: null, hold: null,

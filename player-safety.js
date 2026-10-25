@@ -1,4 +1,5 @@
-import { onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import { onValue, ref } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
 import { auth, database, functions, useOfflineMarketPreview } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
@@ -15,7 +16,6 @@ let returnFocus = null;
 let pending = null;
 let operationTimer = null;
 let operationBusy = false;
-let authPromise = null;
 let recentContact = null;
 let lastEventVersion = null;
 
@@ -37,11 +37,7 @@ function writeStored(key, value) {
 
 async function ensureUser() {
   if (useOfflineMarketPreview) throw new Error("プレビューでは安心設定を変更できません。");
-  if (!auth.currentUser) {
-    authPromise ||= signInAnonymously(auth).finally(() => { authPromise = null; });
-    await authPromise;
-  }
-  return auth.currentUser;
+  return ensureHariaiUser();
 }
 
 export async function requestSafety(action, data = {}) {

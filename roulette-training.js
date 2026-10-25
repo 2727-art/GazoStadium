@@ -1,9 +1,7 @@
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
 import {
-  browserLocalPersistence,
   onAuthStateChanged,
-  setPersistence,
-  signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
 import {
@@ -828,9 +826,7 @@ function hasUnboundLocalOwnerData() {
 async function ensureUser() {
   const generation = operationGeneration();
   const previousUid = String(state.uid || "");
-  await setPersistence(auth, browserLocalPersistence);
-  if (typeof auth.authStateReady === "function") await auth.authStateReady();
-  const user = auth.currentUser || (await signInAnonymously(auth)).user;
+  const user = await ensureHariaiUser();
   if (generationIsCurrent(generation)) {
     if (active && !previousUid && hasUnboundLocalOwnerData()) {
       await handleActiveAuthUidChange(user.uid, "local-owner");

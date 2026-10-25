@@ -56,7 +56,7 @@ function retiredModuleHarness(search = "") {
     } },
     httpsCallable: (_functions, name) => forbidden("callable:" + name),
     functions: {}, auth: {}, database: {},
-    setPersistence: forbidden("auth-persistence"), signInAnonymously: forbidden("anonymous-auth"),
+    ensureHariaiUser: forbidden("anonymous-auth"),
     get: forbidden("get"), onValue: forbidden("listener"), set: forbidden("set"), remove: forbidden("remove"),
     RTCPeerConnection: forbidden("peer"),
     FREE_TABLE_MEDIA_CHANNEL_LABEL: "test-media",

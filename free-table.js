@@ -1,9 +1,5 @@
-import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings } from "./player-safety.js?v=global-player-block-v1-copy-v2";
-import {
-  browserLocalPersistence,
-  setPersistence,
-  signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
 import {
   get,
   limitToLast,
@@ -1040,10 +1036,7 @@ function waitForDelay(delayMs) {
 
 async function ensureAuthenticated() {
   assertFreeTableAvailable();
-  if (auth.currentUser) return auth.currentUser;
-  await setPersistence(auth, browserLocalPersistence);
-  const credential = await signInAnonymously(auth);
-  return credential.user;
+  return ensureHariaiUser();
 }
 
 function setBusy(busy) {
