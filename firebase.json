@@ -85,6 +85,7 @@
     "ignore": [
       "firebase.json",
       "_headers",
+      "_redirects",
       ".firebaserc",
       "database.rules.json",
       "README.md",
