@@ -1,0 +1,456 @@
+{
+  "checkedAt": "2026-10-26T14:22:31.017Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "e6cf8a9",
+  "releaseHead": "978f4da",
+  "baseCommit": "e06c157",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-double-pay-refund, no upstream)",
+  "decision": "refund the double payments from the operator to the wallets; managers keep their balances (user decision, recommended option 1)",
+  "mechanism": {
+    "pendingField": "tributeProfiles/{uid}.operatorRefundPending",
+    "grantMarker": "operatorRefundGrants[double-payment-<contractId>]",
+    "claim": "claim_refund (existing 財布へ受け取る button), after any escrow refund, up to the wallet room",
+    "ledger": {
+      "kind": "tribute_operator_refund",
+      "labelKey": "anju_pay_tribute_operator_refund",
+      "label": "お貢ぎ牧場：運営からの返金（請求の二重払い）"
+    },
+    "script": "functions/scripts/grant-tribute-double-payment-refunds.cjs"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "hosting": true,
+    "hostingFiles": 169,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "account.js"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "productionDataWritten": "operator refunds added to 2 wallet profiles (130 Pay); wallet balances change only when the payer claims"
+  },
+  "tests": {
+    "total": 2205,
+    "passed": 2173,
+    "failed": 0,
+    "skipped": 32
+  },
+  "push": "e06c157..978f4da",
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "856693a70abd550a706396d9000a4015a24d6690",
+        "sourceHash": "3a828657772aa0663e8b06ab97c5a21d5e1be37b"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "grant": {
+    "dryRunAt": "2026-10-26T14:15:00.483Z",
+    "applyAt": "2026-10-26T14:20:49.250Z",
+    "contracts": 514,
+    "grants": 2,
+    "wallets": 2,
+    "extraPayments": 7,
+    "totalPay": 130,
+    "granted": 2,
+    "grantedPay": 130,
+    "alreadyGranted": 0,
+    "missingProfile": 0,
+    "byContract": [
+      {
+        "contractId": "f66265317c5c5aac64fa28c899899f6d2cd30665",
+        "amount": 90,
+        "extraPayments": 3
+      },
+      {
+        "contractId": "f80db4d1bc42304a320b4e83ba1a94076c27418d",
+        "amount": 40,
+        "extraPayments": 4
+      }
+    ]
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-26T14:13:07Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-double-pay-refund-v1",
+    "commit": "978f4da20727e0be1acab23e71e078edd7b7d40d",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-double-pay-refund-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/grant-tribute-double-payment-refunds.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-double-pay-refund.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-double-pay-refund-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/grant-tribute-double-payment-refunds.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-double-pay-refund.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-double-pay-refund-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/grant-tribute-double-payment-refunds.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-double-pay-refund.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-double-pay-refund-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/grant-tribute-double-payment-refunds.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-double-pay-refund.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "account.js": true
+    },
+    "servedClientHas": {
+      "hubRefundPanel": true,
+      "walletHistoryLabel": true
+    },
+    "consoleErrors": 0
+  },
+  "open": [
+    "refunds are claimed by the 2 payers when they open the ranch; not yet claimed at check time",
+    "the claim itself was not exercised in production (tests and preview)"
+  ]
+}
