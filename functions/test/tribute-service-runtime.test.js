@@ -1549,3 +1549,31 @@ test("a paid or cancelled request leaves pendingRequests for good, so it cannot 
   }
   assert.equal((await requestIds()).length, 3);
 });
+
+test("an operator refund for the double-payment bug is claimed into the wallet with its own ledger label, as far as the wallet has room", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  await startContract(harness, "manager", "payer", publicManagerId);
+  // 運営のスクリプト（grant-tribute-double-payment-refunds.cjs）が積んだ形。
+  harness.firestore.write("tributeProfiles/payer", {
+    ...harness.firestore.read("tributeProfiles/payer"),
+    operatorRefundPending: 90,
+    operatorRefundGrants: { "double-payment-x": { amount: 90, reason: "double_payment", contractId: "x", grantedAt: 1 } },
+  });
+  assert.equal((await harness.act("payer", "state")).profile.operatorRefundPending, 90);
+  // 財布の残高上限まで、あと40しか入らない時は40だけ受け取り、残りは待つ。
+  const wallet = harness.firestore.read("wallets/payer");
+  harness.firestore.write("wallets/payer", { ...wallet, maxBalance: wallet.balance + 40 });
+  const first = await harness.act("payer", "claim_refund", {});
+  assert.deepEqual({ amount: first.amount, operator: first.operatorAmount, escrow: first.escrowAmount, pending: first.profile.operatorRefundPending }, { amount: 40, operator: 40, escrow: 0, pending: 50 });
+  harness.firestore.write("wallets/payer", { ...harness.firestore.read("wallets/payer"), maxBalance: 1_000_000 });
+  const second = await harness.act("payer", "claim_refund", {});
+  assert.deepEqual({ amount: second.amount, pending: second.profile.operatorRefundPending }, { amount: 50, pending: 0 });
+  const refunds = harness.ledger("payer").filter((entry) => entry.kind === "tribute_operator_refund");
+  assert.deepEqual(refunds.map((entry) => [entry.delta, entry.labelKey, entry.details.reason]), [[40, "anju_pay_tribute_operator_refund", "double_payment"], [50, "anju_pay_tribute_operator_refund", "double_payment"]]);
+  assert.equal(new Set(refunds.map((entry) => entry.entryId)).size, 2, "each claim is its own ledger entry");
+  const third = await harness.act("payer", "claim_refund", {});
+  assert.equal(third.amount, 0);
+  // 管理人の残高には触れない。
+  assert.equal(harness.ledger("manager").some((entry) => entry.kind === "tribute_operator_refund"), false);
+});
