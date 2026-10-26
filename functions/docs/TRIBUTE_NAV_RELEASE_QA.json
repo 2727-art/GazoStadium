@@ -1,0 +1,345 @@
+{
+  "checkedAt": "2026-10-26T11:01:15.290Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "5a30f86",
+  "releaseHead": "241229e",
+  "baseCommit": "57d895f",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-nav, no upstream)",
+  "request": "A manager asked for fewer steps than top -> scroll -> ranch -> scroll -> contracts, e.g. managing tabs on the top page.",
+  "scope": {
+    "functions": [],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 169,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "app.js",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "serverCodeChanged": false,
+    "dataMigration": false,
+    "extraServerReads": false
+  },
+  "decisions": {
+    "order": "the recommended order, all three steps in one release (user decision)",
+    "contractScreen": "やること -> contract list -> settings once contracts exist; settings (start guide) first otherwise",
+    "todos": [
+      "申し込み",
+      "未払いの請求",
+      "受け取り待ち",
+      "使用許可の申請",
+      "残高報告の依頼",
+      "未読"
+    ],
+    "roleSwitch": "管理している/預けている for people with both, remembered in localStorage hariai.tribute.hubRole.v1",
+    "topShortcut": "only on devices with a manager card or contracts (localStorage hariai.ranch.regular.v1), above the 1on1 hero; newcomers keep the 1on1-first top page",
+    "directUrl": "?open=ranch opens the contract screen; carried in the URL while in the ranch and dropped on the way home; the copy uses the current origin so the same anonymous account sees its contracts",
+    "threadNext": "「次へ」 opens the next contract with something to do, in list order after the open one",
+    "startGuide": "only for people with neither a manager card nor contracts",
+    "fixes": [
+      "top-page ranking subtitle now reads 今月の番付加算で並ぶ管理人 (left over from the 2026-10-24 ranking-order release)",
+      "manager rows of active contracts showed 終了 because the payer's limits are hidden; they now show today's and total Pay"
+    ]
+  },
+  "tests": {
+    "total": 2180,
+    "passed": 2148,
+    "failed": 0,
+    "skipped": 32
+  },
+  "preRelease": {
+    "productionMatchedOriginMain": true,
+    "routes": [
+      "https://gazostadium.web.app",
+      "https://gazostadium.firebaseapp.com",
+      "https://gazostadium.anjugames.workers.dev",
+      "https://hariaistadium.com"
+    ],
+    "localPreview": "375px: todo counts and targets, role switch memory, 次へ cycling, top shortcut and its target, ?open=ranch auto-open; no console errors, no horizontal overflow"
+  },
+  "push": "57d895f..241229e",
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-26T11:01:02Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-nav-v1",
+    "commit": "241229e09e4e001b3eed9e6e13b619b33c2d056f",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-nav-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-nav.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-nav-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-nav.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-nav-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-nav.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-nav-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-nav.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "app.js": true,
+      "tribute.js": true,
+      "tribute.css": true,
+      "tribute-core.mjs": true
+    },
+    "servedClientHas": {
+      "topShortcut": true,
+      "rankingSubtitleFixed": true,
+      "todoAndThreadNext": true,
+      "openQueryAndNextInCore": true
+    },
+    "shortcutHiddenWithoutMark": true,
+    "rankingSubtitle": "今月の番付加算で並ぶ管理人",
+    "consoleErrors": 0,
+    "ranchActionsInProduction": false
+  },
+  "limits": [
+    "The top shortcut appears only after the device opens the ranch once after this release.",
+    "Clients loaded before the release (HTML max-age 3600) keep the old screens until reloaded.",
+    "The direct URL is for the same origin, device and browser; another origin is another anonymous account.",
+    "No two-player run, iPhone/Android device, Safari or home-screen launch check in production."
+  ]
+}
