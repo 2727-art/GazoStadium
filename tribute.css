@@ -546,6 +546,38 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
 .tribute-thread-title { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .tribute-thread-title > div:nth-child(2) { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .tribute-thread-title strong { overflow-wrap: anywhere; }
+.tribute-nickname-edit { margin-left: 6px; font-size: 0.74rem; font-weight: 700; }
+.tribute-nickname-origin { display: block; font-size: 0.7rem; }
+
+/* スクショ表示: 会話だけを画面いっぱいに出す（見た目だけ。掲載の許可の代わりにはならない） */
+.tribute-thread-screen.is-shot .tribute-header,
+.tribute-thread-screen.is-shot .tribute-thread-head,
+.tribute-thread-screen.is-shot #tributePendingRequests,
+.tribute-thread-screen.is-shot #tributeThreadHistory,
+.tribute-thread-screen.is-shot .tribute-composer,
+.tribute-thread-screen.is-shot .tribute-thread-actions,
+.tribute-thread-screen.is-shot .tribute-demo-banner { display: none; }
+.tribute-thread-screen.is-shot .tribute-events { max-height: none; overflow: visible; padding-bottom: 72px; }
+/* 会話の中の操作（受け取りの印・ご褒美・請求への応答など）も隠し、記録だけを残す */
+.tribute-thread-screen.is-shot .tribute-events .tribute-receive,
+.tribute-thread-screen.is-shot .tribute-events button,
+.tribute-thread-screen.is-shot .tribute-events .tribute-row { display: none; }
+body.tribute-shot-mode .site-header,
+body.tribute-shot-mode .site-footer { display: none; }
+.tribute-shot-exit {
+  position: fixed;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 30;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(13, 10, 16, 0.85);
+  color: var(--tr-mist);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
 .tribute-thread-end { margin-left: auto; }
 .tribute-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)); gap: 6px; }
 .tribute-meter { position: relative; display: grid; gap: 2px; padding: 6px 8px 10px; border-radius: 8px; background: rgba(255, 255, 255, 0.04); overflow: hidden; }
@@ -604,6 +636,35 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
   background: rgba(232, 194, 122, 0.08);
 }
 .tribute-request-card strong { font-size: 1.4rem; color: var(--tr-gold); }
+/* 未払いの請求の、タイムラインの印（本体は上の「未払いの請求」） */
+.tribute-request-mark {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: min(86%, 380px);
+  padding: 6px 12px 6px 6px;
+  border: 1px dashed rgba(232, 194, 122, 0.6);
+  border-radius: 999px;
+  background: rgba(232, 194, 122, 0.1);
+  color: var(--tr-text);
+  font-size: 0.82rem;
+}
+.tribute-request-mark i {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--tr-gold);
+  color: #2a1a05;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 900;
+}
+.tribute-request-mark b { color: var(--tr-gold); }
+.tribute-request-mark .tribute-chip { margin-left: 0; }
+.tribute-request-mark-note { max-width: min(86%, 380px); color: var(--tr-mist); font-size: 0.78rem; overflow-wrap: anywhere; }
 .tribute-event.is-tribute { justify-items: center; }
 .tribute-stamp {
   display: grid;

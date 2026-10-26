@@ -85,7 +85,7 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -362,9 +362,16 @@ function renderAge() {
 }
 
 function contractCounterpart(contract) {
-  return contract.role === "payer"
-    ? { name: contract.manager.personaName, card: contract.manager }
-    : { name: contract.payer.walletName, card: { personaName: contract.payer.walletName, sigil: 5 } };
+  if (contract.role === "payer") return { name: contract.manager.personaName, card: contract.manager };
+  const name = managerNickname(contract) || contract.payer.walletName;
+  return { name, card: { personaName: name, sigil: 5 } };
+}
+
+// 管理人が付けた呼び名（管理人にだけ見える）。スレッドの契約は Firestore から直接読むので、一覧の行から引く。
+function managerNickname(contract) {
+  if (contract?.role !== "manager") return "";
+  const own = typeof contract.nickname === "string" ? contract.nickname : state.contracts.find((row) => row.contractId === contract.contractId)?.nickname;
+  return String(own || "");
 }
 
 function statusChip(contract) {
@@ -487,7 +494,7 @@ function renderMyPanel(profile, { boardNotice = true } = {}) {
       <div class="tribute-me-wallet">
         <span class="tribute-eyebrow">財布として</span>
         <form class="tribute-inline-form" data-form="wallet-name">
-          <label><span>財布名（番付に載る時だけ使います）</span><input name="walletName" maxlength="${LIMITS.walletName}" value="${escapeHtml(profile.walletName || "")}" /></label>
+          <label><span>財布名（管理人のスレッドと番付に出ます）</span><input name="walletName" maxlength="${LIMITS.walletName}" value="${escapeHtml(profile.walletName || "")}" /></label>
           <button class="button button-ghost button-small" type="submit">保存</button>
         </form>
         <button class="button button-primary" type="button" data-t="nav" data-screen="board">管理人を探す</button>
@@ -785,7 +792,8 @@ function renderApply() {
     <label class="tribute-check is-consent"><input type="checkbox" name="acceptNoDecline" required /><span>請求は断れず、払うか解約するかであることを確かめました<small>限度額を超える請求は、払えないまま残ります。限度額と解約は、いつでも自分で設定できます。</small></span></label>
     <label class="tribute-check is-sexual"><input type="checkbox" name="allowSexualPurposes" /><span>性的な名目（${escapeHtml(SEXUAL_PURPOSE_SUMMARY)}）で請求されてもよい<small>許すと、管理人はこの名目で請求でき、あなたも無言の献上に付けられます。契約の「名目の設定」でいつでも外せます。</small></span></label>
     <label class="tribute-check is-shot"><input type="checkbox" name="allowScreenshots" /><span>管理人のXに、スクショを載せられてもいい<small>スレッドや献上レシートなど、あなたが写る画面です。財布名や会話が写ることがあります。管理人のスレッドに「スクショ掲載 可」の札が出るので、会話で頼まれることはありません。契約の「スクショの設定」でいつでも外せますが、すでに載ったものはアプリでは消せません。</small></span></label>
-    <label class="tribute-field"><span>財布名</span><input name="walletName" maxlength="${LIMITS.walletName}" value="${escapeHtml(profile.walletName || "")}" /></label>
+    <label class="tribute-field"><span>財布名（管理人のスレッドに出ます）</span><input name="walletName" maxlength="${LIMITS.walletName}" value="${escapeHtml(profile.walletName === "名無しの財布" ? "" : profile.walletName || "")}" placeholder="例：ポチ財布" />
+      <small>空のままだと「名無しの財布」になり、管理人があなたを見分けにくくなります。</small></label>
     <dl class="tribute-facts">
       <div><dt>入場料</dt><dd>${escapeHtml(formatPay(target.entryFee))}${target.entryFee ? "（受理された時に1回の献上として移ります）" : ""}</dd></div>
       <div><dt>申し込みの期限</dt><dd>48時間（いつでも取り下げできます）</dd></div>
@@ -1257,7 +1265,7 @@ function capsText(caps) {
 function renderEvent(event, view, statuses) {
   const mine = event.actor === view.role;
   const managerName = view.manager.personaName;
-  const payerName = view.payer.walletName;
+  const payerName = view.role === "manager" ? contractCounterpart(view).name : view.payer.walletName;
   const actorName = event.actor === "manager" ? managerName : event.actor === "payer" ? payerName : "";
   const time = `<time>${escapeHtml(formatDateTime(event.createdAt))}</time>`;
   const system = (text, extra = "") => `<li class="tribute-event is-system ${extra}"><p>${text}</p>${time}</li>`;
@@ -1375,7 +1383,11 @@ function renderThreadHead(view) {
     const ratio = max ? Math.min(100, Math.round((used / max) * 100)) : 0;
     return `<div class="tribute-meter"><span>${label}</span><b>${escapeHtml(formatPay(used))} / ${escapeHtml(formatPay(max))}</b><i style="--ratio:${ratio}%"></i></div>`;
   };
-  return `<div class="tribute-thread-title">${sigil(counterpart.card)}<div><span class="tribute-contract-line"><strong>${escapeHtml(counterpart.name)}</strong>
+  // 管理人には呼び名の入口と、呼び名を付けた時の元の財布名を出す（呼び名は財布には見えない）。
+  const nickname = view.role === "manager" && !state.thread.demo
+    ? `<button class="tribute-link tribute-nickname-edit" type="button" data-t="sheet" data-sheet="nickname">${managerNickname(view) ? "呼び名を変える" : "呼び名を付ける"}</button>${managerNickname(view) ? `<small class="tribute-nickname-origin">財布名：${escapeHtml(view.payer.walletName)}</small>` : ""}`
+    : "";
+  return `<div class="tribute-thread-title">${sigil(counterpart.card)}<div><span class="tribute-contract-line"><strong>${escapeHtml(counterpart.name)}</strong>${nickname}
       ${view.role === "payer" ? disclosureTag(view.manager.disclosure) : '<span class="tribute-tag">あなたが管理</span>'}${statusChip(view)}</span>
       <small>${view.status === "active" ? `${escapeHtml(remainingLabel(view.expiresAt))} ・ 言葉は${escapeHtml(TONE_LABELS[view.tone] || "普通")}` : view.status === "pending" ? `申し込みの期限 ${escapeHtml(formatDateTime(view.expiresAt))}` : escapeHtml(view.endReasonLabel)}</small></div>
       <div class="tribute-thread-end">${endButton}</div></div>
@@ -1470,6 +1482,10 @@ function renderPayableRequest(event, view, purpose) {
 }
 
 function renderThreadActions(view) {
+  return `${renderThreadActionButtons(view)}${renderShotButton(view)}`;
+}
+
+function renderThreadActionButtons(view) {
   if (state.thread.demo) {
     return `<div class="tribute-actions"><button class="button button-primary tribute-give-button" type="button" data-t="sheet" data-sheet="give" ${view.allowance ? "" : "disabled"}>差し出す（見本）</button></div>
       <p class="tribute-note">見本では、差し出す・請求に応える・画像で保存を試せます。Payは動きません。</p>`;
@@ -1504,7 +1520,7 @@ function renderThreadActions(view) {
     <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button>
     ${previewScreen ? "" : renderBlockButton({ mode: "tribute", contractId: view.contractId }, "ブロック")}
   </div>
-  ${withdraw ? `<div class="tribute-withdraw-ask"><p>${escapeHtml(view.payer.walletName)}が管理口座から ${escapeHtml(formatPay(withdraw.amount))} の使用許可を求めています。</p><div class="tribute-row"><button class="button button-primary button-small" type="button" data-t="escrow-decision" data-approve="1">許可する</button><button class="button button-ghost button-small" type="button" data-t="escrow-decision" data-approve="0">却下する</button></div></div>` : ""}`;
+  ${withdraw ? `<div class="tribute-withdraw-ask"><p>${escapeHtml(contractCounterpart(view).name)}が管理口座から ${escapeHtml(formatPay(withdraw.amount))} の使用許可を求めています。</p><div class="tribute-row"><button class="button button-primary button-small" type="button" data-t="escrow-decision" data-approve="1">許可する</button><button class="button button-ghost button-small" type="button" data-t="escrow-decision" data-approve="0">却下する</button></div></div>` : ""}`;
 }
 
 function renderTemplates(view) {
@@ -1533,8 +1549,27 @@ function renderThreadHistory() {
 function renderThreadEvents(view) {
   const statuses = requestStatusMap(state.thread.events);
   const pending = new Set(view.status === "active" ? view.pendingRequests.map((request) => request.requestId) : []);
-  return state.thread.events.filter((event) => event.type !== "request" || !pending.has(event.requestId))
-    .map((event) => renderEvent(event, view, statuses)).join("");
+  // 未払いの請求の本体は上の「未払いの請求」に出す。タイムラインには、送った時点に印付きの小さな行を残す。
+  return state.thread.events
+    .map((event) => (event.type === "request" && pending.has(event.requestId) ? renderRequestMark(event, view) : renderEvent(event, view, statuses))).join("");
+}
+
+// タイムラインに残す、未払いの請求の印（金額・名目・未払い）。払われると、ふつうの請求の行に変わる。
+function renderRequestMark(event, view) {
+  const mine = event.actor === view.role;
+  const purpose = purposeLabel(event.purpose, { allowSexual: view.allowSexualPurposes }) ? event.purpose : "";
+  return `<li class="tribute-event is-request-mark ${mine ? "is-mine" : "is-theirs"}"><span class="tribute-request-mark"><i aria-hidden="true">請</i><span>請求 <b>${escapeHtml(formatPay(event.amount))}</b></span>${purposeTag(purpose, view)}<span class="tribute-chip is-pending">未払い</span></span>${event.note ? `<span class="tribute-request-mark-note">${escapeHtml(event.note)}</span>` : ""}<time>${escapeHtml(formatDateTime(event.createdAt))}</time></li>`;
+}
+
+// スクショ表示。会話だけを画面いっぱいに出す（見出し・財布の額・操作・入力欄を隠す）。見た目だけで、掲載の許可の代わりにはならない。
+// 管理人には、財布が「スクショ掲載 可」にしている契約でだけ出す。財布には常に出す。
+function canShowShot(view) {
+  if (state.thread.demo) return false;
+  return view.role === "payer" || view.allowScreenshots === true;
+}
+
+function renderShotButton(view) {
+  return canShowShot(view) ? `<div class="tribute-actions tribute-shot-actions"><button class="button button-ghost button-small" type="button" data-t="shot-on">スクショ表示</button></div>` : "";
 }
 
 function renderThread() {
@@ -1552,13 +1587,14 @@ function renderThread() {
     <div id="tributePendingRequests">${renderPendingRequests(view)}</div>
     <div id="tributeThreadHistory">${renderThreadHistory()}</div>
     <ol class="tribute-events" id="tributeThreadEvents" aria-live="polite">${renderThreadEvents(view)}</ol>
-    <div class="tribute-thread-actions" id="tributeThreadActions">${renderThreadActions(view)}</div>
     ${view.status === "active" && !thread.demo ? `<form class="tribute-composer" data-form="message">
       <textarea name="text" maxlength="${LIMITS.message}" rows="2" placeholder="${view.role === "manager" ? "管理の言葉（相手の「言われたくない言葉」は送れません）" : "返事・報告・止める言葉"}"></textarea>
       <div class="tribute-composer-foot"><small data-composer-count>0 / ${LIMITS.message}</small><span class="tribute-form-error" data-form-error role="alert"></span><button class="button button-primary button-small" type="submit">送る</button></div>
       ${renderTemplates(view)}
     </form>` : ""}
-  </div>`, { title: view.role === "payer" ? view.manager.personaName : view.payer.walletName, screenClass: "tribute-thread-screen" });
+    <div class="tribute-thread-actions" id="tributeThreadActions">${renderThreadActions(view)}</div>
+    ${thread.shot ? '<button class="tribute-shot-exit" type="button" data-t="shot-off">スクショ表示を終える</button>' : ""}
+  </div>`, { title: contractCounterpart(view).name, screenClass: `tribute-thread-screen${thread.shot ? " is-shot" : ""}` });
 }
 
 function updateThreadParts() {
@@ -1701,6 +1737,15 @@ function renderSheet() {
         <button class="button ${allow ? "button-ghost" : "button-primary"}" type="button" data-t="set-purposes" data-allow="${allow ? "0" : "1"}" ${state.busy ? "disabled" : ""}>${allow ? "許可を外す" : "許可する"}</button>
         <button class="button button-ghost" type="button" data-t="sheet-close">閉じる</button>
       </div>`);
+    }
+    case "nickname": {
+      if (view.role !== "manager") return "";
+      return wrap("呼び名", `<form class="tribute-sheet-form" data-form="nickname">
+        <p>${escapeHtml(view.payer.walletName)}に、あなただけが見える呼び名を付けます。契約の一覧・スレッド・やることに、財布名の代わりに出ます。財布には見えません。同じ財布との次の契約にも引き継ぎます。</p>
+        <label class="tribute-field"><span>呼び名（${LIMITS.nickname}文字まで・空にすると外します）</span><input name="nickname" maxlength="${LIMITS.nickname}" value="${escapeHtml(managerNickname(view))}" placeholder="例：ポチ" /></label>
+        <p class="tribute-form-error" data-form-error role="alert"></p>
+        <button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>保存する</button>
+      </form>`);
     }
     case "screenshots": {
       if (view.role !== "payer") return "";
@@ -2261,6 +2306,8 @@ function render() {
     vault: renderVault,
   };
   appRoot.innerHTML = (renderers[state.screen] || renderHub)();
+  // スクショ表示の間は、サイトの見出しと足元も隠す。
+  document.body?.classList.toggle("tribute-shot-mode", state.screen === "thread" && state.thread?.shot === true);
   renderLayer();
 }
 
@@ -2920,6 +2967,19 @@ async function handleSubmit(form) {
       if (result) closeSheet();
       return;
     }
+    case "nickname": {
+      const nickname = String(form.elements.nickname.value || "").trim().slice(0, LIMITS.nickname);
+      const result = await mutate("set_nickname", contractPayload({ nickname }), { form });
+      if (result) {
+        const saved = typeof result.nickname === "string" ? result.nickname : nickname;
+        const row = state.contracts.find((contract) => contract.contractId === state.thread.contractId);
+        if (row) row.nickname = saved;
+        showToast(saved ? "呼び名を付けました。財布には見えません。" : "呼び名を外しました。");
+        closeSheet();
+        render();
+      }
+      return;
+    }
     case "caps": {
       const caps = normalizeCaps({ perTribute: form.elements.perTribute.value, perDay: form.elements.perDay.value, total: form.elements.total.value });
       if (!caps) return setFormError(form, "限度額は「1回 ≦ 1日 ≦ 合計」になるように選んでください。");
@@ -3240,6 +3300,17 @@ async function handleClick(target) {
       }
       return;
     }
+    case "shot-on":
+      if (state.screen !== "thread" || !state.thread.view || !canShowShot(state.thread.view)) return;
+      state.thread.shot = true;
+      render();
+      window.scrollTo?.({ top: document.documentElement.scrollHeight });
+      return;
+    case "shot-off":
+      state.thread.shot = false;
+      render();
+      scrollThreadToEnd();
+      return;
     case "set-screenshots": {
       const allow = target.dataset.allow === "1";
       const result = await mutate("set_screenshots", contractPayload({ allowScreenshots: allow }), {
@@ -3589,6 +3660,7 @@ function requestHome() {
   pendingInvite = "";
   if (!active) return;
   active = false;
+  document.body?.classList.remove("tribute-shot-mode");
   lifecycleGeneration += 1;
   cancelHold();
   stopThread();
@@ -3704,6 +3776,8 @@ function takeInviteFromUrl() {
 
 // 見本で保存したカード。ページを読み直すまで、見本の state がこれを返す。
 let previewSavedProfile = null;
+// 見本で付けた呼び名（契約ID → 呼び名）。ページを読み直すまで、見本の state がこれを返す。
+const previewNicknames = new Map();
 
 // 見本のスレッドを画面の上でだけ進める（受け取る・ご褒美・名目の確認用）。
 function previewThreadChange(change) {
@@ -3863,7 +3937,7 @@ function previewCall(action, payload) {
           ...(previewScreen === "newcomer" ? [] : [viewContract(previewRaw("payer"), "preview-me", now)]),
           viewContract(previewRaw("manager"), "preview-me", now),
           viewContract(previewRaw("manager", "pending"), "preview-me", now),
-        ],
+        ].map((contract) => (contract.role === "manager" ? { ...contract, nickname: previewNicknames.get(contract.contractId) || "" } : contract)),
       });
     case "board":
       return Promise.resolve({
@@ -4013,6 +4087,13 @@ function previewCall(action, payload) {
         push({ type: "request_declined", actor: "payer", requestId: payload.requestId });
       });
       return Promise.resolve({ ok: true });
+    }
+    case "set_nickname": {
+      const nickname = String(payload.nickname || "").trim().slice(0, LIMITS.nickname);
+      previewNicknames.set(payload.contractId, nickname);
+      const row = state.contracts.find((contract) => contract.contractId === payload.contractId);
+      if (row) row.nickname = nickname;
+      return Promise.resolve({ ok: true, nickname });
     }
     case "set_screenshots": {
       const view = previewThreadChange((raw, push) => {

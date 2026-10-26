@@ -180,6 +180,16 @@ Out of scope: 現金・外部決済・換金、個人情報の交換、晒し、
 - 管理人の宣言「スクショを載せる」: 管理人カードの札（`card.postsScreenshots`）。6節「スクショの掲載」。
 - 管理人の宣言「未払いは既読無視」: 管理人カードの札（`card.ignoreUnpaid`）。掲示板・カード・申し込み・財布募集の画像に出し、スレッドでは管理する側がいつでも切り替えられる（`set_declaration`）。進行中・申込中の契約の `managerIgnoreUnpaid` にも写し、預ける側のスレッドに出す。宣言は演出で、システムが既読無視を強制することはない。
 
+### スレッドの使い勝手（2026年10月、利用者の要望）
+
+管理人の利用者から、スレッドで長く会話する前提の要望が4つあり、すべて入れた（ユーザー決定）。
+
+- 入力欄は会話のすぐ下に置き、請求する・管理口座から徴収・通報などの操作はその下にまとめる（財布の発言を見ながら打てるように）。
+- 未払いの請求の本体は上の「未払いの請求」に出したまま、タイムラインにも送った時点に印付きの小さな行（「請」の印・金額・名目・未払い・一言）を残す。払われると、ふつうの請求の行に変わる。
+- 呼び名: 管理人は財布ごとに、自分だけが見える呼び名（12文字まで）を付けられる（`set_nickname`）。管理人の記録 `tributeProfiles/{uid}.payerNicknames`（財布の UID ごと、財布からは読めない）に置き、契約の一覧・スレッドの題と出来事・やること・「次へ」に財布名の代わりに出す。同じ財布との次の契約にも引き継ぐ。契約の記録には書かないので、一覧の並びは変わらない。財布には見えないので、言葉の判定はかけない（ユーザー決定: 管理人だけに見える）。
+- 財布名の欄は「管理人のスレッドと番付に出ます」と説明する（以前は「番付に載る時だけ使います」で、多くの財布が空のまま「名無しの財布」になっていた）。申し込みでも、空なら見分けにくくなることを出す。
+- スクショ表示: スレッドの「スクショ表示」で、見出し（相手の名前・自分の財布の額）・移動・相手の札と限度額・未払いの請求・操作・入力欄・会話の中の操作を隠し、会話だけを画面いっぱいに出す。見た目だけで、掲載の許可の代わりにはならない。管理人には「スクショ掲載 可」の契約でだけ、財布には常に出す（ユーザー決定）。
+
 ## 8. 管理人の金庫（牧場基金の置き換え、2026年10月）
 
 牧場基金（上納・称号・推薦棚・方針の投票・手数料の補填）は、上納する管理人が2人だけで、Pay を手放して他人のために使う作りが、Pay を貯めることを楽しむ人に合わなかった。上納の80%が消え、称号は毎月リセットされた。そこで、持っている Pay をそのまま見せられる「管理人の金庫」に置き換えた（ユーザー決定）。
@@ -221,7 +231,7 @@ Out of scope: 現金・外部決済・換金、個人情報の交換、晒し、
 
 すべて Cloud Firestore。クライアントの直接書き込みは全面禁止。読み取りは契約の参加者による `tributeContracts/{contractId}` と、その `events`、預ける側だけによる `private/limits` を許可する（スレッドの即時表示のため）。それ以外は Callable `tributeAction`（App Check 必須）が本人の権限を確かめて返す。
 
-- `tributeProfiles/{uid}`: 年齢確認、財布名、管理人カード、受付中・活動時刻、契約数の計数、金庫（`vaultAmount`・`vaultTier`・`vaultTierAt`・`vaultBestTier`・`vaultQualifiedAt`・`vaultRecentOps`）、限定称号の確認済み（`honorRecordsChecked`）
+- `tributeProfiles/{uid}`: 年齢確認、財布名、管理人カード、管理人が財布ごとに付けた呼び名（`payerNicknames`、管理人にだけ返す）、受付中・活動時刻、契約数の計数、金庫（`vaultAmount`・`vaultTier`・`vaultTierAt`・`vaultBestTier`・`vaultQualifiedAt`・`vaultRecentOps`）、限定称号の確認済み（`honorRecordsChecked`）
 - `tributeContracts/{contractId}`（参加者のみ読取）と `events/{eventId}`。既読無視の `ignoredSince`・`lastPayerMessageSeq`・`lastManagerReplySeq`、宣言の写し `managerIgnoreUnpaid` を持つ。
 - `tributeContracts/{contractId}/private/limits`（預ける側のみ読取）: `caps`・`pendingCaps`・`pendingCapsEffectiveDateKey`。以前の契約は、サーバーが契約に触れた時に契約の記録から移して消す。残りは公開後に `functions/scripts/migrate-tribute-limits.cjs`（既定は数えるだけ、`--apply` で移す）で一度に移し、出来事（申し込み・限度額の変更）に残っていた限度額も消す。
 - `tributeReceipts/{uid}/items/{receiptId}`

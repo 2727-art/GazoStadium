@@ -30,6 +30,7 @@ const {
   X_HANDLE_PATTERN,
   normalizeAvatar,
   normalizeWalletName,
+  normalizeNickname,
   normalizeApplication,
   normalizePurpose,
   visiblePurpose,
@@ -89,6 +90,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "request_report",
   "set_purposes",
   "set_screenshots",
+  "set_nickname",
   "receive",
   "share_info",
   "set_word",
@@ -209,6 +211,10 @@ function readProfile(snapshot) {
     vaultQualifiedAt: integer(data.vaultQualifiedAt, 0, Number.MAX_SAFE_INTEGER, 0),
     vaultRecentOps: Array.isArray(data.vaultRecentOps) ? data.vaultRecentOps.map(String).slice(-LIMITS.vaultRecentOps) : [],
     honorRecordsChecked: data.honorRecordsChecked === true,
+    // 管理人が財布（payerUid）ごとに付けた呼び名。管理人にだけ返す。空は外した呼び名。
+    payerNicknames: Object.fromEntries(Object.entries(object(data.payerNicknames))
+      .map(([payerUid, name]) => [payerUid, normalizeNickname(name)])
+      .filter(([payerUid, name]) => payerUid && name)),
     severeReportMonthKey: String(data.severeReportMonthKey || ""),
     severeReportCount: integer(data.severeReportCount, 0, 1_000_000, 0),
   };
@@ -1258,7 +1264,11 @@ function createTributeService(deps) {
         ? limitsRef(contract.contractId).get()
         : Promise.resolve(null)
     )));
-    const contracts = raw.map((contract, index) => viewContract(withLimits(contract, limits[index]), uid, now));
+    // 管理している契約には、管理人が付けた呼び名を足す（財布には返さない）。
+    const contracts = raw.map((contract, index) => {
+      const view = viewContract(withLimits(contract, limits[index]), uid, now);
+      return contract.managerUid === uid ? { ...view, nickname: profile.payerNicknames[contract.payerUid] || "" } : view;
+    });
     let achievements = null;
     try {
       const achievementState = await ensureAchievementState(uid, { checkHonors: profile.exists && !profile.honorRecordsChecked });
@@ -2070,6 +2080,23 @@ function createTributeService(deps) {
         pushEvent(ctx, { type: "report_requested", actor: "manager" });
         markManagerActive(ctx);
         return { ok: true };
+      },
+    },
+    // 呼び名。管理人が財布ごとに付け、管理人の記録（tributeProfiles、財布からは読めない）にだけ残す。
+    // 同じ財布との次の契約にも引き継ぐ。契約の記録には書かないので、一覧の並びも変わらない。
+    set_nickname: {
+      roles: ["manager"],
+      statuses: ["pending", "active", "ended"],
+      write(ctx, _extra, data) {
+        const nickname = normalizeNickname(data?.nickname);
+        const names = ctx.profiles.manager.value.payerNicknames || {};
+        const payerUid = ctx.contract.payerUid;
+        if ((names[payerUid] || "") === nickname) return { ok: true, nickname, unchanged: true };
+        if (nickname && !names[payerUid] && Object.keys(names).length >= LIMITS.nicknameEntries) {
+          fail("resource-exhausted", `呼び名は${LIMITS.nicknameEntries}人までです。使わない呼び名を外してください。`);
+        }
+        patchProfile(ctx, "manager", { payerNicknames: { ...names, [payerUid]: nickname } });
+        return { ok: true, nickname };
       },
     },
     // スクショ掲載の許可（管理人のXに、財布が写る画面を載せてよいか）。決めるのは預ける側だけで、いつでも変えられる。

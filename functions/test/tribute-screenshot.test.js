@@ -78,7 +78,8 @@ test("the safety page, design note and cache keys record the rule", () => {
   assert.match(design, /### スクショの掲載/);
   assert.match(design, /`allowScreenshots`/);
   assert.match(design, /`card\.postsScreenshots`/);
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-screenshot-v1"`), name);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-screenshot-v1"/);
+  // 後の公開の印が後ろに付いても、この公開の印が残っていればよい。
+  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-screenshot-v1(?:-[a-z0-9-]+)?"`), name);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-screenshot-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1-ranch-screenshot-v1"/);
 });

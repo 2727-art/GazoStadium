@@ -1481,3 +1481,39 @@ test("screenshot consent is the payer's contract setting, shown to the manager w
   const saved = await harness.act("manager", "save_profile", { card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 10, sigil: 2, postsScreenshots: false }, accepting: true });
   assert.equal(saved.profile.card.postsScreenshots, false);
 });
+
+test("managers give each wallet a private nickname that only they see, kept for the next contract, without reordering the list", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { walletName: "" });
+  const managerRow = async (id = contractId) => (await harness.act("manager", "state")).contracts.find((row) => row.contractId === id);
+  assert.equal((await managerRow()).payer.walletName, "名無しの財布");
+  assert.equal((await managerRow()).nickname, "");
+  const updatedAt = harness.contract(contractId).updatedAt;
+
+  // 付けられるのは管理人だけ。
+  await rejects(harness.act("payer", "set_nickname", { contractId, nickname: "ご主人様" }), /この操作はできません/);
+  harness.advance(1_000);
+  const saved = await harness.act("manager", "set_nickname", { contractId, nickname: "  ポチ  " });
+  assert.equal(saved.nickname, "ポチ");
+  assert.equal((await managerRow()).nickname, "ポチ");
+  assert.equal(harness.contract(contractId).updatedAt, updatedAt, "the contract (and the list order) is untouched");
+  assert.equal(harness.contract(contractId).nickname, undefined, "nothing is written where the payer can read");
+  assert.deepEqual(harness.firestore.read("tributeProfiles/manager").payerNicknames, { payer: "ポチ" });
+  assert.equal((await harness.act("manager", "set_nickname", { contractId, nickname: "ポチ" })).unchanged, true);
+  assert.equal((await harness.act("manager", "set_nickname", { contractId, nickname: "x".repeat(20) })).nickname.length, 12);
+
+  // 財布の state には呼び名が出ない。
+  const payerRow = (await harness.act("payer", "state")).contracts.find((row) => row.contractId === contractId);
+  assert.equal(payerRow.nickname, undefined);
+  assert.doesNotMatch(JSON.stringify(await harness.act("payer", "state")), /xxxxxxxxxxxx|ポチ/);
+
+  // 同じ財布との次の契約にも引き継ぐ。空にすると外れる。
+  await harness.act("payer", "terminate", { contractId });
+  harness.advance(31_000);
+  const nextId = await startContract(harness, "manager", "payer", publicManagerId);
+  assert.equal((await managerRow(nextId)).nickname, "x".repeat(12));
+  await harness.act("manager", "set_nickname", { contractId: nextId, nickname: "" });
+  assert.equal((await managerRow(nextId)).nickname, "");
+  assert.equal((await managerRow(contractId)).nickname, "", "an ended contract with the same wallet follows too");
+});

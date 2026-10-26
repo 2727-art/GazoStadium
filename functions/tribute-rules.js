@@ -112,6 +112,9 @@ const LIMITS = Object.freeze({
   personaName: 16,
   intro: 60,
   walletName: 16,
+  // 管理人が財布ごとに付ける呼び名（管理人にだけ見える）。
+  nickname: 12,
+  nicknameEntries: 300,
   ngWordCount: 5,
   ngWordLength: 12,
   message: 240,
@@ -465,6 +468,11 @@ function normalizeWalletName(value) {
   return forbiddenReason(name) ? "名無しの財布" : name;
 }
 
+// 管理人が財布ごとに付ける呼び名。管理人にだけ見えるので、言葉の判定はかけない（空にすると外す）。
+function normalizeNickname(value) {
+  return cleanLine(value, LIMITS.nickname);
+}
+
 function normalizeApplication(value, { entryFee = 0 } = {}) {
   const caps = normalizeCaps(value?.caps);
   if (!caps) return { error: "限度額は「1回 ≦ 1日 ≦ 合計」になるように選んでください。" };
@@ -682,6 +690,7 @@ module.exports = {
   normalizeXProfile,
   X_HANDLE_PATTERN,
   normalizeWalletName,
+  normalizeNickname,
   normalizeApplication,
   normalizePurpose,
   visiblePurpose,

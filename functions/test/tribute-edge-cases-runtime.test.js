@@ -95,9 +95,9 @@ test("RANCH-02: old unpaid requests stay actionable and older tributes can be re
   const all = h.events(contractId);
   const raw = { contractId, ...h.contract(contractId), ...h.firestore.read(`tributeContracts/${contractId}/private/limits`) };
   const context = vm.createContext({ ...module, ...await deco, previewScreen: "", sealChoices: new Map(),
-    state: { profile: h.firestore.read("tributeProfiles/manager"), thread: {}, walletBalance: 2000 },
+    state: { profile: h.firestore.read("tributeProfiles/manager"), thread: {}, contracts: [], walletBalance: 2000 },
     frame: html => html, escapeHtml: String, renderBlockButton: () => "", renderTemplates: () => "", renderThreadHead: () => "", sealSvg: () => "" });
-  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderPendingRequests", "renderThreadHistory", "renderThreadEvents", "renderThread"]);
+  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "canShowShot", "renderShotButton", "renderPendingRequests", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
   const render = (uid, events) => { context.state.thread = { view: module.viewContract(raw, uid, h.now()), events }; return context.renderThread(); };
   assert.equal((render("payer", all.slice(-100)).match(/data-t="give-request"/g) || []).length, 3);
   assert.equal((render("manager", all.slice(-100)).match(/data-t="cancel-request"/g) || []).length, 3);

@@ -23,6 +23,7 @@ export const LIMITS = Object.freeze({
   personaName: 16,
   intro: 60,
   walletName: 16,
+  nickname: 12,
   ngWordCount: 5,
   ngWordLength: 12,
   message: 240,
