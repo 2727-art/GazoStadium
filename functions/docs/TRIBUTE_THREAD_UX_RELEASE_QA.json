@@ -1,0 +1,420 @@
+{
+  "checkedAt": "2026-10-26T12:40:46.509Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "f9d4990",
+  "releaseHead": "24afefe",
+  "baseCommit": "8a468b9",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-thread-ux, no upstream)",
+  "request": [
+    "hide the name and wallet balance for screenshots",
+    "type while reading the wallet's messages",
+    "tell 名無しの財布 apart",
+    "a marker in the timeline when a request is sent"
+  ],
+  "decisions": {
+    "nickname": "visible to the manager only (user decision)",
+    "screenshotView": "managers only on contracts with スクショ掲載 可, wallets always (user decision)",
+    "oneRelease": true
+  },
+  "changes": {
+    "composer": "events -> composer -> actions",
+    "requestMark": "pending requests keep a marked line (請, amount, purpose, 未払い, note) at the time sent",
+    "nickname": {
+      "action": "set_nickname (manager only)",
+      "storage": "tributeProfiles/{managerUid}.payerNicknames[payerUid] (server-only)",
+      "maxLength": 12,
+      "maxEntries": 300,
+      "carriesToNextContract": true,
+      "touchesContract": false,
+      "shownTo": "manager only"
+    },
+    "walletNameCopy": "財布名（管理人のスレッドと番付に出ます）; apply screen warns that an empty name becomes 名無しの財布",
+    "screenshotView": "hides headers, wallet balance, nav, site header/footer, thread head, pending panel, actions, composer and in-thread buttons"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 169,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "dataMigration": false
+  },
+  "tests": {
+    "total": 2194,
+    "passed": 2162,
+    "failed": 0,
+    "skipped": 32
+  },
+  "push": "8a468b9..24afefe",
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "0a5bddb4f6c7cd618317bff78620025c0fcfb2e0",
+        "sourceHash": "566f871dc89e59cfad57adcbe3f4a51bbc4c433d"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-26T12:40:23Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-thread-ux-v1",
+    "commit": "24afefec58123c8ef8827c2421bccd7a71c83e6f",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-thread-ux-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-thread-ux.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-thread-ux-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-thread-ux.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-thread-ux-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-thread-ux.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-thread-ux-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-thread-ux.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "tribute.css": true,
+      "tribute-core.mjs": true
+    },
+    "servedClientHas": {
+      "composerBeforeActions": true,
+      "requestMark": true,
+      "nickname": true,
+      "walletNameCopy": true,
+      "screenshotView": true
+    },
+    "coreNicknameLimit": 12,
+    "consoleErrors": 0,
+    "ranchActionsInProduction": false
+  },
+  "limits": [
+    "Clients loaded before the release (HTML max-age 3600) keep the old thread layout until reloaded.",
+    "Cleared nicknames stay as empty values in the manager profile (filtered on read); up to 300 wallets.",
+    "The screenshot view is visual only; posting still depends on the wallet's スクショ掲載 可.",
+    "No nickname save, request mark, two-player run, iPhone/Android device or Safari screenshot check in production."
+  ]
+}
