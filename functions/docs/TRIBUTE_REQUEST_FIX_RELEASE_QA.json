@@ -1,0 +1,469 @@
+{
+  "checkedAt": "2026-10-26T13:55:47.936Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "90a458f",
+  "releaseHead": "e06c157",
+  "baseCommit": "18f3b2d",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-request-fix, no upstream)",
+  "foundBy": "two-player run on the local Firebase emulators during a proactive check of the day's ranch releases; the read-only code review did not catch it",
+  "bug": {
+    "summary": "paid or cancelled requests stayed in pendingRequests and could be paid again",
+    "cause": "flush wrote the contract with set(..., {merge:true}), which deep-merges nested maps in real Firestore, so deleted request keys survived; the unit-test double merged only top-level fields",
+    "since": "ranch launch (2026-10-01)",
+    "emulatorReproduction": "one 5 Pay request paid twice (two receipts)"
+  },
+  "fix": {
+    "contractWrite": "set with mergeFields (whole written fields replaced)",
+    "testDoubles": "functions/test/helpers/firestore-merge.cjs used by the three ranch fakes",
+    "regressionTests": [
+      "tribute-service-runtime: paid/cancelled requests leave and cannot be paid twice",
+      "tribute-cost-emulator (real Firestore): same check"
+    ],
+    "failsWithoutFix": true,
+    "repairScript": "functions/scripts/repair-tribute-pending-requests.cjs (read-only by default; --apply removes keys proven closed by events, updatedAt untouched)"
+  },
+  "alsoFixed": [
+    "apply screen now shows the manager's declarations and the high-request tag",
+    "スクショ表示 ends when the wallet withdraws consent",
+    "redraws keep the typed draft",
+    "request notes enter the excerpt image only if they pass the card filter"
+  ],
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 169,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2202,
+    "passed": 2170,
+    "failed": 0,
+    "skipped": 32,
+    "realFirestoreEmulator": {
+      "total": 14,
+      "passed": 14,
+      "failed": 0
+    }
+  },
+  "push": "18f3b2d..e06c157",
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "566f871dc89e59cfad57adcbe3f4a51bbc4c433d",
+        "sourceHash": "856693a70abd550a706396d9000a4015a24d6690"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "repair": {
+    "dryRunAt": "2026-10-26T13:54:58.737Z",
+    "applyAt": "2026-10-26T13:55:51.519Z",
+    "contracts": 510,
+    "openWithPending": 5,
+    "staleRequests": 0,
+    "removedRequests": 0,
+    "duplicatePayments": 7,
+    "duplicateExtraPay": 130,
+    "duplicateContracts": [
+      {
+        "contractId": "f66265317c5c5aac64fa28c899899f6d2cd30665",
+        "status": "ended",
+        "duplicates": [
+          {
+            "payments": 2,
+            "extraPay": 30
+          },
+          {
+            "payments": 3,
+            "extraPay": 60
+          }
+        ]
+      },
+      {
+        "contractId": "f80db4d1bc42304a320b4e83ba1a94076c27418d",
+        "status": "ended",
+        "duplicates": [
+          {
+            "payments": 2,
+            "extraPay": 10
+          },
+          {
+            "payments": 4,
+            "extraPay": 30
+          }
+        ]
+      }
+    ]
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-26T13:54:40Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-request-fix-v1",
+    "commit": "e06c157ab8ce5a3e6503f473495632932466a2a9",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-request-fix-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/repair-tribute-pending-requests.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-request-fix.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-request-fix-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/repair-tribute-pending-requests.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-request-fix.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-request-fix-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/repair-tribute-pending-requests.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-request-fix.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-request-fix-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/repair-tribute-pending-requests.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-request-fix.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKey": true,
+    "servedClientHas": {
+      "applyDeclarations": true,
+      "shotExitOnRevoke": true,
+      "keepDraft": true,
+      "noteFilter": true
+    },
+    "consoleErrors": 0,
+    "ranchActionsInProduction": false
+  },
+  "open": [
+    "refund decision for 7 duplicate payments (130 Pay) in 2 ended contracts",
+    "40-contract state window for very busy managers",
+    "screenshot view still shows wallet names inside stamps/system lines and balance reports",
+    "other modes' test doubles also merge only top-level fields"
+  ]
+}
