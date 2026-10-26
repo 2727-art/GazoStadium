@@ -2,6 +2,7 @@
 // Read-only public file and deployed function metadata checks. No player API calls.
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 const { ORIGINS, sha256LF, assetReference } = require("./verify-player-safety-release.cjs");
 const { createAdminReader } = require("./verify-image-preference-functions.cjs");
 const root = path.resolve(__dirname, "../..");
@@ -15,7 +16,8 @@ async function main() {
   const since = process.argv[2];
   if (!Number.isFinite(Date.parse(since))) throw new Error("Deployment start timestamp required");
   const files = ["index.html", "tribute.js", "tribute.css"];
-  const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, sha256LF(await fs.readFile(path.join(root, file), "utf8"))])));
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", windowsHide: true }).trim();
+  const hashes = Object.fromEntries(files.map(file => [file, sha256LF(execFileSync("git", ["show", `${commit}:${file}`], { cwd: root, encoding: "utf8", windowsHide: true }))]));
   const routes = await Promise.all(ORIGINS.map(async origin => {
     const home = await read(`${origin}/?releaseCheck=${Date.now()}`);
     const assets = await Promise.all(files.slice(1).map(async file => {
@@ -31,7 +33,7 @@ async function main() {
     return { name, state: data.state, runtime: data.buildConfig?.runtime, updatedAt: data.updateTime, revision: data.serviceConfig?.revision,
       ok: data.state === "ACTIVE" && data.buildConfig?.runtime === "nodejs24" && Date.parse(data.updateTime) >= Date.parse(since) };
   }));
-  const report = { checkedAt: new Date().toISOString(), readOnly: true, marker, since, hashes, routes, functions, ok: routes.every(route => route.ok) && functions.every(fn => fn.ok) };
+  const report = { checkedAt: new Date().toISOString(), readOnly: true, marker, since, commit, hashes, routes, functions, ok: routes.every(route => route.ok) && functions.every(fn => fn.ok) };
   await fs.writeFile(path.join(root, "functions/docs/TRIBUTE_EDGE_FIX_RELEASE_QA.json"), JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify(report, null, 2));
   if (!report.ok) process.exitCode = 1;
