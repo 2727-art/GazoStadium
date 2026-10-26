@@ -256,6 +256,46 @@ test("tribute cost guards preserve real Firestore transaction and lifecycle cont
     assert.deepEqual(f.trace.writes, [], "already-unlocked state does not rewrite stats or achievements");
   });
 
+  await t.test("full-wallet termination and concurrent refund claims conserve the escrow exactly once", async () => {
+    const f = await fixture({ contractPatch: { escrowBalance: 37 } });
+    await f.walletRef(f.payerUid).update({ balance: 1_000_000 });
+    await f.act(f.payerUid, "terminate");
+    assert.equal((await f.read()).status, "ended");
+    assert.equal((await f.profileRef(f.payerUid).get()).get("refundPending"), 37);
+    await f.walletRef(f.payerUid).update({ balance: 999_970 });
+    const claims = await Promise.all(Array.from({ length: 4 }, () => f.act(f.payerUid, "claim_refund")));
+    assert.equal(claims.reduce((sum, result) => sum + result.amount, 0), 30);
+    assert.equal((await f.walletRef(f.payerUid).get()).get("balance"), 1_000_000);
+    assert.equal((await f.profileRef(f.payerUid).get()).get("refundPending"), 7);
+    assert.equal((await f.walletRef(f.payerUid).collection("ledger").get()).size, 1);
+  });
+
+  await t.test("concurrent duplicate vault operations commit once, with a durable operation receipt", async () => {
+    const f = await fixture();
+    await f.profileRef(f.managerUid).update({ card: { personaName: "test" }, vaultQualifiedAt: START, vaultAmount: 0 });
+    await f.walletRef(f.managerUid).update({ balance: 1000 });
+    const clientRequestId = `vault_${crypto.randomBytes(12).toString("hex")}`;
+    const results = await Promise.all(Array.from({ length: 4 }, () => f.act(f.managerUid, "vault_deposit", { amount: 100, clientRequestId })));
+    assert.equal(results.filter(result => !result.replayed).length, 1);
+    assert.equal((await f.walletRef(f.managerUid).get()).get("balance"), 900);
+    assert.equal((await f.profileRef(f.managerUid).get()).get("vaultAmount"), 100);
+    assert.equal((await f.profileRef(f.managerUid).collection("vaultOps").get()).size, 1);
+  });
+
+  await t.test("real Firestore timestamp/document cursors retain tied receipts at the page boundary", async () => {
+    const f = await fixture();
+    const receipts = database.collection("tributeReceipts").doc(f.payerUid).collection("items");
+    const batch = database.batch();
+    for (let i = 0; i < 51; i++) batch.set(receipts.doc(stableId(`${f.contractId}:${i}`)), { createdAt: START, amount: 1, receiptNo: i + 1 });
+    await batch.commit();
+    const first = await f.act(f.payerUid, "receipts");
+    const second = await f.act(f.payerUid, "receipts", { cursor: first.nextCursor });
+    assert.equal(first.receipts.length, 50);
+    assert.equal(second.receipts.length, 1);
+    assert.equal(second.more, false);
+    assert.equal(new Set([...first.receipts, ...second.receipts].map(receipt => receipt.receiptId)).size, 51);
+  });
+
   await t.test("a stale backfill attempt cannot overwrite a concurrently completed backfill and increment", async () => {
     let enter;
     let release;

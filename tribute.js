@@ -162,10 +162,10 @@ function createState() {
     manager: { status: "idle", publicManagerId: "", data: null },
     applyTarget: null,
     thread: { contractId: "", raw: null, view: null, events: [], status: "idle" },
-    receipts: { status: "idle", items: [], more: false },
+    receipts: { status: "idle", items: [], more: false, cursor: null, loadingMore: false },
     ledger: { status: "idle", asPayer: [], asManager: [] },
     ranking: { status: "idle", managers: [], monthKey: "" },
-    vault: { status: "idle", data: null },
+    vault: { status: "idle", data: null, pendingMove: null, moveError: "" },
     // 管理人カードの編集で使う、持っている飾り・解除済みの実績・金庫のいちばん高い段階（編集を開いた時に読む）。
     decorations: { status: "idle", owned: [], achievements: [], vaultBestTier: 0 },
     sheet: null,
@@ -214,6 +214,20 @@ function createRequestId() {
   const bytes = new Uint8Array(16);
   cryptoApi.getRandomValues(bytes);
   return `tr_${[...bytes].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function storedVaultMove(value) {
+  if (!state.uid || previewScreen) return null;
+  try {
+    const key = `tribute-vault-move:${state.uid}`;
+    if (value === null) window.sessionStorage.removeItem(key);
+    else if (value) window.sessionStorage.setItem(key, JSON.stringify(value));
+    else {
+      const pending = JSON.parse(window.sessionStorage.getItem(key) || "null");
+      if (pending && ["deposit", "withdraw"].includes(pending.direction) && Number.isSafeInteger(pending.amount) && pending.amount > 0 && /^[A-Za-z0-9_-]{12,80}$/.test(pending.clientRequestId)) return pending;
+    }
+  } catch { /* Storage may be unavailable; the in-memory operation still survives navigation. */ }
+  return null;
 }
 
 function isCurrent(generation) {
@@ -376,6 +390,7 @@ function renderHub() {
   const ended = state.contracts.filter((contract) => contract.status === "ended").slice(0, 10);
   const card = profile.card;
   return frame(`<div class="tribute-hub">
+    ${profile.refundPending > 0 ? `<section class="tribute-panel"><h2>返金待ち ${escapeHtml(formatPay(profile.refundPending))}</h2><p>財布の残高上限で戻せなかったPayを保管しています。財布に空きができた分だけ受け取れます。</p><button class="button button-primary button-small" type="button" data-t="claim-refund" ${state.busy ? "disabled" : ""}>財布へ受け取る</button></section>` : ""}
     <section class="tribute-panel tribute-me">
       <div class="tribute-me-wallet">
         <span class="tribute-eyebrow">財布として</span>
@@ -1232,16 +1247,20 @@ function renderEvent(event, view, statuses) {
     case "escrow_withdraw_cancelled":
       return system("使用許可の申請を取り下げました。", "is-escrow");
     case "escrow_approved":
-      return system(`使用許可：${escapeHtml(formatPay(event.amount))} が財布へ戻りました。`, "is-escrow");
+      return system(`使用許可：${escapeHtml(formatPay(event.amount))} が財布へ戻りました。${refundPendingText(event)}`, "is-escrow");
     case "escrow_denied":
       return system(`使用許可は却下されました（${escapeHtml(formatPay(event.amount))}）。解約すれば、管理口座はいつでも全額戻ります。`, "is-escrow");
     case "escrow_returned":
-      return system(`管理口座から ${escapeHtml(formatPay(event.amount))} を財布へ戻しました。`, "is-escrow");
+      return system(`管理口座から ${escapeHtml(formatPay(event.amount))} を財布へ戻しました。${refundPendingText(event)}`, "is-escrow");
     case "ended":
-      return system(`${escapeHtml(END_REASON_LABELS[event.reason] || "契約が終わりました")}。${event.escrowReturned ? `管理口座の ${escapeHtml(formatPay(event.escrowReturned))} は財布へ戻りました。` : ""}`, "is-ended");
+      return system(`${escapeHtml(END_REASON_LABELS[event.reason] || "契約が終わりました")}。${event.escrowReturned ? `管理口座の ${escapeHtml(formatPay(event.escrowReturned))} は財布へ戻りました。` : ""}${refundPendingText(event)}`, "is-ended");
     default:
       return "";
   }
+}
+
+function refundPendingText(event) {
+  return event.refundPending > 0 ? `残高上限のため ${escapeHtml(formatPay(event.refundPending))} を返金待ちとして保管しました。財布の持ち主が「契約」画面から受け取れます。` : "";
 }
 
 function renderThreadHead(view) {
@@ -1378,20 +1397,39 @@ function renderTemplates(view) {
   </details>`;
 }
 
+function renderPendingRequests(view) {
+  if (view.status !== "active" || !view.pendingRequests.length) return "";
+  return `<section class="tribute-panel"><h2>未払いの請求</h2><ol class="tribute-pending-requests">${view.pendingRequests.map((request) => renderEvent({ ...request, type: "request", actor: "manager" }, view, new Map())).join("")}</ol></section>`;
+}
+
+function renderThreadHistory() {
+  const thread = state.thread;
+  if (thread.demo || !(thread.events?.[0]?.seq > 1 || thread.historyError)) return "";
+  return `<div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="history-more" ${thread.historyLoading ? "disabled" : ""}>${thread.historyLoading ? "読み込み中…" : thread.historyError ? "履歴を再読み込み" : "前の履歴を読む"}</button>${thread.view?.awaitingReceipt ? '<small>古い受け取り待ちも、履歴から受け取れます。</small>' : ""}</div>`;
+}
+
+function renderThreadEvents(view) {
+  const statuses = requestStatusMap(state.thread.events);
+  const pending = new Set(view.status === "active" ? view.pendingRequests.map((request) => request.requestId) : []);
+  return state.thread.events.filter((event) => event.type !== "request" || !pending.has(event.requestId))
+    .map((event) => renderEvent(event, view, statuses)).join("");
+}
+
 function renderThread() {
   const thread = state.thread;
   const view = thread.view;
   if (!view) {
     return frame(`<p class="tribute-empty">${thread.status === "error" ? "スレッドを開けませんでした。" : "スレッドを開いています…"}</p>`, { title: "スレッド", screenClass: "tribute-thread-screen" });
   }
-  const statuses = requestStatusMap(thread.events);
   const demoBanner = thread.demo
     ? `<div class="tribute-demo-banner" role="note"><b>見学用の見本の契約です</b><span>実際の契約ではなく、相手もいません。差し出してもPayは動きません。</span><div class="tribute-row"><button class="button button-primary button-small" type="button" data-t="nav" data-screen="board">管理人を探す</button><button class="button button-ghost button-small" type="button" data-t="nav" data-screen="hub">見学をやめる</button></div></div>`
     : "";
   return frame(`<div class="tribute-thread">
     ${demoBanner}
     <div class="tribute-thread-head" id="tributeThreadHead">${renderThreadHead(view)}</div>
-    <ol class="tribute-events" id="tributeThreadEvents" aria-live="polite">${thread.events.map((event) => renderEvent(event, view, statuses)).join("")}</ol>
+    <div id="tributePendingRequests">${renderPendingRequests(view)}</div>
+    <div id="tributeThreadHistory">${renderThreadHistory()}</div>
+    <ol class="tribute-events" id="tributeThreadEvents" aria-live="polite">${renderThreadEvents(view)}</ol>
     <div class="tribute-thread-actions" id="tributeThreadActions">${renderThreadActions(view)}</div>
     ${view.status === "active" && !thread.demo ? `<form class="tribute-composer" data-form="message">
       <textarea name="text" maxlength="${LIMITS.message}" rows="2" placeholder="${view.role === "manager" ? "管理の言葉（相手の「言われたくない言葉」は送れません）" : "返事・報告・止める言葉"}"></textarea>
@@ -1413,11 +1451,19 @@ function updateThreadParts() {
     return;
   }
   const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const previousHeight = list.scrollHeight;
+  const previousTop = list.scrollTop;
   head.innerHTML = renderThreadHead(view);
-  const statuses = requestStatusMap(state.thread.events);
-  list.innerHTML = state.thread.events.map((event) => renderEvent(event, view, statuses)).join("");
+  const pending = document.querySelector("#tributePendingRequests");
+  const history = document.querySelector("#tributeThreadHistory");
+  if (pending) pending.innerHTML = renderPendingRequests(view);
+  if (history) history.innerHTML = renderThreadHistory();
+  list.innerHTML = renderThreadEvents(view);
   actions.innerHTML = renderThreadActions(view);
-  if (nearBottom) scrollThreadToEnd();
+  if (state.thread.preserveHistoryScroll) {
+    list.scrollTop = previousTop + Math.max(0, list.scrollHeight - previousHeight);
+    state.thread.preserveHistoryScroll = false;
+  } else if (nearBottom) scrollThreadToEnd();
 }
 
 function scrollThreadToEnd() {
@@ -1537,8 +1583,8 @@ function renderSheet() {
     case "end":
       return wrap(view.role === "payer" ? "解約する" : "解放する", `<div class="tribute-confirm">
         ${view.role === "payer"
-    ? `<p>いつでも、すぐに終われます。罰も記録上の不利もありません。${view.escrowBalance ? `管理口座の <b>${escapeHtml(formatPay(view.escrowBalance))}</b> はすぐ財布へ戻ります。` : ""}未払いの請求は無効になります。</p>`
-    : `<p>この財布の管理を終えます。管理口座の残りは、すぐ預ける側へ戻ります。</p>`}
+    ? `<p>いつでも、すぐに終われます。罰も記録上の不利もありません。${view.escrowBalance ? `管理口座の <b>${escapeHtml(formatPay(view.escrowBalance))}</b> を返金します。残高上限で戻せない分は返金待ちとして保管し、「契約」画面から受け取れます。` : ""}未払いの請求は無効になります。</p>`
+    : `<p>この財布の管理を終えます。管理口座の残りを返金します。残高上限で戻せない分は、預ける側の返金待ちとして保管します。</p>`}
         <button class="button button-danger" type="button" data-t="${view.role === "payer" ? "terminate" : "release"}" ${state.busy ? "disabled" : ""}>${view.role === "payer" ? "解約する" : "解放する"}</button>
         <button class="button button-ghost" type="button" data-t="sheet-close">やめる</button>
       </div>`);
@@ -1961,7 +2007,7 @@ function renderReceipts() {
         ${Number(receipt.receivedAt || 0) && sealLabel(receipt.seal) ? `<span class="tribute-receipt-seal">${sealSvg({ label: sealLabel(receipt.seal), name: receipt.personaName, at: receipt.receivedAt, size: 88, shape: receipt.sealShape, ink: receipt.sealInk, surface: "paper", rough: false })}</span>` : ""}
         <footer>${escapeHtml(formatDateTime(receipt.createdAt))} ・ ${Number(receipt.pairCount)}回目</footer>
         ${receipt.contractId ? `<button class="tribute-save-image is-paper" type="button" data-t="share-receipt" data-receipt="${escapeHtml(receipt.receiptId)}" data-contract="${escapeHtml(receipt.contractId)}">画像で保存</button>` : ""}
-      </article>`).join("")}</div>${receipts.more ? `<button class="button button-ghost" type="button" data-t="receipts-more">もっと見る</button>` : ""}`
+      </article>`).join("")}</div>${receipts.more ? `<button class="button button-ghost" type="button" data-t="receipts-more" ${receipts.loadingMore ? "disabled" : ""}>${receipts.loadingMore ? "読み込み中…" : "もっと見る"}</button>` : ""}`
       : `<p class="tribute-empty">まだ献上していません。</p>`}
   </div>`, { title: "献上レシート" });
 }
@@ -2023,6 +2069,7 @@ function renderVault() {
 }
 
 function renderMyVault(vault) {
+  const pending = state.vault.pendingMove;
   const qualify = `お貢ぎ牧場で累計${VAULT_QUALIFY.payers}人以上の財布から、合わせて${escapeHtml(formatPay(VAULT_QUALIFY.received))}以上を受け取った管理人が、金庫を作れます（推し値市場の実績は数えません）。`;
   if (!vault.hasCard) {
     return `<section class="tribute-panel tribute-vault-mine"><span class="tribute-eyebrow">あなたの金庫</span><h2>金庫は管理人のもの</h2>
@@ -2050,11 +2097,11 @@ function renderMyVault(vault) {
     ? `<div class="tribute-vault-next"><div class="tribute-request-progress" aria-hidden="true"><i style="width:${Math.round(ratio * 100)}%"></i></div><small>「${escapeHtml(next.label)}」まで あと ${escapeHtml(formatPay(next.threshold - amount))}</small></div>`
     : `<p class="tribute-note">最高段階の「${escapeHtml(current.label)}」です。</p>`}
     <form class="tribute-vault-form" data-form="vault">
-      <label class="tribute-field"><span>金額（Pay）</span><input name="amount" type="number" inputmode="numeric" min="1" step="1" required /></label>
-      <div class="tribute-amount-chips">${chips.map(([value, label]) => `<button type="button" data-t="vault-chip" data-amount="${value}">${escapeHtml(label)}</button>`).join("")}</div>
-      <div class="tribute-row"><button class="button button-primary button-small" type="submit" name="direction" value="deposit" ${state.busy ? "disabled" : ""}>金庫に入れる</button><button class="button button-ghost button-small" type="submit" name="direction" value="withdraw" ${state.busy || !amount ? "disabled" : ""}>金庫から出す</button></div>
+      <label class="tribute-field"><span>金額（Pay）</span><input name="amount" type="number" inputmode="numeric" min="1" step="1" value="${pending ? pending.amount : ""}" ${pending ? "readonly" : ""} required /></label>
+      ${pending ? `<p class="tribute-note">${escapeHtml(formatPay(pending.amount))}の${pending.direction === "deposit" ? "入金" : "出金"}結果を確認してください。再確認しても二重には移動しません。</p>` : `<div class="tribute-amount-chips">${chips.map(([value, label]) => `<button type="button" data-t="vault-chip" data-amount="${value}">${escapeHtml(label)}</button>`).join("")}</div>`}
+      <div class="tribute-row"><button class="button button-primary button-small" type="submit" name="direction" value="deposit" ${state.busy || pending?.direction === "withdraw" ? "disabled" : ""}>${pending?.direction === "deposit" ? "入金結果を再確認" : "金庫に入れる"}</button><button class="button button-ghost button-small" type="submit" name="direction" value="withdraw" ${state.busy || pending?.direction === "deposit" || (!pending && !amount) ? "disabled" : ""}>${pending?.direction === "withdraw" ? "出金結果を再確認" : "金庫から出す"}</button></div>
       <small>財布 ${balance === null ? "確認中" : escapeHtml(formatPay(balance))}。金庫の Pay はあなたのもののままで、いつでも財布に出せます。献上や買い物に使う時は、財布に出してください。</small>
-      <p class="tribute-form-error" data-form-error role="alert"></p>
+      <p class="tribute-form-error" data-form-error role="alert">${escapeHtml(state.vault.moveError || "")}</p>
     </form>
   </section>`;
 }
@@ -2173,14 +2220,14 @@ async function refreshState() {
 
 async function loadBoard() {
   const generation = lifecycleGeneration;
-  state.board.status = "loading";
+  const target = state.board = { ...state.board, status: "loading" };
   render();
   try {
     const payload = await call("board", { nekamaOnly: state.board.nekamaOnly });
-    if (!isCurrent(generation)) return;
+    if (!isCurrent(generation) || state.board !== target) return;
     state.board = { ...state.board, status: "ready", managers: payload.managers || [] };
   } catch (error) {
-    if (!isCurrent(generation)) return;
+    if (!isCurrent(generation) || state.board !== target) return;
     state.board.status = "error";
     showToast(friendlyError(error));
   }
@@ -2191,14 +2238,14 @@ async function openManager(publicManagerId, { invited = false } = {}) {
   const generation = lifecycleGeneration;
   stopThread();
   state.screen = "manager";
-  state.manager = { status: "loading", publicManagerId, data: null, invited };
+  const target = state.manager = { status: "loading", publicManagerId, data: null, invited };
   render();
   try {
     const payload = await call("manager", { publicManagerId });
-    if (!isCurrent(generation)) return;
+    if (!isCurrent(generation) || state.manager !== target || state.screen !== "manager") return;
     state.manager = { status: "ready", publicManagerId, data: payload, invited };
   } catch (error) {
-    if (!isCurrent(generation)) return;
+    if (!isCurrent(generation) || state.manager !== target || state.screen !== "manager") return;
     state.manager.status = "error";
     showToast(friendlyError(error));
   }
@@ -2207,18 +2254,18 @@ async function openManager(publicManagerId, { invited = false } = {}) {
 
 async function loadList(key, action, mapper) {
   const generation = lifecycleGeneration;
-  state[key].status = "loading";
+  const target = state[key] = { ...state[key], status: "loading", loadingMore: false };
   render();
   try {
     const payload = await call(action);
-    if (!isCurrent(generation)) return;
+    if (!isCurrent(generation) || state[key] !== target) return;
     state[key] = { ...state[key], status: "ready", ...mapper(payload) };
   } catch (error) {
-    if (!isCurrent(generation)) return;
+    if (!isCurrent(generation) || state[key] !== target) return;
     state[key].status = "error";
     showToast(friendlyError(error));
   }
-  render();
+  if (state.screen === key) render();
 }
 
 function navigate(requested, { refresh = true } = {}) {
@@ -2227,9 +2274,10 @@ function navigate(requested, { refresh = true } = {}) {
   if (screen !== "thread") stopThread();
   state.sheet = null;
   state.screen = screen;
+  if (screen === "vault" && !state.vault.pendingMove) state.vault.pendingMove = storedVaultMove();
   window.scrollTo?.({ top: 0 });
   if (screen === "board") loadBoard();
-  else if (screen === "receipts") loadList("receipts", "receipts", (payload) => ({ items: payload.receipts || [], more: payload.more === true }));
+  else if (screen === "receipts") loadList("receipts", "receipts", (payload) => ({ items: payload.receipts || [], more: payload.more === true, cursor: payload.nextCursor || null }));
   else if (screen === "ledger") loadList("ledger", "ledger", (payload) => ({ asPayer: payload.asPayer || [], asManager: payload.asManager || [] }));
   else if (screen === "ranking") loadList("ranking", "rankings", (payload) => ({ managers: payload.managers || [], monthKey: payload.monthKey || "" }));
   else if (screen === "vault") loadList("vault", "vault", (payload) => ({ data: payload }));
@@ -2299,12 +2347,32 @@ function openThread(contractId) {
     showToast(friendlyError(error, "スレッドを読み込めませんでした。"));
     render();
   });
-  eventsUnsubscribe = onSnapshot(query(collection(firestore, "tributeContracts", contractId, "events"), orderBy("seq"), limitToLast(EVENTS_LIMIT)), (snapshot) => {
+  subscribeThreadEvents();
+}
+
+function subscribeThreadEvents() {
+  eventsUnsubscribe?.();
+  const generation = lifecycleGeneration;
+  const currentThreadGeneration = threadGeneration;
+  const targetThread = state.thread;
+  const uid = state.uid;
+  const token = targetThread.eventsSubscription = {};
+  const current = () => isCurrentThread(generation, currentThreadGeneration, targetThread, uid) && targetThread.eventsSubscription === token;
+  eventsUnsubscribe = onSnapshot(query(collection(firestore, "tributeContracts", targetThread.contractId, "events"), orderBy("seq"), limitToLast(targetThread.eventsLimit || EVENTS_LIMIT)), (snapshot) => {
     if (!current()) return;
+    targetThread.preserveHistoryScroll = targetThread.historyLoading === true;
+    targetThread.historyLoading = false;
+    targetThread.historyError = false;
     state.thread.events = snapshot.docs.map((entry) => entry.data());
     if (state.thread.view) updateThreadParts();
     scheduleMarkRead();
-  }, () => {});
+  }, (error) => {
+    if (!current()) return;
+    targetThread.historyLoading = false;
+    targetThread.historyError = true;
+    showToast(friendlyError(error, "履歴を読み込めませんでした。"));
+    if (state.thread.view) updateThreadParts();
+  });
 }
 
 // 財布の限度額は private/limits にある（移す前の古い契約は、契約の記録に残っている）。財布の画面だけ足す。
@@ -2393,7 +2461,7 @@ function scheduleMarkRead() {
 
 // ───────────── 操作 ─────────────
 
-async function mutate(action, payload, { success = "", after = null, form = null } = {}) {
+async function mutate(action, payload, { success = "", after = null, form = null, onError = null } = {}) {
   if (state.busy) return null;
   const generation = lifecycleGeneration;
   const targetState = state;
@@ -2414,6 +2482,7 @@ async function mutate(action, payload, { success = "", after = null, form = null
     targetState.busy = "";
     if (!isCurrent(generation) || state !== targetState || state.uid !== uid || (!previewScreen && auth.currentUser?.uid !== uid)) return null;
     const message = friendlyError(error);
+    if (onError) onError(error);
     if (errorTarget?.isConnected) errorTarget.textContent = message;
     else showToast(message);
     return null;
@@ -2702,16 +2771,35 @@ async function handleSubmit(form) {
       return;
     }
     case "vault": {
+      if (state.busy) return;
       // 金庫に入れる・出す。Pay は自分のもののままで、外に見せるのは段階だけ。
-      const withdraw = form.dataset.direction === "withdraw";
+      const pending = state.vault.pendingMove;
+      const direction = pending?.direction || (form.dataset.direction === "withdraw" ? "withdraw" : "deposit");
+      const withdraw = direction === "withdraw";
       const vault = state.vault.data?.vault || {};
-      const amount = readAmount(form, withdraw ? Number(vault.amount) || 0 : state.walletBalance ?? Number.MAX_SAFE_INTEGER);
+      const amount = pending ? { value: pending.amount } : readAmount(form, withdraw ? Number(vault.amount) || 0 : state.walletBalance ?? Number.MAX_SAFE_INTEGER);
       if (amount.error) return setFormError(form, amount.error);
-      const result = await mutate(withdraw ? "vault_withdraw" : "vault_deposit", { amount: amount.value, clientRequestId: createRequestId() }, {
+      const operation = pending || { direction, amount: amount.value, clientRequestId: createRequestId() };
+      state.vault.pendingMove = operation;
+      state.vault.moveError = "";
+      storedVaultMove(operation);
+      const generation = lifecycleGeneration;
+      const targetState = state;
+      const result = await mutate(withdraw ? "vault_withdraw" : "vault_deposit", { amount: amount.value, clientRequestId: operation.clientRequestId }, {
         form,
         success: withdraw ? `金庫から ${formatPay(amount.value)} 出しました。` : `金庫に ${formatPay(amount.value)} 入れました。`,
+        onError(error) {
+          state.vault.moveError = friendlyError(error);
+          if (["invalid-argument", "failed-precondition", "permission-denied", "unauthenticated", "not-found"].includes(String(error.code || "").replace(/^functions\//, ""))) {
+            state.vault.pendingMove = null;
+            storedVaultMove(null);
+          }
+        },
       });
+      if (!isCurrent(generation) || state !== targetState) return;
       if (result) {
+        state.vault.pendingMove = null;
+        storedVaultMove(null);
         if (Number.isFinite(result.walletBalance)) {
           state.walletBalance = result.walletBalance;
           paintWallet();
@@ -2722,7 +2810,9 @@ async function handleSubmit(form) {
           const item = VAULT_DECORATION_ITEMS.find((entry) => entry.tier === reached.level);
           showToast(`金庫が「${reached.label}」に届きました。${item ? `カードの飾りに「${item.name}」が加わりました。` : ""}`);
         }
-        navigate("vault");
+        if (state.screen === "vault") navigate("vault");
+      } else if (state.screen === "vault") {
+        render();
       }
       return;
     }
@@ -2739,6 +2829,23 @@ async function handleClick(target) {
   const action = target.dataset.t;
   const view = state.thread.view;
   switch (action) {
+    case "claim-refund": {
+      const result = await mutate("claim_refund", {});
+      if (!result) return;
+      state.profile = result.profile;
+      state.walletBalance = result.walletBalance;
+      paintWallet();
+      showToast(result.amount ? `${formatPay(result.amount)}を財布へ戻しました。` : result.profile.refundPending ? "財布の残高上限に空きができたら、もう一度受け取ってください。" : "返金はすべて受け取り済みです。");
+      if (state.screen === "hub") render();
+      return;
+    }
+    case "history-more":
+      if (state.thread.historyLoading) return;
+      if (!state.thread.historyError) state.thread.eventsLimit = (state.thread.eventsLimit || EVENTS_LIMIT) + EVENTS_LIMIT;
+      state.thread.historyLoading = true;
+      subscribeThreadEvents();
+      updateThreadParts();
+      return;
     case "home":
       requestHome();
       return;
@@ -2995,15 +3102,7 @@ async function handleClick(target) {
       rerenderReceipt();
       return;
     case "receipts-more": {
-      const last = state.receipts.items.at(-1);
-      const payload = await call("receipts", { before: last?.createdAt || 0 }).catch((error) => {
-        showToast(friendlyError(error));
-        return null;
-      });
-      if (!payload) return;
-      state.receipts.items = [...state.receipts.items, ...(payload.receipts || [])];
-      state.receipts.more = payload.more === true;
-      render();
+      await loadMoreReceipts();
       return;
     }
     case "vault-chip": {
@@ -3036,6 +3135,30 @@ async function handleClick(target) {
       return;
     }
     default:
+  }
+}
+
+async function loadMoreReceipts() {
+  const generation = lifecycleGeneration;
+  const target = state.receipts;
+  if (target.loadingMore || !target.more) return;
+  target.loadingMore = true;
+  if (state.screen === "receipts") render();
+  const last = target.items.at(-1);
+  try {
+    const payload = await call("receipts", { cursor: target.cursor || { createdAt: last.createdAt, receiptId: last.receiptId } });
+    if (!isCurrent(generation) || state.receipts !== target) return;
+    const items = new Map(target.items.map((receipt) => [receipt.receiptId, receipt]));
+    for (const receipt of payload.receipts || []) items.set(receipt.receiptId, receipt);
+    target.items = [...items.values()];
+    target.more = payload.more === true;
+    target.cursor = payload.nextCursor || null;
+  } catch (error) {
+    if (!isCurrent(generation) || state.receipts !== target) return;
+    showToast(friendlyError(error));
+  } finally {
+    target.loadingMore = false;
+    if (isCurrent(generation) && state.receipts === target && state.screen === "receipts") render();
   }
 }
 

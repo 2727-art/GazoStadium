@@ -496,6 +496,7 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
 .tribute-ng { font-size: 0.78rem; color: var(--tr-mist); }
 .tribute-ng span { display: inline-block; margin: 0 4px; padding: 0 6px; border-radius: 4px; background: rgba(255, 107, 107, 0.15); color: #ffb4b4; }
 
+.tribute-pending-requests { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
 .tribute-events {
   display: grid;
   align-content: start;

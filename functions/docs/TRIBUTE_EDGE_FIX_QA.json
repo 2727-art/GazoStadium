@@ -1,0 +1,32 @@
+{
+  "findingsFixed": [
+    "RANCH-01",
+    "RANCH-02",
+    "RANCH-03",
+    "RANCH-04",
+    "RANCH-05",
+    "RANCH-06"
+  ],
+  "fullSuite": {
+    "fail": 0,
+    "pass": 2132,
+    "total": 2164,
+    "skip": 32
+  },
+  "browser": {
+    "checked": "未払い請求の独立表示と取消ボタン",
+    "screenshot": "tribute-edge-fixed-thread.png",
+    "url": "http://127.0.0.1:4186/?tributePreview=thread-manager"
+  },
+  "iphonePhysicalTest": false,
+  "productionDataModifiedDuringTests": false,
+  "newRegressionTests": 20,
+  "checkedAt": "2026-10-26T09:46:39.8007879Z",
+  "firestoreEmulator": {
+    "fail": 0,
+    "project": "demo-tribute-cost",
+    "pass": 13,
+    "total": 13,
+    "skip": 0
+  }
+}

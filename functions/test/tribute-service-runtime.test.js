@@ -57,25 +57,30 @@ class FakeDocumentReference {
 }
 
 class FakeQuery {
-  constructor(firestore, path, filters = [], orderings = [], maximum = Infinity) {
+  constructor(firestore, path, filters = [], orderings = [], maximum = Infinity, cursor = null) {
     this.firestore = firestore;
     this.path = path;
     this.filters = filters;
     this.orderings = orderings;
     this.maximum = maximum;
+    this.cursor = cursor;
   }
 
   where(field, operator, value) {
     assert.ok(["==", ">=", "<=", "<", "array-contains", "in"].includes(operator), operator);
-    return new FakeQuery(this.firestore, this.path, [...this.filters, { field, operator, value }], this.orderings, this.maximum);
+    return new FakeQuery(this.firestore, this.path, [...this.filters, { field, operator, value }], this.orderings, this.maximum, this.cursor);
   }
 
   orderBy(field, direction = "asc") {
-    return new FakeQuery(this.firestore, this.path, this.filters, [...this.orderings, { field, direction }], this.maximum);
+    return new FakeQuery(this.firestore, this.path, this.filters, [...this.orderings, { field, direction }], this.maximum, this.cursor);
   }
 
   limit(maximum) {
-    return new FakeQuery(this.firestore, this.path, this.filters, this.orderings, maximum);
+    return new FakeQuery(this.firestore, this.path, this.filters, this.orderings, maximum, this.cursor);
+  }
+
+  startAfter(...cursor) {
+    return new FakeQuery(this.firestore, this.path, this.filters, this.orderings, this.maximum, cursor);
   }
 
   snapshot(documents = this.firestore.documents) {
@@ -96,12 +101,20 @@ class FakeQuery {
     }
     for (const ordering of [...this.orderings].reverse()) {
       rows.sort((left, right) => {
-        const leftValue = left.value?.[ordering.field];
-        const rightValue = right.value?.[ordering.field];
+        const leftValue = ordering.field === "__name__" ? left.reference.id : left.value?.[ordering.field];
+        const rightValue = ordering.field === "__name__" ? right.reference.id : right.value?.[ordering.field];
         const compared = leftValue === rightValue ? 0 : (leftValue < rightValue ? -1 : 1);
         return ordering.direction === "desc" ? -compared : compared;
       });
     }
+    if (this.cursor) rows = rows.filter((row) => {
+      for (let i = 0; i < this.orderings.length; i++) {
+        const { field, direction } = this.orderings[i];
+        const value = field === "__name__" ? row.reference.id : row.value[field];
+        if (value !== this.cursor[i]) return direction === "desc" ? value < this.cursor[i] : value > this.cursor[i];
+      }
+      return false;
+    });
     const docs = rows.slice(0, this.maximum).map((row) => new FakeDocumentSnapshot(row.reference, row.value));
     return { empty: docs.length === 0, size: docs.length, docs };
   }

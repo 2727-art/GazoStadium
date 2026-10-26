@@ -100,6 +100,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "vault",
   "vault_deposit",
   "vault_withdraw",
+  "claim_refund",
 ]);
 // 終わった牧場基金の操作。古い画面から届いた時は、読み込み直すよう伝える。
 const RETIRED_FUND_ACTIONS = Object.freeze(["fund", "offer", "vote", "recommend", "unrecommend"]);
@@ -186,6 +187,8 @@ function readProfile(snapshot) {
       managerPending: integer(counts.managerPending, 0, 1_000, 0),
     },
     receiptCount: integer(data.receiptCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    refundPending: integer(data.refundPending, 0, Number.MAX_SAFE_INTEGER, 0),
+    refundClaimCount: integer(data.refundClaimCount, 0, Number.MAX_SAFE_INTEGER, 0),
     collarCount: integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0),
     word: {
       text: cleanLine(object(data.word).text, LIMITS.todayWord),
@@ -286,6 +289,7 @@ function ownProfileView(profile, monthKey, now) {
     },
     counts: profile.counts,
     receiptCount: profile.receiptCount,
+    refundPending: profile.refundPending,
     wordsToday: profile.word?.dayKey === jstDateKey(now) ? profile.word.dayCount : 0,
     // 掲示板に出ていられる期限（受付中でカードがある時だけ）。過ぎると、動くまで掲示板に並ばない。
     boardUntil: profile.accepting && profile.card ? profile.lastActiveAt + LIMITS.boardActiveWindowMs : 0,
@@ -749,24 +753,7 @@ function createTributeService(deps) {
   function stageEnd(ctx, reason) {
     const wasActive = ctx.contract.status === "active";
     const escrow = integer(ctx.contract.escrowBalance, 0, Number.MAX_SAFE_INTEGER, 0);
-    if (escrow > 0) {
-      const wallet = walletFor(ctx, "payer");
-      const before = wallet.balance;
-      creditPoints(wallet, escrow);
-      const groupId = anjuPayEntryId(`tribute-escrow-end:${ctx.contractId}`);
-      appendEntry(ctx, "payer", {
-        entryId: groupId,
-        groupId,
-        kind: "tribute_escrow_return",
-        labelKey: "anju_pay_tribute_escrow_return",
-        delta: escrow,
-        nominalAmount: escrow,
-        balanceBefore: before,
-        balanceAfter: wallet.balance,
-        components: [{ kind: "escrow_return", labelKey: "anju_pay_tribute_escrow_return", status: "settled", delta: escrow, nominalAmount: escrow }],
-        details: { mode: "tribute", role: "payer", counterpartyName: managerName(ctx) },
-      });
-    }
+    const refund = escrow > 0 ? returnEscrow(ctx, escrow, "end", "ended") : { returned: 0, pending: 0 };
     setContract(ctx, {
       status: "ended",
       endReason: reason,
@@ -782,7 +769,7 @@ function createTributeService(deps) {
     adjustCounts(ctx, "payer", { payerOpen: -1 });
     adjustCounts(ctx, "manager", wasActive ? { managerActive: -1 } : { managerPending: -1 });
     if (ctx.pair.value.openContractId === ctx.contractId) patchPair(ctx, { openContractId: "" });
-    pushEvent(ctx, { type: "ended", actor: "system", reason, escrowReturned: escrow });
+    pushEvent(ctx, { type: "ended", actor: "system", reason, escrowReturned: refund.returned, refundPending: refund.pending });
   }
 
   function lazyTransition(ctx) {
@@ -799,7 +786,7 @@ function createTributeService(deps) {
         return "申し込みは48時間で失効しました。";
       }
       stageEnd(ctx, "expired");
-      return "契約期間が終わりました。管理口座の残りは財布へ戻りました。";
+      return "契約期間が終わりました。管理口座の返金状況は「契約」画面で確認できます。";
     }
     return "";
   }
@@ -1227,7 +1214,7 @@ function createTributeService(deps) {
   async function stateAction(uid) {
     const now = currentTime();
     const monthKey = jstMonthKey(now);
-    const profile = await readOwnProfile(uid);
+    let profile = await readOwnProfile(uid);
     const ageConfirmed = profile.ageConfirmedVersion === TRIBUTE_AGE_VERSION;
     const base = {
       ok: true,
@@ -1258,6 +1245,7 @@ function createTributeService(deps) {
         .orderBy("updatedAt", "desc")
         .limit(40)
         .get();
+      profile = await readOwnProfile(uid);
     }
     // 財布として持つ契約だけ、財布だけが読める限度額を足して返す。
     const raw = snapshot.docs.map((document) => object(document.data()));
@@ -2024,8 +2012,8 @@ function createTributeService(deps) {
         if (approve) {
           const escrow = integer(ctx.contract.escrowBalance, 0, Number.MAX_SAFE_INTEGER, 0);
           const amount = Math.min(escrow, integer(request.amount, 0, 1_000_000, 0));
-          if (amount > 0) returnEscrow(ctx, amount, `approve:${integer(request.requestedAt, 0, Number.MAX_SAFE_INTEGER, 0)}`, "approved");
-          pushEvent(ctx, { type: "escrow_approved", actor: "manager", amount });
+          const refund = amount > 0 ? returnEscrow(ctx, amount, `approve:${integer(request.requestedAt, 0, Number.MAX_SAFE_INTEGER, 0)}`, "approved") : { returned: 0, pending: 0 };
+          pushEvent(ctx, { type: "escrow_approved", actor: "manager", amount: refund.returned, refundPending: refund.pending });
         } else {
           pushEvent(ctx, { type: "escrow_denied", actor: "manager", amount: integer(request.amount, 0, 1_000_000, 0) });
         }
@@ -2199,23 +2187,27 @@ function createTributeService(deps) {
   function returnEscrow(ctx, amount, key, reason) {
     const wallet = walletFor(ctx, "payer");
     const before = wallet.balance;
-    creditPoints(wallet, amount);
-    const groupId = anjuPayEntryId(`tribute-escrow-return:${ctx.contractId}:${key}`);
-    appendEntry(ctx, "payer", {
+    const returned = Math.min(amount, walletCreditCapacity(wallet));
+    const pending = amount - returned;
+    if (pending > 0) patchProfile(ctx, "payer", { refundPending: ctx.profiles.payer.value.refundPending + pending });
+    if (returned > 0) creditPoints(wallet, returned);
+    const groupId = anjuPayEntryId(key === "end" ? `tribute-escrow-end:${ctx.contractId}` : `tribute-escrow-return:${ctx.contractId}:${key}`);
+    if (returned > 0) appendEntry(ctx, "payer", {
       entryId: groupId,
       groupId,
       kind: "tribute_escrow_return",
       labelKey: "anju_pay_tribute_escrow_return",
-      delta: amount,
-      nominalAmount: amount,
+      delta: returned,
+      nominalAmount: returned,
       balanceBefore: before,
       balanceAfter: wallet.balance,
-      components: [{ kind: "escrow_return", labelKey: "anju_pay_tribute_escrow_return", status: "settled", delta: amount, nominalAmount: amount }],
+      components: [{ kind: "escrow_return", labelKey: "anju_pay_tribute_escrow_return", status: "settled", delta: returned, nominalAmount: returned }],
       details: { mode: "tribute", role: "payer", counterpartyName: managerName(ctx) },
     });
     const escrow = integer(ctx.contract.escrowBalance, 0, Number.MAX_SAFE_INTEGER, 0) - amount;
     setContract(ctx, { escrowBalance: Math.max(0, escrow) });
-    if (reason === "caps") pushEvent(ctx, { type: "escrow_returned", actor: "system", amount, reason });
+    if (reason === "caps") pushEvent(ctx, { type: "escrow_returned", actor: "system", amount: returned, refundPending: pending, reason });
+    return { returned, pending };
   }
 
   async function runNamedContractAction(uid, action, data, context = {}) {
@@ -2255,10 +2247,16 @@ function createTributeService(deps) {
   async function receiptsAction(uid, data) {
     requireAge(await readOwnProfile(uid));
     const before = integer(data?.before, 0, Number.MAX_SAFE_INTEGER, 0);
-    let query = firestore.collection("tributeReceipts").doc(uid).collection("items").orderBy("createdAt", "desc");
-    if (before > 0) query = query.where("createdAt", "<", before);
-    const snapshot = await query.limit(LIMITS.receiptsPage).get();
-    const receipts = snapshot.docs.map((document) => {
+    let query = firestore.collection("tributeReceipts").doc(uid).collection("items").orderBy("createdAt", "desc").orderBy("__name__", "desc");
+    if (data?.cursor) {
+      const cursor = data.cursor;
+      if (!Number.isSafeInteger(cursor.createdAt) || cursor.createdAt < 1 || !RECEIPT_ID_PATTERN.test(String(cursor.receiptId || ""))) {
+        fail("invalid-argument", "レシートの続きを確認できません。一覧を開き直してください。");
+      }
+      query = query.startAfter(cursor.createdAt, cursor.receiptId);
+    } else if (before > 0) query = query.where("createdAt", "<", before);
+    const snapshot = await query.limit(LIMITS.receiptsPage + 1).get();
+    const receipts = snapshot.docs.slice(0, LIMITS.receiptsPage).map((document) => {
       const value = object(document.data());
       return {
         receiptId: document.id,
@@ -2280,7 +2278,9 @@ function createTributeService(deps) {
         createdAt: integer(value.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
       };
     });
-    return { ok: true, receipts, more: receipts.length === LIMITS.receiptsPage };
+    const more = snapshot.docs.length > LIMITS.receiptsPage;
+    const last = receipts.at(-1);
+    return { ok: true, receipts, more, nextCursor: more && last ? { createdAt: last.createdAt, receiptId: last.receiptId } : null };
   }
 
   // 貢ぎ報告の画像を作る時に、管理人のいまの許可とカードを確かめる。読むのは契約・自分・管理人（と自分のレシート1枚）だけで、書き込まない。
@@ -2462,6 +2462,7 @@ function createTributeService(deps) {
     const deposit = direction === "deposit";
     const amount = requireAmount(data?.amount);
     const clientRequestId = requireClientRequestId(data?.clientRequestId);
+    const operationRef = profileRef(uid).collection("vaultOps").doc(hashId(clientRequestId));
     await ensureWallet(uid);
     let result = null;
     let balance = null;
@@ -2469,17 +2470,21 @@ function createTributeService(deps) {
       result = null;
       balance = null;
       const now = currentTime();
-      const [profileSnapshot, walletSnapshot, ledgerConfigSnapshot] = await Promise.all([
+      const [profileSnapshot, walletSnapshot, ledgerConfigSnapshot, operationSnapshot] = await Promise.all([
         transaction.get(profileRef(uid)),
         transaction.get(walletRef(uid)),
         transaction.get(anjuPayLedgerConfigRef()),
+        transaction.get(operationRef),
       ]);
       const profile = readProfile(profileSnapshot);
       requireAge(profile);
       if (!profile.card) fail("failed-precondition", "金庫は、管理人カードのある管理人だけが使えます。");
       const opKey = `vault:${direction}:${clientRequestId}`;
-      if (profile.vaultRecentOps.includes(opKey)) {
-        result = { ok: true, replayed: true, vault: ownVaultView(profile) };
+      if (operationSnapshot.exists && (operationSnapshot.get("direction") !== direction || operationSnapshot.get("amount") !== amount)) {
+        fail("invalid-argument", "同じ入出金の内容は変更できません。結果を確認してから新しく操作してください。");
+      }
+      if (operationSnapshot.exists || profile.vaultRecentOps.includes(opKey)) {
+        result = { ok: true, replayed: true, vault: ownVaultView(profile), walletBalance: walletData(walletSnapshot).balance };
         return;
       }
       let qualifiedAt = profile.vaultQualifiedAt;
@@ -2534,6 +2539,7 @@ function createTributeService(deps) {
         updatedAt: now,
       };
       transaction.set(profileRef(uid), patch, { merge: true });
+      transaction.create(operationRef, { direction, amount, createdAt: now });
       balance = wallet.balance;
       result = {
         ok: true,
@@ -2543,6 +2549,42 @@ function createTributeService(deps) {
       };
     });
     if (balance !== null) await mirrorTouched([{ uid, balance }]);
+    return result;
+  }
+
+  async function claimRefundAction(uid) {
+    await ensureWallet(uid);
+    let result;
+    await firestore.runTransaction(async (transaction) => {
+      const now = currentTime();
+      const [profileSnapshot, walletSnapshot, ledgerConfig] = await Promise.all([
+        transaction.get(profileRef(uid)), transaction.get(walletRef(uid)), transaction.get(anjuPayLedgerConfigRef()),
+      ]);
+      const profile = readProfile(profileSnapshot);
+      requireAge(profile);
+      const wallet = walletData(walletSnapshot);
+      const amount = Math.min(profile.refundPending, walletCreditCapacity(wallet));
+      if (amount > 0) {
+        stageAnjuPayOpening(transaction, walletRef(uid), wallet, ledgerConfig, now);
+        const before = wallet.balance;
+        creditPoints(wallet, amount);
+        const claimCount = profile.refundClaimCount + 1;
+        const groupId = anjuPayEntryId(`tribute-refund-claim:${uid}:${claimCount}`);
+        appendAnjuPayEntry(transaction, walletRef(uid), wallet, ledgerConfig, {
+          entryId: groupId, groupId, kind: "tribute_escrow_return", category: "tribute",
+          labelKey: "anju_pay_tribute_escrow_return", status: "settled", delta: amount, nominalAmount: amount,
+          balanceBefore: before, balanceAfter: wallet.balance,
+          components: [{ kind: "escrow_return", labelKey: "anju_pay_tribute_escrow_return", status: "settled", delta: amount, nominalAmount: amount }],
+          details: { mode: "tribute", role: "payer" }, occurredAt: now,
+        });
+        profile.refundPending -= amount;
+        profile.refundClaimCount = claimCount;
+        transaction.set(walletRef(uid), { ...wallet, ...anjuPayWalletMetadataPatch(wallet), updatedAt: now }, { merge: true });
+        transaction.set(profileRef(uid), { refundPending: profile.refundPending, refundClaimCount: claimCount, updatedAt: now }, { merge: true });
+      }
+      result = { ok: true, amount, walletBalance: wallet.balance, profile: ownProfileView(profile, jstMonthKey(now), now) };
+    });
+    if (result.amount > 0) await mirrorTouched([{ uid, balance: result.walletBalance }]);
     return result;
   }
 
@@ -2572,6 +2614,7 @@ function createTributeService(deps) {
       case "vault": return vaultAction(uid);
       case "vault_deposit": return vaultMoveAction(uid, data, "deposit");
       case "vault_withdraw": return vaultMoveAction(uid, data, "withdraw");
+      case "claim_refund": return claimRefundAction(uid);
       default: return runNamedContractAction(uid, action, data, context);
     }
   }
