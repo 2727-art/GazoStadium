@@ -42,6 +42,7 @@ import {
   STYLE_LABELS,
   TONE_LABELS,
   INVITE_QUERY_KEY,
+  RANCH_OPEN_QUERY,
   TODAY_WORD,
   TOTAL_OPTIONS,
   TRIAL_DURATION_DAYS,
@@ -53,6 +54,7 @@ import {
   X_HANDLE_PATTERN,
   avatarId,
   avatarUrl,
+  contractTodos,
   formatPay,
   ignoreLabel,
   inviteFromUrl,
@@ -60,14 +62,17 @@ import {
   inviteUrl,
   jstDateKey,
   messageProblem,
+  nextTodoContract,
   normalizeCaps,
   normalizeXProfile,
   purposeLabel,
   purposesFor,
+  ranchOpenUrl,
   remainingLabel,
   rewardLabel,
   rewardsFor,
   sealLabel,
+  wantsRanchOpen,
   sealsFor,
   templatesFor,
   textLength,
@@ -79,7 +84,7 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -369,8 +374,11 @@ function statusChip(contract) {
 
 function renderContractRow(contract) {
   const counterpart = contractCounterpart(contract);
+  // 限度額は財布にしか見えない。管理人の行は、受け取った額だけを出す（限度額がないのを「終了」と取り違えない）。
   const numbers = contract.status === "active" && contract.caps
     ? `<small>今日 ${formatPay(contract.todayTributed)} / ${formatPay(contract.caps.perDay)} ・ 合計 ${formatPay(contract.totalTributed)} / ${formatPay(contract.caps.total)}</small>`
+    : contract.status === "active"
+      ? `<small>今日 ${formatPay(contract.todayTributed)} ・ 合計 ${formatPay(contract.totalTributed)}</small>`
     : contract.status === "pending"
       ? `<small>${contract.role === "manager" ? "申し込みが届いています" : "受理を待っています"}</small>`
       : `<small>${escapeHtml(contract.endReasonLabel || END_REASON_LABELS[contract.endReason] || "終了")}</small>`;
@@ -381,50 +389,21 @@ function renderContractRow(contract) {
   </button>`;
 }
 
+// 契約の画面。契約のある人は「やること → 契約の一覧 → 自分の設定」の順にし、毎日の確認でスクロールしなくて済むようにする。
+// 契約がまだない人は、財布・管理人の始め方（自分の設定）を先に出す。
 function renderHub() {
   const profile = state.profile || {};
-  const asPayer = state.contracts.filter((contract) => contract.role === "payer");
-  const asManager = state.contracts.filter((contract) => contract.role === "manager");
-  const openPayer = asPayer.filter((contract) => contract.status !== "ended");
-  const openManager = asManager.filter((contract) => contract.status !== "ended");
+  const open = state.contracts.filter((contract) => contract.status !== "ended");
   const ended = state.contracts.filter((contract) => contract.status === "ended").slice(0, 10);
-  const card = profile.card;
+  const hasContracts = state.contracts.length > 0;
+  const refund = profile.refundPending > 0 ? `<section class="tribute-panel"><h2>返金待ち ${escapeHtml(formatPay(profile.refundPending))}</h2><p>財布の残高上限で戻せなかったPayを保管しています。財布に空きができた分だけ受け取れます。</p><button class="button button-primary button-small" type="button" data-t="claim-refund" ${state.busy ? "disabled" : ""}>財布へ受け取る</button></section>` : "";
+  const lists = renderContractLists(open, profile);
+  const me = renderMyPanel(profile, { boardNotice: !hasContracts });
+  const endedPanel = ended.length ? `<details class="tribute-panel tribute-ended"><summary>終わった契約（${ended.length}）</summary>${ended.map(renderContractRow).join("")}</details>` : "";
   return frame(`<div class="tribute-hub">
-    ${profile.refundPending > 0 ? `<section class="tribute-panel"><h2>返金待ち ${escapeHtml(formatPay(profile.refundPending))}</h2><p>財布の残高上限で戻せなかったPayを保管しています。財布に空きができた分だけ受け取れます。</p><button class="button button-primary button-small" type="button" data-t="claim-refund" ${state.busy ? "disabled" : ""}>財布へ受け取る</button></section>` : ""}
-    <section class="tribute-panel tribute-me">
-      <div class="tribute-me-wallet">
-        <span class="tribute-eyebrow">財布として</span>
-        <form class="tribute-inline-form" data-form="wallet-name">
-          <label><span>財布名（番付に載る時だけ使います）</span><input name="walletName" maxlength="${LIMITS.walletName}" value="${escapeHtml(profile.walletName || "")}" /></label>
-          <button class="button button-ghost button-small" type="submit">保存</button>
-        </form>
-        <button class="button button-primary" type="button" data-t="nav" data-screen="board">管理人を探す</button>
-        <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="receipts">献上レシート（${Number(profile.receiptCount || 0)}枚）</button>
-        ${isNewWallet() ? renderStartGuide() : ""}
-      </div>
-      <div class="tribute-me-manager">
-        <span class="tribute-eyebrow">管理人として</span>
-        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${vaultTag(card.vault)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${escapeHtml(boardStatusLabel(profile))}</small></div></div>
-          <div class="tribute-row">
-            <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
-            <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
-          </div>
-          ${renderBoardNotice(profile)}
-          ${renderWordForm(profile)}
-          ${renderInvite(profile)}`
-    : `<p>管理する側になるには、管理人カードを作ります。印は${AVATARS.length}種のアイコンか、ペルソナ名の1文字から選べます。</p>
-          <button class="button button-ghost" type="button" data-t="nav" data-screen="card">管理人カードを作る</button>`}
-      </div>
-    </section>
-    <section class="tribute-panel">
-      <h2>預けている契約 <small>${openPayer.length} / ${LIMITS.payerOpenContracts}</small></h2>
-      ${openPayer.length ? openPayer.map(renderContractRow).join("") : `<p class="tribute-empty">まだ誰にも預けていません。掲示板から管理人を探せます。</p>`}
-    </section>
-    <section class="tribute-panel">
-      <h2>管理している契約</h2>
-      ${openManager.length ? openManager.map(renderContractRow).join("") : `<p class="tribute-empty">${card ? "まだ申し込みはありません。" : "管理人カードを作ると、申し込みを受けられます。"}</p>`}
-    </section>
-    ${ended.length ? `<details class="tribute-panel tribute-ended"><summary>終わった契約（${ended.length}）</summary>${ended.map(renderContractRow).join("")}</details>` : ""}
+    ${refund}
+    ${hasContracts ? `${renderTodo(open, profile)}${lists}${me}` : `${me}${lists}`}
+    ${endedPanel}
     ${renderAchievementPanel()}
     <section class="tribute-panel tribute-legacy">
       <h2>旧推し値市場</h2>
@@ -435,6 +414,114 @@ function renderHub() {
       </div>
     </section>
   </div>`, { title: "契約" });
+}
+
+// やること（申し込み・未払いの請求・受け取り待ち・使用許可の申請・残高報告の依頼・未読）。押すと、その種類の最初の契約を開く。
+// 掲示板から外れそうな時の知らせも、ここに出す（自分の設定は一覧の下にあるため）。
+function renderTodo(open, profile) {
+  const todos = contractTodos(open);
+  const notice = renderBoardNotice(profile);
+  return `<section class="tribute-todo" aria-labelledby="tributeTodoTitle">
+    <h2 class="tribute-eyebrow" id="tributeTodoTitle">やること</h2>
+    ${todos.length
+      ? `<div class="tribute-todo-list">${todos.map((todo) => `<button type="button" class="tribute-todo-chip is-${todo.kind}" data-t="open-thread" data-contract="${escapeHtml(todo.contractId)}">${escapeHtml(todo.label)} <b>${todo.total}</b></button>`).join("")}</div>`
+      : `<p class="tribute-todo-clear">いま、やることはありません。</p>`}
+    ${notice}
+  </section>`;
+}
+
+// 契約の一覧。管理人と財布の両方の契約がある人は「管理している／預けている」を切り替え、選んだ方を端末に覚える。
+const HUB_ROLE_STORAGE_KEY = "hariai.tribute.hubRole.v1";
+
+function storedHubRole() {
+  try {
+    const role = window.localStorage.getItem(HUB_ROLE_STORAGE_KEY);
+    return role === "manager" || role === "payer" ? role : "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberHubRole(role) {
+  try {
+    window.localStorage.setItem(HUB_ROLE_STORAGE_KEY, role);
+  } catch {
+    // 覚えられなくても、切り替えはこの画面で効く。
+  }
+}
+
+function renderContractLists(open, profile) {
+  const card = profile.card;
+  const rows = { manager: open.filter((contract) => contract.role === "manager"), payer: open.filter((contract) => contract.role === "payer") };
+  const roles = [
+    ...(rows.manager.length || card ? ["manager"] : []),
+    ...(rows.payer.length || !card ? ["payer"] : []),
+  ];
+  const urgent = (role) => contractTodos(rows[role]).reduce((sum, todo) => sum + todo.total, 0);
+  const role = roles.length === 1 ? roles[0]
+    : roles.includes(state.hubRole) ? state.hubRole
+      : storedHubRole() || (urgent("payer") > urgent("manager") ? "payer" : "manager");
+  const unread = (list) => list.reduce((sum, contract) => sum + Number(contract.unread || 0), 0);
+  const label = (each) => (each === "manager" ? "管理している" : "預けている");
+  const count = (each) => (each === "payer" ? `${rows.payer.length} / ${LIMITS.payerOpenContracts}` : `${rows.manager.length}`);
+  const head = roles.length > 1
+    ? `<div class="tribute-role-switch" role="group" aria-label="契約の立場">${roles.map((each) => `<button type="button" data-t="hub-role" data-role="${each}" aria-pressed="${each === role ? "true" : "false"}">${label(each)} <small>${rows[each].length}</small>${unread(rows[each]) ? `<b class="tribute-badge">${unread(rows[each])}</b>` : ""}</button>`).join("")}</div>`
+    : `<h2>${label(role)}契約 <small>${count(role)}</small></h2>`;
+  const empty = role === "payer"
+    ? "まだ誰にも預けていません。掲示板から管理人を探せます。"
+    : card ? "まだ申し込みはありません。" : "管理人カードを作ると、申し込みを受けられます。";
+  return `<section class="tribute-panel tribute-contracts">
+    ${head}
+    ${rows[role].length ? rows[role].map(renderContractRow).join("") : `<p class="tribute-empty">${empty}</p>`}
+  </section>`;
+}
+
+// 自分の設定（財布名・掲示板・レシート・管理人カード・今日のひとこと・招待リンク・牧場を直接開くURL）。
+function renderMyPanel(profile, { boardNotice = true } = {}) {
+  const card = profile.card;
+  // 財布の始め方は、管理人カードも契約もない、はじめての人にだけ出す。
+  const newcomer = !card && !state.contracts.length;
+  return `<section class="tribute-panel tribute-me" aria-labelledby="tributeMeTitle">
+      <h2 class="tribute-me-title" id="tributeMeTitle">自分の設定</h2>
+      <div class="tribute-me-wallet">
+        <span class="tribute-eyebrow">財布として</span>
+        <form class="tribute-inline-form" data-form="wallet-name">
+          <label><span>財布名（番付に載る時だけ使います）</span><input name="walletName" maxlength="${LIMITS.walletName}" value="${escapeHtml(profile.walletName || "")}" /></label>
+          <button class="button button-ghost button-small" type="submit">保存</button>
+        </form>
+        <button class="button button-primary" type="button" data-t="nav" data-screen="board">管理人を探す</button>
+        <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="receipts">献上レシート（${Number(profile.receiptCount || 0)}枚）</button>
+        ${newcomer ? renderStartGuide() : ""}
+      </div>
+      <div class="tribute-me-manager">
+        <span class="tribute-eyebrow">管理人として</span>
+        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${vaultTag(card.vault)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${escapeHtml(boardStatusLabel(profile))}</small></div></div>
+          <div class="tribute-row">
+            <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
+            <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
+          </div>
+          ${boardNotice ? renderBoardNotice(profile) : ""}
+          ${renderWordForm(profile)}
+          ${renderInvite(profile)}`
+    : `<p>管理する側になるには、管理人カードを作ります。印は${AVATARS.length}種のアイコンか、ペルソナ名の1文字から選べます。</p>
+          <button class="button button-ghost" type="button" data-t="nav" data-screen="card">管理人カードを作る</button>`}
+      </div>
+      ${renderOpenLink()}
+    </section>`;
+}
+
+// 牧場を直接開くURL。いま開いている場所（web.app・独自ドメインなど）のURLにする。
+// 場所が変わると別の匿名アカウントになり、契約が見えなくなるため、正規のURLには寄せない。
+function ranchOpenUrlHere() {
+  return ranchOpenUrl(`${window.location.origin}${window.location.pathname}`);
+}
+
+function renderOpenLink() {
+  return `<div class="tribute-open-link">
+      <span class="tribute-eyebrow">牧場を直接開くURL</span>
+      <p>ブックマークやホーム画面に追加すると、トップを通らずにこの契約の画面を開けます。いま開いている場所のURLなので、同じ端末・同じブラウザで使ってください。</p>
+      <div class="tribute-invite-link"><input readonly value="${escapeHtml(ranchOpenUrlHere())}" aria-label="牧場を直接開くURL" data-open-url /><button class="button button-ghost button-small" type="button" data-t="copy-open-url">コピー</button></div>
+    </div>`;
 }
 
 // まだ財布として契約したことがない人。財布の始め方と見学の入口を出す。
@@ -1281,6 +1368,7 @@ function renderThreadHead(view) {
       ${view.role === "payer" ? disclosureTag(view.manager.disclosure) : '<span class="tribute-tag">あなたが管理</span>'}${statusChip(view)}</span>
       <small>${view.status === "active" ? `${escapeHtml(remainingLabel(view.expiresAt))} ・ 言葉は${escapeHtml(TONE_LABELS[view.tone] || "普通")}` : view.status === "pending" ? `申し込みの期限 ${escapeHtml(formatDateTime(view.expiresAt))}` : escapeHtml(view.endReasonLabel)}</small></div>
       <div class="tribute-thread-end">${endButton}</div></div>
+    ${renderThreadNext()}
     ${renderTally(view)}
     ${renderIgnoreState(view)}
     ${caps && view.status !== "ended" ? `<div class="tribute-limits"><small>あなたの限度額（${escapeHtml(view.manager.personaName)}には見えません）</small><div class="tribute-meters">
@@ -1293,6 +1381,28 @@ function renderThreadHead(view) {
       : ""}
     ${view.pendingCaps ? `<p class="tribute-caps-pending">限度額を上げる予約：${escapeHtml(capsText(view.pendingCaps))}（${escapeHtml(view.pendingCapsEffectiveDateKey)} 0時から）${view.role === "payer" ? ' <button class="button button-ghost button-small" type="button" data-t="cancel-raise">予約を取り消す</button>' : ""}</p>` : ""}
     ${view.ngWords.length && view.role === "manager" ? `<p class="tribute-ng">言われたくない言葉：${view.ngWords.map((word) => `<span>${escapeHtml(word)}</span>`).join("")}</p>` : ""}`;
+}
+
+// 「次へ」。一覧に戻らずに、やることのある次の契約（未読・申し込み・受け取り待ちなど）を開く。見学の見本では出さない。
+function renderThreadNext() {
+  if (state.thread.demo) return "";
+  const next = nextTodoContract(state.contracts, state.thread.contractId);
+  if (!next) return "";
+  const name = contractCounterpart(next.contract).name;
+  return `<div class="tribute-thread-next"><button type="button" class="tribute-link" data-t="open-thread" data-contract="${escapeHtml(next.contract.contractId)}">次へ：${escapeHtml(name)}（${escapeHtml(next.label)}${next.kind === "applied" || next.kind === "withdraw" || next.kind === "report" ? "" : ` ${next.count}`}）</button></div>`;
+}
+
+// スレッドで変わった「やること」を、契約の一覧の行にも写す（一覧に戻る前に「次へ」が古い行を選ばないため）。
+function syncContractRow(view) {
+  const row = state.contracts.find((contract) => contract.contractId === state.thread.contractId);
+  if (!row || !view) return;
+  Object.assign(row, {
+    status: view.status,
+    awaitingReceipt: view.awaitingReceipt,
+    pendingRequests: view.pendingRequests,
+    escrowWithdrawRequest: view.escrowWithdrawRequest,
+    reportRequested: view.reportRequested,
+  });
 }
 
 // 宣言の札と既読無視。財布: 管理人の札と、未払いの請求がある間の「既読無視 ○日目」。管理人: 宣言のスイッチと未払いの合計。
@@ -2146,10 +2256,41 @@ function rerenderReceipt() {
 
 // ───────────── データの読み込み ─────────────
 
+// トップの「お貢ぎ牧場の契約を開く」は、管理人カードか契約がある人の端末にだけ出す。app.js がこの印を読む（サーバーには聞かない）。
+const RANCH_REGULAR_STORAGE_KEY = "hariai.ranch.regular.v1";
+
+function rememberRanchRegular() {
+  if (previewScreen) return;
+  try {
+    if (state.profile?.card || state.contracts.length) window.localStorage.setItem(RANCH_REGULAR_STORAGE_KEY, "1");
+    else window.localStorage.removeItem(RANCH_REGULAR_STORAGE_KEY);
+  } catch {
+    // 覚えられない端末では、トップのボタンが出ないだけ。
+  }
+}
+
+// 牧場にいる間は URL に ?open=ranch を付ける（読み直しやホーム画面への追加で、牧場に戻れる）。トップへ戻る時に外す。
+function markRanchUrl(open) {
+  if (previewScreen) return;
+  try {
+    const url = new URL(window.location.href);
+    const marked = url.searchParams.get(RANCH_OPEN_QUERY.key) === RANCH_OPEN_QUERY.value;
+    if (open === marked) return;
+    if (open) url.searchParams.set(RANCH_OPEN_QUERY.key, RANCH_OPEN_QUERY.value);
+    else url.searchParams.delete(RANCH_OPEN_QUERY.key);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // URL を書き換えられなくても、牧場はそのまま使える。
+  }
+}
+
 function applyState(payload) {
   state.ageConfirmed = payload.ageConfirmed === true;
   if (payload.profile) state.profile = payload.profile;
-  if (Array.isArray(payload.contracts)) state.contracts = payload.contracts;
+  if (Array.isArray(payload.contracts)) {
+    state.contracts = payload.contracts;
+    rememberRanchRegular();
+  }
   if (payload.achievements && typeof payload.achievements === "object") {
     state.achievements = {
       stats: payload.achievements.stats || {},
@@ -2338,6 +2479,7 @@ function openThread(contractId) {
       }, () => {});
     }
     applyReadAcknowledgement(contractId, markReadProgress.get(contractId)?.acknowledgedSeq || 0);
+    syncContractRow(state.thread.view);
     state.thread.status = "ready";
     updateThreadParts();
     scheduleMarkRead();
@@ -2991,6 +3133,24 @@ async function handleClick(target) {
       showToast("お試しの設定にしました。");
       return;
     }
+    case "hub-role":
+      state.hubRole = target.dataset.role === "payer" ? "payer" : "manager";
+      rememberHubRole(state.hubRole);
+      render();
+      return;
+    case "copy-open-url": {
+      const url = ranchOpenUrlHere();
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast("牧場を直接開くURLをコピーしました。");
+      } catch {
+        const input = document.querySelector("[data-open-url]");
+        input?.focus();
+        input?.select();
+        showToast("URLを選びました。コピーしてください。");
+      }
+      return;
+    }
     case "copy-invite": {
       const url = inviteUrlFor(state.profile?.publicManagerId || state.profile?.card?.publicManagerId);
       if (!url) return;
@@ -3335,6 +3495,7 @@ async function start({ initialScreen = "", inviteManager = "" } = {}) {
     return;
   }
   active = true;
+  markRanchUrl(true);
   const generation = ++lifecycleGeneration;
   state = createState();
   stateRequest = null;
@@ -3404,6 +3565,7 @@ function requestHome() {
   state.sheet = null;
   state.receipt = null;
   layer.innerHTML = "";
+  markRanchUrl(false);
   window.HariaiApp?.returnHome?.();
 }
 
@@ -3931,3 +4093,4 @@ window.dispatchEvent(new Event("hariai-tribute-ready"));
 
 const initialInvite = takeInviteFromUrl();
 if (initialInvite) start({ inviteManager: initialInvite });
+else if (wantsRanchOpen(window.location.href)) start({ initialScreen: "hub" });

@@ -875,7 +875,20 @@
     // 口調は通常型1on1の6つの口調セットと同じ並び。返事のセリフは landing-hero.mjs が口調セットから読む。
     const heroPersonas = [["tsuyotsuyo", "つよつよ"], ["yowayowa", "よわよわ"], ["koakuma", "小悪魔"], ["oneesan", "お姉さん"], ["amaenbo", "甘えんぼ"], ["seiso", "清楚"]];
     const personaMark = (id) => `<span class="chat-persona-mark is-${id}" aria-hidden="true"></span>`;
+    // お貢ぎ牧場を使っている端末（管理人カードか契約がある。tribute.js が "hariai.ranch.regular.v1" を残す）にだけ、
+    // 一番上に契約への近道を出す。はじめて来た人のトップは、1on1の入口から始まるまま。サーバーには聞かない。
+    const ranchRegular = (() => {
+      try {
+        return window.localStorage.getItem("hariai.ranch.regular.v1") === "1";
+      } catch {
+        return false;
+      }
+    })();
+    const ranchResume = ranchRegular
+      ? `<button class="vl-ranch-resume" id="tributeResumeButton" type="button"><span class="vl-ranch-resume-mark" aria-hidden="true">貢</span><span class="vl-ranch-resume-text"><small>お貢ぎ牧場</small>契約を開く</span><span class="vl-ranch-resume-go" aria-hidden="true">›</span></button>`
+      : "";
     return `<section class="screen hero vl-landing">
+      ${ranchResume}
       <div class="vl-hero">
         <div class="vl-copy">
           <p class="vl-eyebrow">#貼り合い ・ 1on1</p>
@@ -956,7 +969,7 @@
       <section class="vl-more" aria-labelledby="landingMoreTitle">
         <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">記録と道具</h2></div>
         <div class="vl-list">
-          <button class="vl-row" type="button" id="tributeRankingButton"><small>今月の財布の人数で並ぶ管理人</small>お貢ぎ牧場の番付</button>
+          <button class="vl-row" type="button" id="tributeRankingButton"><small>今月の番付加算で並ぶ管理人</small>お貢ぎ牧場の番付</button>
           <button class="vl-row" type="button" id="valueMarketRankingButton"><small>ランキング・永久実績・推し値証書の閲覧</small>旧推し値市場の記録</button>
           <button class="vl-row vl-row-achievement" type="button" id="achievementButton"><small>遊んだ歩みで解除する称号と記録</small>実績コレクション</button>
           <button class="vl-row vl-row-audio" type="button" id="audioStudioButton"><small>端末の中だけで録音・変換</small>10秒音声をつくる</button>
@@ -992,6 +1005,7 @@
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#rouletteTrainingButton")?.addEventListener("click", startRouletteTraining);
     document.querySelector("#tributeButton")?.addEventListener("click", () => startTribute());
+    document.querySelector("#tributeResumeButton")?.addEventListener("click", () => startTribute({ initialScreen: "hub" }));
     document.querySelector("#stadiumButton")?.addEventListener("click", () => startStadium());
     document.querySelector("#tributeRankingButton")?.addEventListener("click", () => startTribute({ initialScreen: "ranking" }));
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);

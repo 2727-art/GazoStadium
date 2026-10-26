@@ -74,7 +74,10 @@ test("the manager's hub says when the card leaves the board and how to come back
 
   const hub = sourceBlock(client, "function renderHub", "// まだ財布として契約したことがない人");
   assert.match(hub, /<small>\$\{escapeHtml\(boardStatusLabel\(profile\)\)\}<\/small>/);
-  assert.match(hub, /\$\{renderBoardNotice\(profile\)\}\s*\$\{renderWordForm\(profile\)\}/);
+  assert.match(hub, /\$\{boardNotice \? renderBoardNotice\(profile\) : ""\}\s*\$\{renderWordForm\(profile\)\}/);
+  // 契約のある人は、自分の設定が一覧の下にあるので、知らせは先頭の「やること」に出す（ranch-nav-v1）。
+  assert.match(sourceBlock(client, "function renderTodo", "// 契約の一覧。"), /const notice = renderBoardNotice\(profile\);/);
+  assert.match(hub, /const me = renderMyPanel\(profile, \{ boardNotice: !hasContracts \}\);/);
   assert.ok(styles.includes(".tribute-board-notice {") && styles.includes(".tribute-board-notice.is-stale {"));
   // 見本で、外れる前と外れた後の案内を確かめられる。
   assert.match(client, /"hub-board-ending": \(\) => navigate\("hub"\),\s*"hub-board-off": \(\) => navigate\("hub"\),/);

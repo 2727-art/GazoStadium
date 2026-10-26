@@ -31,9 +31,9 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1"/);
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1"/);
   assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
@@ -479,7 +479,7 @@ test("today's word mirrors the server check, sits only in the manager's own hub,
   assert.equal(core.wordRemainingLabel(Date.now() - 3 * 3_600_000), "あと21時間で消えます");
 
   const hub = sourceBlock(client, "function renderHub", "function renderWordForm");
-  assert.match(hub, /data-screen="card">カードを編集<\/button>\s*<\/div>\s*\$\{renderBoardNotice\(profile\)\}\s*\$\{renderWordForm\(profile\)\}/, "the form appears only once a manager card exists");
+  assert.match(hub, /data-screen="card">カードを編集<\/button>\s*<\/div>\s*\$\{boardNotice \? renderBoardNotice\(profile\) : ""\}\s*\$\{renderWordForm\(profile\)\}/, "the form appears only once a manager card exists");
   const form = sourceBlock(client, "function renderWordForm", "const ACHIEVEMENT_SIDES");
   assert.match(form, /maxlength="\$\{TODAY_WORD\.length\}"/);
   assert.match(form, /性的な言葉は書けません/);
@@ -529,7 +529,7 @@ test("invite links carry only the public manager id, open after the age check, a
 
   const take = sourceBlock(client, "function takeInviteFromUrl", "// 見本で保存したカード");
   assert.match(take, /url\.searchParams\.delete\(INVITE_QUERY_KEY\);\s*window\.history\.replaceState/, "the id leaves the address bar at once");
-  assert.match(client, /const initialInvite = takeInviteFromUrl\(\);\s*if \(initialInvite\) start\(\{ inviteManager: initialInvite \}\);\s*$/, "the ranch opens itself only for an invite link");
+  assert.match(client, /const initialInvite = takeInviteFromUrl\(\);\s*if \(initialInvite\) start\(\{ inviteManager: initialInvite \}\);\s*else if \(wantsRanchOpen\(window\.location\.href\)\) start\(\{ initialScreen: "hub" \}\);\s*$/, "the ranch opens itself only for an invite link or ?open=ranch");
   const startBlock = sourceBlock(client, "async function start(", "function isActive");
   assert.ok(startBlock.indexOf("if (!state.ageConfirmed)") < startBlock.indexOf("if (pendingInvite)"), "the age check comes before the invited manager");
   assert.match(sourceBlock(client, 'case "age": {', 'case "wallet-name":'), /if \(pendingInvite\) \{[\s\S]*?openManager\(invite, \{ invited: true \}\);/);

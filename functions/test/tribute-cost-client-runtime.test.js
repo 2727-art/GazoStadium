@@ -84,10 +84,12 @@ async function harness(dispatch) {
     modeIsActiveElsewhere: () => false,
     notifyAchievementUnlocks(ids) { calls.push({ unlocked: ids }); },
     setFormError() {},
+    // トップの近道の印と ?open=ranch（ranch-nav-v1）。端末と URL にだけ触るので、ここでは何もしない。
+    rememberRanchRegular() { calls.push({ ui: "regular" }); }, markRanchUrl(open) { calls.push({ ui: open ? "url-open" : "url-close" }); },
   });
   vm.runInContext([
     "createState", "isCurrent", "ensureUser", "call", "applyState", "requestState", "refreshState", "navigate",
-    "stopThread", "openThread", "subscribeThreadEvents", "withThreadLimits", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "scheduleMarkRead",
+    "stopThread", "openThread", "subscribeThreadEvents", "withThreadLimits", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "syncContractRow", "scheduleMarkRead",
     "mutate", "handleSubmit", "start", "isActive", "requestHome",
   ].map(fn).join("\n"), context);
   return {

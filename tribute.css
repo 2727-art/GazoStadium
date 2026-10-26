@@ -264,6 +264,66 @@
 .tribute-me-card small { display: block; }
 .tribute-inline-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
 .tribute-inline-form label { display: grid; gap: 4px; flex: 1 1 180px; font-size: 0.76rem; color: var(--tr-mist); }
+.tribute-me > .tribute-me-title,
+.tribute-me > .tribute-open-link { grid-column: 1 / -1; }
+.tribute-me-title { margin: 0; font-size: 1rem; }
+.tribute-open-link { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--tr-line); }
+.tribute-open-link p { margin: 0; color: var(--tr-mist); font-size: 0.8rem; line-height: 1.6; }
+
+/* やること（契約の画面の先頭）。押すと、その種類の最初の契約を開く。 */
+.tribute-todo { display: grid; gap: 8px; }
+.tribute-todo h2 { margin: 0; }
+.tribute-todo-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.tribute-todo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 79, 163, 0.45);
+  border-radius: 999px;
+  background: rgba(255, 79, 163, 0.12);
+  color: var(--tr-text);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tribute-todo-chip b { color: #ffb3d6; font-size: 0.95rem; }
+.tribute-todo-chip.is-applied,
+.tribute-todo-chip.is-withdraw,
+.tribute-todo-chip.is-report { border-color: rgba(232, 194, 122, 0.5); background: rgba(232, 194, 122, 0.12); }
+.tribute-todo-chip.is-applied b,
+.tribute-todo-chip.is-withdraw b,
+.tribute-todo-chip.is-report b { color: var(--tr-gold); }
+.tribute-todo-clear { margin: 0; color: var(--tr-mist); font-size: 0.84rem; }
+
+/* 管理している／預けている の切り替え */
+.tribute-role-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 4px; border-radius: 999px; background: #0f0b13; }
+.tribute-role-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--tr-mist);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tribute-role-switch button small { font-weight: 600; opacity: 0.8; }
+.tribute-role-switch button[aria-pressed="true"] { background: rgba(255, 79, 163, 0.2); color: var(--tr-text); }
+.tribute-role-switch .tribute-badge { margin-left: 2px; }
+
+/* スレッドの「次へ」 */
+.tribute-thread-next { display: flex; justify-content: flex-end; }
+.tribute-thread-next .tribute-link { font-size: 0.84rem; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
 
 .tribute-screen input:not([type="checkbox"]):not([type="radio"]),
 .tribute-screen select,
@@ -1213,3 +1273,37 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .tribute-board-notice b { display: block; margin-bottom: 2px; color: #ffd38a; }
 .tribute-board-notice.is-stale { border-color: rgba(255, 107, 138, 0.5); background: rgba(255, 60, 100, 0.08); }
 .tribute-board-notice.is-stale b { color: #ffb3c6; }
+
+/* トップの一番上の「お貢ぎ牧場 契約を開く」（牧場を使っている端末だけ。app.js が出す）。 */
+.vl-ranch-resume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  margin: 0 0 12px;
+  padding: 8px 14px 8px 8px;
+  border: 1px solid rgba(255, 79, 163, 0.5);
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(255, 79, 163, 0.18), rgba(23, 18, 28, 0.92));
+  color: #f4ecf6;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.vl-ranch-resume:hover { border-color: #ff4fa3; }
+.vl-ranch-resume:focus-visible { outline: 2px solid rgba(255, 79, 163, 0.8); outline-offset: 2px; }
+.vl-ranch-resume-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: #ff4fa3;
+  color: #fff;
+  font-weight: 900;
+}
+.vl-ranch-resume-text { display: grid; flex: 1; min-width: 0; font-size: 0.95rem; font-weight: 800; }
+.vl-ranch-resume-text small { color: rgba(244, 236, 246, 0.7); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; }
+.vl-ranch-resume-go { color: #ff4fa3; font-size: 1.4rem; line-height: 1; }

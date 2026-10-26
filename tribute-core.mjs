@@ -646,6 +646,55 @@ export function inviteFromUrl(href) {
   }
 }
 
+// 牧場を直接開くURL（?open=ranch）。ブックマークやホーム画面から、トップを通らずに契約の画面を開く。
+export const RANCH_OPEN_QUERY = Object.freeze({ key: "open", value: "ranch" });
+
+export function ranchOpenUrl(base) {
+  const url = new URL(base);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set(RANCH_OPEN_QUERY.key, RANCH_OPEN_QUERY.value);
+  return url.href;
+}
+
+export function wantsRanchOpen(href) {
+  try {
+    return new URL(href).searchParams.get(RANCH_OPEN_QUERY.key) === RANCH_OPEN_QUERY.value;
+  } catch {
+    return false;
+  }
+}
+
+// 契約の画面の「やること」。数が1以上の種類だけ出し、押すとその種類の最初の契約を開く。並びは急ぐ順。
+export const CONTRACT_TODOS = Object.freeze([
+  Object.freeze({ kind: "applied", label: "申し込み", count: (contract) => (contract.role === "manager" && contract.status === "pending" ? 1 : 0) }),
+  Object.freeze({ kind: "unpaid", label: "未払いの請求", count: (contract) => (contract.role === "payer" && contract.status === "active" ? (contract.pendingRequests || []).length : 0) }),
+  Object.freeze({ kind: "awaiting", label: "受け取り待ち", count: (contract) => (contract.role === "manager" && contract.status === "active" ? integer(contract.awaitingReceipt) : 0) }),
+  Object.freeze({ kind: "withdraw", label: "使用許可の申請", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.escrowWithdrawRequest ? 1 : 0) }),
+  Object.freeze({ kind: "report", label: "残高報告の依頼", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reportRequested ? 1 : 0) }),
+  Object.freeze({ kind: "unread", label: "未読", count: (contract) => (contract.status !== "ended" ? integer(contract.unread) : 0) }),
+]);
+
+export function contractTodos(contracts) {
+  const open = (Array.isArray(contracts) ? contracts : []).filter((contract) => contract?.status !== "ended");
+  return CONTRACT_TODOS.map((todo) => {
+    const rows = open.filter((contract) => todo.count(contract) > 0);
+    return { kind: todo.kind, label: todo.label, total: rows.reduce((sum, contract) => sum + todo.count(contract), 0), contractId: rows[0]?.contractId || "" };
+  }).filter((todo) => todo.total > 0);
+}
+
+// スレッドの「次へ」。一覧の並び（最後に動いた順）で、いま開いている契約の次から、やることのある契約を探す。
+export function nextTodoContract(contracts, currentId) {
+  const open = (Array.isArray(contracts) ? contracts : []).filter((contract) => contract?.status !== "ended");
+  const index = open.findIndex((contract) => contract.contractId === currentId);
+  const ordered = index < 0 ? open : [...open.slice(index + 1), ...open.slice(0, index)];
+  for (const contract of ordered) {
+    const todo = CONTRACT_TODOS.find((item) => item.count(contract) > 0);
+    if (todo) return { contract, kind: todo.kind, label: todo.label, count: todo.count(contract) };
+  }
+  return null;
+}
+
 // 告知の文。中の人の札は必ず入れる（分かって渡すため）。リンクは文とは別に付ける。
 const INVITE_DISCLOSURE = Object.freeze({ nekama: "ネカマ・中身は男", as_is: "演じていない", undisclosed: "中の人は非開示" });
 
