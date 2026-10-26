@@ -132,9 +132,9 @@ test("the contract screen puts やること and the list first once contracts ex
   assert.match(sourceBlock(client, 'case "hub-role":', 'case "copy-open-url": {'), /rememberHubRole\(state\.hubRole\);\s*render\(\);/);
   const me = sourceBlock(client, "function renderMyPanel", "// 牧場を直接開くURL");
   assert.match(me, /<h2 class="tribute-me-title" id="tributeMeTitle">自分の設定<\/h2>/);
-  // 財布の始め方は、管理人カードも契約もない人だけ。
-  assert.match(me, /const newcomer = !card && !state\.contracts\.length;/);
-  assert.match(me, /\$\{newcomer \? renderStartGuide\(\) : ""\}/);
+  // 財布の始め方は「はじめての方へ」として契約の画面の一番上に移った（ranch-first-steps-v1）。自分の設定には出さない。
+  assert.doesNotMatch(me, /renderStartGuide\(\)/);
+  assert.match(hub, /const firstSteps = isFirstTimeWallet\(profile\) \? renderStartGuide\(\) : "";/);
   assert.match(me, /\$\{renderOpenLink\(\)\}/);
   for (const selector of [".tribute-todo-chip {", ".tribute-role-switch {", ".tribute-thread-next {", ".tribute-open-link {"]) assert.ok(styles.includes(selector), selector);
 });

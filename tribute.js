@@ -167,7 +167,7 @@ function createState() {
     contracts: [],
     achievements: null,
     walletBalance: null,
-    board: { status: "idle", managers: [], nekamaOnly: false },
+    board: { status: "idle", managers: [], nekamaOnly: false, feeZeroOnly: false },
     manager: { status: "idle", publicManagerId: "", data: null },
     applyTarget: null,
     thread: { contractId: "", raw: null, view: null, events: [], status: "idle" },
@@ -417,9 +417,11 @@ function renderHub() {
     <button class="button button-primary button-small" type="button" data-t="claim-refund" ${state.busy ? "disabled" : ""}>財布へ受け取る</button></section>` : "";
   const lists = renderContractLists(open, profile);
   const me = renderMyPanel(profile, { boardNotice: !hasContracts });
+  const firstSteps = isFirstTimeWallet(profile) ? renderStartGuide() : "";
   const endedPanel = ended.length ? `<details class="tribute-panel tribute-ended"><summary>終わった契約（${ended.length}）</summary>${ended.map(renderContractRow).join("")}</details>` : "";
   return frame(`<div class="tribute-hub">
     ${refund}
+    ${firstSteps}
     ${hasContracts ? `${renderTodo(open, profile)}${lists}${me}` : `${me}${lists}`}
     ${endedPanel}
     ${renderAchievementPanel()}
@@ -497,8 +499,6 @@ function renderContractLists(open, profile) {
 // 自分の設定（財布名・掲示板・レシート・管理人カード・今日のひとこと・招待リンク・牧場を直接開くURL）。
 function renderMyPanel(profile, { boardNotice = true } = {}) {
   const card = profile.card;
-  // 財布の始め方は、管理人カードも契約もない、はじめての人にだけ出す。
-  const newcomer = !card && !state.contracts.length;
   return `<section class="tribute-panel tribute-me" aria-labelledby="tributeMeTitle">
       <h2 class="tribute-me-title" id="tributeMeTitle">自分の設定</h2>
       <div class="tribute-me-wallet">
@@ -509,7 +509,6 @@ function renderMyPanel(profile, { boardNotice = true } = {}) {
         </form>
         <button class="button button-primary" type="button" data-t="nav" data-screen="board">管理人を探す</button>
         <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="receipts">献上レシート（${Number(profile.receiptCount || 0)}枚）</button>
-        ${newcomer ? renderStartGuide() : ""}
       </div>
       <div class="tribute-me-manager">
         <span class="tribute-eyebrow">管理人として</span>
@@ -547,17 +546,49 @@ function isNewWallet() {
   return !state.contracts.some((contract) => contract.role === "payer");
 }
 
+// はじめての方へ（管理人カードがなく、財布としてまだ一度も管理されていない人）。
+// 2026-10 の集計: 年齢確認をした587人のうち68%が、カードも申し込みもなく帰っていた（その6割が 0 Pay）。
+// 申し込みが48時間で失効した・受理されなかった人にも、もう一度ここから案内する。
+function isFirstTimeWallet(profile) {
+  if (profile?.card) return false;
+  return !state.contracts.some((contract) => contract.role === "payer" && (contract.status !== "ended" || Number(contract.acceptedAt) > 0));
+}
+
+// 終わった申し込みの理由（受理されなかったもの）。最近動いている管理人へ案内し直す。
+function retryReasonText(endReason) {
+  return { application_expired: "48時間のうちに受理されず、失効しました", declined: "受理されませんでした" }[endReason] || "";
+}
+
 function renderStartGuide() {
   const trial = trialCaps(0);
-  return `<div class="tribute-start-guide">
-    <span class="tribute-eyebrow">財布の始め方</span>
-    <ol>
-      <li><b>見学する</b><span>受取印・ご褒美・首輪番号がどう届くかを、見本の契約で見られます。Payは動きません。</span><button class="button button-ghost button-small" type="button" data-t="open-demo">見学する</button></li>
-      <li><b>管理人を選ぶ</b><span>掲示板から。入場料0 Payの管理人なら、入場料なしで始められます。</span></li>
-      <li><b>お試しで申し込む</b><span>申し込みの「お試しの設定」なら、${TRIAL_DURATION_DAYS}日・1回${trial.perTribute} Pay・合計${trial.total} Payから。限度額と解約は、いつでも自分で設定できます（管理人には見えません）。</span></li>
+  // 契約は最後に動いた順なので、最初に見つかった終わった申し込みがいちばん新しい。
+  const last = state.contracts.find((contract) => contract.role === "payer" && contract.status === "ended");
+  const retry = last && retryReasonText(last.endReason)
+    ? `<p class="tribute-first-steps-retry">前の申し込みは${retryReasonText(last.endReason)}。最近動いている管理人に申し込むと、受理されやすくなります。</p>`
+    : "";
+  return `<section class="tribute-panel tribute-first-steps" aria-labelledby="tributeFirstStepsTitle">
+    <span class="tribute-eyebrow">はじめての方へ</span>
+    <h2 id="tributeFirstStepsTitle">Payが0でも、今日から管理されます</h2>
+    <p>入場料0の管理人なら、申し込んで受理されれば、その日から管理が始まります。払えない請求を抱えた財布として管理されるのも、お貢ぎの遊び方のひとつです。</p>
+    ${retry}
+    <ol class="tribute-first-steps-list">
+      <li><button class="button button-ghost" type="button" data-t="open-demo"><b>1</b><span>見学する<small>見本の契約で、受取印やご褒美の届き方を見る（Payは動きません）</small></span></button></li>
+      <li><button class="button button-primary" type="button" data-t="board-free"><b>2</b><span>入場料0の管理人を見る<small>最近動いている管理人ほど、受理されやすい</small></span></button></li>
+      <li><button class="button button-ghost" type="button" data-t="nav" data-screen="board"><b>3</b><span>すべての管理人を見る<small>申し込みは「お試しの設定」なら、${TRIAL_DURATION_DAYS}日・1回${trial.perTribute} Pay・合計${trial.total} Payから</small></span></button></li>
     </ol>
+    <p class="tribute-note">限度額と解約は、いつでもあなたが決められます（管理人には見えません）。</p>
     <p class="tribute-note" data-start-guide-balance>${guideBalanceMarkup()}</p>
-  </div>`;
+  </section>`;
+}
+
+// 管理人が最後に動いた時（受理・返事・請求・カードの保存など）。申し込みが受理されやすいかの目安。
+function activityLabel(at, now = Date.now()) {
+  const value = Number(at) || 0;
+  if (!value) return "";
+  const hours = Math.floor(Math.max(0, now - value) / 3_600_000);
+  if (hours < 1) return "1時間以内";
+  if (hours < 24) return `${hours}時間前`;
+  return `${Math.floor(hours / 24)}日前`;
 }
 
 // 財布の始め方の「いまの財布」。残高は後から届くので、届いたらここだけ書き換える（paintWallet）。
@@ -696,23 +727,29 @@ function renderManagerCard(card, { compact = false, preview = false } = {}) {
       ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
-      <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span></span>
+      <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span>${activityLabel(card.lastActiveAt) ? `<span>動き <b>${escapeHtml(activityLabel(card.lastActiveAt))}</b></span>` : ""}</span>
     ${preview ? "</div>" : "</button>"}
   </article>`;
 }
 
 function renderBoard() {
   const board = state.board;
+  // 入場料0のみ: 読み込んだ掲示板を画面の上で絞る（Payが0の財布でも受理される管理人）。
+  const managers = board.feeZeroOnly ? board.managers.filter((card) => !Number(card.entryFee)) : board.managers;
+  const emptyText = board.feeZeroOnly
+    ? "入場料0の管理人は、いま受付していません。「入場料0のみ」を外すと、ほかの管理人も見られます。"
+    : board.nekamaOnly ? "ネカマ開示の管理人は、いま受付していません。" : "いま受付中の管理人はいません。";
   const body = board.status === "loading" && !board.managers.length
     ? `<p class="tribute-empty">掲示板を読み込んでいます…</p>`
     : board.status === "error"
       ? `<p class="tribute-empty">掲示板を読み込めませんでした。<button class="button button-ghost button-small" type="button" data-t="reload-board">再読み込み</button></p>`
-      : board.managers.length
-        ? `<div class="tribute-card-grid">${board.managers.map((card) => renderManagerCard(card)).join("")}</div>`
-        : `<p class="tribute-empty">${board.nekamaOnly ? "ネカマ開示の管理人は、いま受付していません。" : "いま受付中の管理人はいません。"}</p>`;
+      : managers.length
+        ? `<div class="tribute-card-grid">${managers.map((card) => renderManagerCard(card)).join("")}</div>`
+        : `<p class="tribute-empty">${emptyText}</p>`;
   return frame(`<div class="tribute-board">
     <div class="tribute-board-tools">
       <label class="tribute-switch"><input type="checkbox" data-t="toggle-nekama" ${board.nekamaOnly ? "checked" : ""} /><span>ネカマ開示のみ</span></label>
+      <label class="tribute-switch"><input type="checkbox" data-t="toggle-fee-zero" ${board.feeZeroOnly ? "checked" : ""} /><span>入場料0のみ</span></label>
       <small>性別で絞る機能はありません。中の人の札は、分かって渡すための札です。</small>
       ${isNewWallet() ? '<button class="tribute-link" type="button" data-t="open-demo">初めてなら、見本の契約を見学できます</button>' : ""}
     </div>
@@ -751,6 +788,7 @@ function renderManagerDetail() {
       <dl class="tribute-facts">
         <div><dt>中の人の札</dt><dd>${escapeHtml(DISCLOSURE_LABELS[card.disclosure] || "非開示")}</dd></div>
         <div><dt>入場料</dt><dd>${escapeHtml(formatPay(card.entryFee))}</dd></div>
+        ${activityLabel(card.lastActiveAt) ? `<div><dt>最後に動いた</dt><dd>${escapeHtml(activityLabel(card.lastActiveAt))}</dd></div>` : ""}
         <div><dt>今月の財布</dt><dd>${Number(month?.payers || 0)}人</dd></div>
         <div><dt>管理中</dt><dd>${Number(card.activeContracts || 0)}件</dd></div>
         ${myTotal ? `<div><dt>あなたの献上</dt><dd>${escapeHtml(formatPay(myTotal))}</dd></div>` : ""}
@@ -780,9 +818,13 @@ function renderApply() {
   const firstTime = isNewWallet();
   const defaults = firstTime ? trial : { perTribute: Math.max(30, minPerTribute), perDay: 100, total: 300 };
   const perTribute = defaults.perTribute;
+  // 入場料が今の財布より多いと、受理の時に払えず、管理人は受理できない（申し込みは48時間で失効する）。先に知らせる。
+  const balance = state.walletBalance;
+  const feeShort = target.entryFee > 0 && balance !== null && balance < target.entryFee;
   return frame(`<form class="tribute-panel tribute-apply" data-form="apply">
     <div class="tribute-apply-head">${sigil(target)}<div><span class="tribute-eyebrow">管理を申し込む</span><h1>${escapeHtml(target.personaName)}</h1>${disclosureTag(target.disclosure)}${declarationTags(target)}</div></div>
     <p class="tribute-note">${target.ignoreUnpaid ? `${escapeHtml(target.personaName)}は「未払いは既読無視」を宣言しています。` : ""}${target.postsScreenshots ? `${escapeHtml(target.personaName)}は「スクショを載せる」管理人です。` : ""}請求は断れません。払うか、解約するかです。</p>
+    ${feeShort ? `<p class="tribute-fee-warning" role="status"><b>入場料 ${escapeHtml(formatPay(target.entryFee))} ／ いまの財布 ${escapeHtml(formatPay(balance))}</b>受理される時に入場料を払えないと、管理人は受理できず、申し込みは48時間で失効します。先に Pay を貯めるか、入場料0の管理人を選んでください。<button class="tribute-link" type="button" data-t="board-free">入場料0の管理人を見る</button></p>` : ""}
     <fieldset><legend>あなたの限度額（管理人には見えません・1回 ≦ 1日 ≦ 契約合計）</legend>
       <div class="tribute-three">
         <label><span>1回</span><select name="perTribute">${optionList(PER_TRIBUTE_OPTIONS, perTribute)}</select></label>
@@ -1532,7 +1574,11 @@ function renderThreadActionButtons(view) {
         <div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button></div>`;
   }
   if (view.status !== "active") {
-    return `<div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button></div>`;
+    // 受理されなかった申し込みには、最近動いている管理人・入場料0の管理人へ案内し直す。
+    const retry = view.role === "payer" && retryReasonText(view.endReason)
+      ? `<div class="tribute-retry"><p>この申し込みは${retryReasonText(view.endReason)}。最近動いている管理人や、入場料0の管理人に申し込めます。</p><div class="tribute-actions"><button class="button button-primary button-small" type="button" data-t="nav" data-screen="board">管理人を探す</button><button class="button button-ghost button-small" type="button" data-t="board-free">入場料0の管理人を見る</button></div></div>`
+      : "";
+    return `${retry}<div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button></div>`;
   }
   const withdraw = view.escrowWithdrawRequest;
   if (view.role === "payer") {
@@ -3264,6 +3310,14 @@ async function handleClick(target) {
       state.board.nekamaOnly = target.checked;
       loadBoard();
       return;
+    case "toggle-fee-zero":
+      state.board.feeZeroOnly = target.checked;
+      render();
+      return;
+    case "board-free":
+      state.board.feeZeroOnly = true;
+      navigate("board");
+      return;
     case "toggle-declaration":
       await mutate("set_declaration", { ignoreUnpaid: target.checked }, {
         success: target.checked ? "「未払いは既読無視」を宣言しました。" : "宣言を外しました。",
@@ -3660,10 +3714,10 @@ function bindRoot(root) {
 
   root.addEventListener("change", (event) => {
     if (!active) return;
-    const target = event.target.closest?.('input[data-t="toggle-nekama"], input[data-t="toggle-declaration"]');
+    const target = event.target.closest?.('input[data-t="toggle-nekama"], input[data-t="toggle-fee-zero"], input[data-t="toggle-declaration"]');
     if (target) handleClick(target);
     const cardForm = event.target.closest?.('form[data-form="card"]');
-    if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee", "ignoreUnpaid"].includes(event.target.name)) updateCardPreview(cardForm);
+    if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee", "ignoreUnpaid", "postsScreenshots"].includes(event.target.name)) updateCardPreview(cardForm);
     if (cardForm && ["frame", "frameColor", "sealShape", "sealInk"].includes(event.target.name)) {
       if (event.target.name === "frame") refreshFrameColors(cardForm);
       updateDecorations(cardForm);
@@ -4157,6 +4211,8 @@ function previewCall(action, payload) {
           ...(previewScreen === "hub-refund" ? { operatorRefundPending: 90, refundPending: 20 } : {}),
           wordsToday: 1,
           boardUntil: previewBoardUntil(),
+          // first-steps: 管理人カードも契約もない、はじめての財布（はじめての方へを確かめる）。
+          ...(previewScreen.startsWith("first-steps") ? { card: null, accepting: false, counts: { payerOpen: 0, managerActive: 0, managerPending: 0 }, receiptCount: 0, boardUntil: 0 } : {}),
         },
         achievements: {
           stats: { managerPairDays: 12, walletPairDays: 4 },
@@ -4164,11 +4220,14 @@ function previewCall(action, payload) {
           newlyUnlocked: [],
         },
         // newcomer: まだ財布として契約したことがない人（財布の始め方と見学を確かめる）。
-        contracts: [
-          ...(previewScreen === "newcomer" ? [] : [viewContract(previewRaw("payer"), "preview-me", now)]),
-          viewContract(previewRaw("manager"), "preview-me", now),
-          viewContract(previewRaw("manager", "pending"), "preview-me", now),
-        ].map((contract) => (contract.role === "manager" ? { ...contract, nickname: previewNicknames.get(contract.contractId) || "" } : contract)),
+        // first-steps-expired: 前の申し込みが48時間で失効した、はじめての財布。
+        contracts: previewScreen === "first-steps" ? []
+          : previewScreen === "first-steps-expired" ? [viewContract({ ...previewRaw("payer"), status: "ended", endReason: "application_expired", acceptedAt: 0 }, "preview-me", now)]
+            : [
+              ...(previewScreen === "newcomer" ? [] : [viewContract(previewRaw("payer"), "preview-me", now)]),
+              viewContract(previewRaw("manager"), "preview-me", now),
+              viewContract(previewRaw("manager", "pending"), "preview-me", now),
+            ].map((contract) => (contract.role === "manager" ? { ...contract, nickname: previewNicknames.get(contract.contractId) || "" } : contract)),
       });
     case "board":
       return Promise.resolve({
@@ -4459,12 +4518,14 @@ function previewBoardUntil(now = Date.now()) {
 }
 
 function startPreview(screen) {
-  state.walletBalance = screen === "newcomer" ? 0 : screen === "card" ? 18_420 : 1_000;
+  state.walletBalance = screen === "newcomer" || screen.startsWith("first-steps") ? 0 : screen === "card" ? 18_420 : 1_000;
   const map = {
     hub: () => navigate("hub"),
     "hub-board-ending": () => navigate("hub"),
     "hub-board-off": () => navigate("hub"),
     "hub-refund": () => navigate("hub"),
+    "first-steps": () => navigate("hub"),
+    "first-steps-expired": () => navigate("hub"),
     newcomer: () => navigate("hub"),
     board: () => navigate("board"),
     manager: () => openManager(PREVIEW_MANAGER_CARD.publicManagerId),

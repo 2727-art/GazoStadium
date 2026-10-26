@@ -719,11 +719,21 @@ body.tribute-shot-mode .site-footer { display: none; }
 .tribute-chip.is-awaiting { background: rgba(232, 194, 122, 0.16); color: var(--tr-gold); }
 
 /* 財布の始め方・招待リンク・見学 */
-.tribute-start-guide { display: grid; gap: 8px; margin-top: 6px; padding: 12px 14px; border: 1px solid rgba(126, 224, 138, 0.35); border-radius: 14px; background: rgba(126, 224, 138, 0.06); }
-.tribute-start-guide ol { display: grid; gap: 8px; margin: 0; padding-left: 1.3em; }
-.tribute-start-guide li { display: grid; gap: 2px; font-size: 0.86rem; }
-.tribute-start-guide li span { color: var(--tr-mist); font-size: 0.8rem; line-height: 1.6; }
-.tribute-start-guide li .button { justify-self: start; margin-top: 4px; }
+/* はじめての方へ（年齢確認のあと、まだ管理されたことがない財布）。最初の一歩だけを大きく出す。 */
+.tribute-first-steps { border-color: rgba(126, 224, 138, 0.45); background: linear-gradient(180deg, rgba(126, 224, 138, 0.1), var(--tr-panel) 70%); }
+.tribute-first-steps h2 { margin: 0; font-size: 1.15rem; }
+.tribute-first-steps-retry { padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(232, 194, 122, 0.45); background: rgba(232, 194, 122, 0.08); color: #f6dfa6; font-size: 0.84rem; }
+.tribute-first-steps-list { display: grid; gap: 8px; margin: 4px 0 0; padding: 0; list-style: none; }
+.tribute-first-steps-list .button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 10px 14px; text-align: left; }
+.tribute-first-steps-list .button b { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(255, 255, 255, 0.14); font-size: 0.9rem; }
+.tribute-first-steps-list .button span { display: grid; gap: 2px; min-width: 0; font-weight: 800; }
+.tribute-first-steps-list .button small { color: inherit; opacity: 0.78; font-size: 0.74rem; font-weight: 600; line-height: 1.5; }
+/* 申し込みの入場料が財布より多い時と、受理されなかった申し込みの案内 */
+.tribute-fee-warning { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255, 196, 92, 0.5); background: rgba(255, 180, 60, 0.08); font-size: 0.84rem; line-height: 1.6; }
+.tribute-fee-warning b { color: #ffd38a; }
+.tribute-fee-warning .tribute-link { justify-self: start; }
+.tribute-retry { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(232, 194, 122, 0.45); background: rgba(232, 194, 122, 0.08); }
+.tribute-retry p { margin: 0; font-size: 0.86rem; }
 .tribute-invite { display: grid; gap: 6px; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--tr-line); }
 .tribute-invite p { font-size: 0.82rem; color: var(--tr-mist); }
 .tribute-invite-link { display: flex; gap: 8px; }
