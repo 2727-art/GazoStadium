@@ -1,0 +1,391 @@
+{
+  "checkedAt": "2026-10-26T15:52:51.982Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "42ca714",
+  "funnelReportCommit": "ed5ae79",
+  "releaseHead": "161e3fe",
+  "baseCommit": "7b62f7b",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-newcomer-funnel, no upstream)",
+  "decision": "proposals 1 and 2 with the recommended options: first steps for newcomers and fewer expired applications; no auto-accept, no free Pay",
+  "funnelAt2026_10_26": {
+    "ageConfirmed": 587,
+    "applied": "30%",
+    "accepted": "20%",
+    "tributed": "16%",
+    "leftWithoutCardOrApplication": 398,
+    "leftWithZeroPayOrNoWallet": 236,
+    "notAccepted": 58,
+    "expired48h": 43
+  },
+  "scope": {
+    "functions": [],
+    "hosting": true,
+    "hostingFiles": 169,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2223,
+    "passed": 2191,
+    "failed": 0,
+    "skipped": 32,
+    "rerunAtReleaseHead": true
+  },
+  "push": "7b62f7b..161e3fe",
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [],
+    "tributeActionSourceHash": "7109a97168acbd9ebf3778eb269830d34f94b306",
+    "note": "no Functions in this release; tributeAction is the work-orders build"
+  },
+  "workersBuild": {
+    "releaseHeadBuild": "never ran: queued during the Cloudflare incident",
+    "incident": {
+      "name": "Cloudflare Workers build delays",
+      "investigatingAt": "2026-10-26T15:12:34Z",
+      "fixDeployedAt": "2026-10-26T15:38:12Z"
+    },
+    "deliveredBy": {
+      "commit": "24bd2db",
+      "conclusion": "success",
+      "completedAt": "2026-10-26T15:52:00Z",
+      "record": "TRIBUTE_ACTIVITY_OPTIN_RELEASE.md"
+    }
+  },
+  "delivery": {
+    "checkedAt": "2026-10-26T15:16:24.187Z",
+    "readOnly": true,
+    "marker": "ranch-first-steps-v1",
+    "commit": "161e3fea7ed7cb2f68ab0054399b2bc2eaaeac12",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-first-steps-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/report-tribute-newcomer-funnel.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-first-steps.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-first-steps-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/report-tribute-newcomer-funnel.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-first-steps.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "deliveryWorkers": {
+    "checkedAt": "2026-10-26T15:52:51.982Z",
+    "readOnly": true,
+    "marker": "ranch-activity-optin-v1",
+    "commit": "24bd2db6bc27ba23f25c45d0d10d6923cd0515c0",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-activity-optin-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-activity-optin.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-activity-optin-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-activity-optin.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ],
+    "note": "checked with verify-tribute-activity-optin-release.cjs; ranch-first-steps-v1 is a previous marker there and tribute.css (changed here) matches"
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "tribute.css": true
+    },
+    "servedClientHas": {
+      "firstSteps": true,
+      "feeZeroFilter": true,
+      "activityLabel": true,
+      "feeWarning": true,
+      "retryHints": true
+    },
+    "consoleErrors": 0,
+    "storedAuthRecords": 0
+  },
+  "open": [
+    "compare the funnel again in 1-2 weeks (68% left idle, 43 expired applications)",
+    "the buttons, the filter and applying were not exercised in production (tests and preview)",
+    "the 動き display was made opt-in right after this release (TRIBUTE_ACTIVITY_OPTIN_RELEASE.md)"
+  ]
+}
