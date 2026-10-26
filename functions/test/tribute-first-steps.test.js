@@ -66,8 +66,9 @@ test("the board can show only fee-0 managers and how recently each manager acted
   assert.match(board, /const managers = board\.feeZeroOnly \? board\.managers\.filter\(\(card\) => !Number\(card\.entryFee\)\) : board\.managers;/);
   assert.match(board, /data-t="toggle-fee-zero"/);
   assert.match(client, /input\[data-t="toggle-fee-zero"\]/, "the change listener routes the toggle");
-  assert.match(client, /<span>動き <b>\$\{escapeHtml\(activityLabel\(card\.lastActiveAt\)\)\}<\/b><\/span>/);
-  assert.match(client, /<dt>最後に動いた<\/dt><dd>\$\{escapeHtml\(activityLabel\(card\.lastActiveAt\)\)\}<\/dd>/);
+  // 出すのは、管理人がカードで選んだ時だけ（ranch-activity-optin-v1）。
+  assert.match(client, /<span>動き <b>\$\{escapeHtml\(cardActivityLabel\(card\)\)\}<\/b><\/span>/);
+  assert.match(client, /<dt>最後に動いた<\/dt><dd>\$\{escapeHtml\(cardActivityLabel\(card\)\)\}<\/dd>/);
 });
 
 test("applying warns when the entry fee is more than the wallet, and stalled applications are pointed elsewhere", () => {
@@ -81,7 +82,7 @@ test("applying warns when the entry fee is more than the wallet, and stalled app
 });
 
 test("cache keys and the design note record the release", () => {
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-first-steps-v1"`), name);
+  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-first-steps-v1(?:-[a-z0-9-]+)?"`), name);
   assert.match(design, /財布の始め方（はじめての方へ）/);
   assert.match(design, /report-tribute-newcomer-funnel\.cjs/);
 });

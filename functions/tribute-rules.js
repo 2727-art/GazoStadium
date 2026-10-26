@@ -458,6 +458,8 @@ function normalizeManagerCard(value) {
       ignoreUnpaid: value?.ignoreUnpaid === true,
       // 管理人の宣言「スクショを載せる」。載せてよいのは、財布が申し込みで許した契約だけ（allowScreenshots）。
       postsScreenshots: value?.postsScreenshots === true,
+      // 掲示板と管理人の詳細に、最後に動いた時を出すか。管理人が選んだ時だけ出す（初期は出さない）。
+      showsActivity: value?.showsActivity === true,
       xHandle: x.xHandle,
       accepting: value?.accepting === true,
     },

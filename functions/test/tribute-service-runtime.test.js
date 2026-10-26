@@ -1577,3 +1577,34 @@ test("an operator refund for the double-payment bug is claimed into the wallet w
   // 管理人の残高には触れない。
   assert.equal(harness.ledger("manager").some((entry) => entry.kind === "tribute_operator_refund"), false);
 });
+
+test("a manager's last activity reaches others only when the manager chose to show it, and the board keeps its activity order", async () => {
+  const harness = createHarness({ balances: { payer: 1_000 } });
+  const quiet = await openManager(harness, "quiet", { personaName: "シズ", entryFee: 0 });
+  const open = await openManager(harness, "open", { personaName: "ミオ様", entryFee: 0, showsActivity: true });
+  await confirmAge(harness, "payer");
+  const boardCard = async (id) => (await harness.act("payer", "board")).managers.find((card) => card.publicManagerId === id);
+
+  // 初期は出さない。出さないカードは、掲示板にも詳細にも時刻が届かない。
+  for (const card of [await boardCard(quiet), (await harness.act("payer", "manager", { publicManagerId: quiet })).card]) {
+    assert.equal(card.showsActivity, false);
+    assert.equal(card.lastActiveAt, 0);
+  }
+  const shown = await boardCard(open);
+  assert.equal(shown.showsActivity, true);
+  assert.equal(shown.lastActiveAt, harness.firestore.read("tributeProfiles/open").lastActiveAt);
+  assert.equal((await harness.act("payer", "manager", { publicManagerId: open })).card.lastActiveAt, shown.lastActiveAt);
+
+  // 自分のカードには、出さない設定でも自分の時刻が入る（掲示板に出ていられる期限と同じもと）。
+  const own = (await harness.act("quiet", "state")).profile;
+  assert.equal(own.card.showsActivity, false);
+  assert.equal(own.card.lastActiveAt, harness.firestore.read("tributeProfiles/quiet").lastActiveAt);
+  assert.ok(own.card.lastActiveAt > 0);
+
+  // 出さない管理人も、掲示板は動いた順に並ぶ。カードを保存した「シズ」が一番上に戻る。
+  assert.deepEqual((await harness.act("payer", "board")).managers.map((card) => card.personaName), ["ミオ様", "シズ"]);
+  harness.advance(2_100);
+  const saved = await harness.act("quiet", "save_profile", { card: { personaName: "シズ", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 }, accepting: true });
+  assert.equal(saved.profile.card.showsActivity, false);
+  assert.deepEqual((await harness.act("payer", "board")).managers.map((card) => card.personaName), ["シズ", "ミオ様"]);
+});

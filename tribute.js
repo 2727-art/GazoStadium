@@ -554,7 +554,7 @@ function isFirstTimeWallet(profile) {
   return !state.contracts.some((contract) => contract.role === "payer" && (contract.status !== "ended" || Number(contract.acceptedAt) > 0));
 }
 
-// 終わった申し込みの理由（受理されなかったもの）。最近動いている管理人へ案内し直す。
+// 終わった申し込みの理由（受理されなかったもの）。掲示板の上のほう（最近動いた管理人）へ案内し直す。
 function retryReasonText(endReason) {
   return { application_expired: "48時間のうちに受理されず、失効しました", declined: "受理されませんでした" }[endReason] || "";
 }
@@ -564,7 +564,7 @@ function renderStartGuide() {
   // 契約は最後に動いた順なので、最初に見つかった終わった申し込みがいちばん新しい。
   const last = state.contracts.find((contract) => contract.role === "payer" && contract.status === "ended");
   const retry = last && retryReasonText(last.endReason)
-    ? `<p class="tribute-first-steps-retry">前の申し込みは${retryReasonText(last.endReason)}。最近動いている管理人に申し込むと、受理されやすくなります。</p>`
+    ? `<p class="tribute-first-steps-retry">前の申し込みは${retryReasonText(last.endReason)}。掲示板は最近動いた管理人から並んでいます。上のほうの管理人に申し込むと、受理されやすくなります。</p>`
     : "";
   return `<section class="tribute-panel tribute-first-steps" aria-labelledby="tributeFirstStepsTitle">
     <span class="tribute-eyebrow">はじめての方へ</span>
@@ -573,7 +573,7 @@ function renderStartGuide() {
     ${retry}
     <ol class="tribute-first-steps-list">
       <li><button class="button button-ghost" type="button" data-t="open-demo"><b>1</b><span>見学する<small>見本の契約で、受取印やご褒美の届き方を見る（Payは動きません）</small></span></button></li>
-      <li><button class="button button-primary" type="button" data-t="board-free"><b>2</b><span>入場料0の管理人を見る<small>最近動いている管理人ほど、受理されやすい</small></span></button></li>
+      <li><button class="button button-primary" type="button" data-t="board-free"><b>2</b><span>入場料0の管理人を見る<small>掲示板は最近動いた順。上のほうほど受理されやすい</small></span></button></li>
       <li><button class="button button-ghost" type="button" data-t="nav" data-screen="board"><b>3</b><span>すべての管理人を見る<small>申し込みは「お試しの設定」なら、${TRIAL_DURATION_DAYS}日・1回${trial.perTribute} Pay・合計${trial.total} Payから</small></span></button></li>
     </ol>
     <p class="tribute-note">限度額と解約は、いつでもあなたが決められます（管理人には見えません）。</p>
@@ -589,6 +589,11 @@ function activityLabel(at, now = Date.now()) {
   if (hours < 1) return "1時間以内";
   if (hours < 24) return `${hours}時間前`;
   return `${Math.floor(hours / 24)}日前`;
+}
+
+// 最後に動いた時は、管理人がカードで「出す」を選んだ時だけ出す（初期は出さない。出さないカードは時刻も届かない）。
+function cardActivityLabel(card) {
+  return card?.showsActivity === true ? activityLabel(card.lastActiveAt) : "";
 }
 
 // 財布の始め方の「いまの財布」。残高は後から届くので、届いたらここだけ書き換える（paintWallet）。
@@ -727,7 +732,7 @@ function renderManagerCard(card, { compact = false, preview = false } = {}) {
       ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
-      <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span>${activityLabel(card.lastActiveAt) ? `<span>動き <b>${escapeHtml(activityLabel(card.lastActiveAt))}</b></span>` : ""}</span>
+      <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span>${cardActivityLabel(card) ? `<span>動き <b>${escapeHtml(cardActivityLabel(card))}</b></span>` : ""}</span>
     ${preview ? "</div>" : "</button>"}
   </article>`;
 }
@@ -788,7 +793,7 @@ function renderManagerDetail() {
       <dl class="tribute-facts">
         <div><dt>中の人の札</dt><dd>${escapeHtml(DISCLOSURE_LABELS[card.disclosure] || "非開示")}</dd></div>
         <div><dt>入場料</dt><dd>${escapeHtml(formatPay(card.entryFee))}</dd></div>
-        ${activityLabel(card.lastActiveAt) ? `<div><dt>最後に動いた</dt><dd>${escapeHtml(activityLabel(card.lastActiveAt))}</dd></div>` : ""}
+        ${cardActivityLabel(card) ? `<div><dt>最後に動いた</dt><dd>${escapeHtml(cardActivityLabel(card))}</dd></div>` : ""}
         <div><dt>今月の財布</dt><dd>${Number(month?.payers || 0)}人</dd></div>
         <div><dt>管理中</dt><dd>${Number(card.activeContracts || 0)}件</dd></div>
         ${myTotal ? `<div><dt>あなたの献上</dt><dd>${escapeHtml(formatPay(myTotal))}</dd></div>` : ""}
@@ -875,6 +880,9 @@ function renderCardEditor() {
     <fieldset><legend>宣言</legend>
       <label class="tribute-check"><input type="checkbox" name="ignoreUnpaid" ${card.ignoreUnpaid === true ? "checked" : ""} /><span>「未払いは既読無視」を宣言する<small>財布の画面と、掲示板のカードに札が出ます。返事をするかどうかは、いつでもあなたが決められます。</small></span></label>
       <label class="tribute-check"><input type="checkbox" name="postsScreenshots" ${card.postsScreenshots === true ? "checked" : ""} /><span>「スクショを載せる」を宣言する<small>掲示板のカード・申し込み・財布募集の画像に札が出ます。財布が写る画面を X に載せてよいのは、財布が申し込みで許した契約だけです（スレッドに「スクショ掲載 可」の札が出ます）。</small></span></label>
+    </fieldset>
+    <fieldset><legend>最後に動いた時</legend>
+      <label class="tribute-check"><input type="checkbox" name="showsActivity" ${card.showsActivity === true ? "checked" : ""} /><span>掲示板と管理人の詳細に、最後に動いた時を出す<small>「動き 1時間以内／○時間前／○日前」と出ます。財布が、受理してもらえそうかの目安にします。出さなくても、掲示板は動いた順に並びます。</small></span></label>
     </fieldset>
     <fieldset><legend>貢ぎ報告</legend>
       <label class="tribute-check"><input type="checkbox" name="reportConsent" ${(profile.card ? card.reportConsent === true : true) ? "checked" : ""} /><span>財布の貢ぎ報告の画像に、名前とアイコンを出してよい<small>外すと「管理人様」とシルエットになります。画像を作れるのは財布だけで、URLは入りません。</small></span></label>
@@ -1238,6 +1246,8 @@ function updateCardPreview(form) {
     xHandle: normalizeXProfile(data.get("xProfile")).xHandle || "",
     ignoreUnpaid: data.get("ignoreUnpaid") === "on",
     postsScreenshots: data.get("postsScreenshots") === "on",
+    showsActivity: data.get("showsActivity") === "on",
+    lastActiveAt: state.profile?.card?.lastActiveAt || Date.now(),
     ...formDecorations(form),
     achievements: data.has("achievements") ? data.getAll("achievements").map(String).slice(0, CARD_ACHIEVEMENT_LIMIT) : state.profile?.card?.achievements || [],
   };
@@ -1574,9 +1584,9 @@ function renderThreadActionButtons(view) {
         <div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button></div>`;
   }
   if (view.status !== "active") {
-    // 受理されなかった申し込みには、最近動いている管理人・入場料0の管理人へ案内し直す。
+    // 受理されなかった申し込みには、掲示板の上のほう（最近動いた管理人）・入場料0の管理人へ案内し直す。
     const retry = view.role === "payer" && retryReasonText(view.endReason)
-      ? `<div class="tribute-retry"><p>この申し込みは${retryReasonText(view.endReason)}。最近動いている管理人や、入場料0の管理人に申し込めます。</p><div class="tribute-actions"><button class="button button-primary button-small" type="button" data-t="nav" data-screen="board">管理人を探す</button><button class="button button-ghost button-small" type="button" data-t="board-free">入場料0の管理人を見る</button></div></div>`
+      ? `<div class="tribute-retry"><p>この申し込みは${retryReasonText(view.endReason)}。掲示板は最近動いた管理人から並んでいます。上のほうの管理人や、入場料0の管理人に申し込めます。</p><div class="tribute-actions"><button class="button button-primary button-small" type="button" data-t="nav" data-screen="board">管理人を探す</button><button class="button button-ghost button-small" type="button" data-t="board-free">入場料0の管理人を見る</button></div></div>`
       : "";
     return `${retry}<div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button></div>`;
   }
@@ -3053,6 +3063,7 @@ async function handleSubmit(form) {
           reportConsent: data.get("reportConsent") === "on",
           ignoreUnpaid: data.get("ignoreUnpaid") === "on",
           postsScreenshots: data.get("postsScreenshots") === "on",
+          showsActivity: data.get("showsActivity") === "on",
         },
         accepting: data.get("accepting") === "on",
       }, {
@@ -3717,7 +3728,7 @@ function bindRoot(root) {
     const target = event.target.closest?.('input[data-t="toggle-nekama"], input[data-t="toggle-fee-zero"], input[data-t="toggle-declaration"]');
     if (target) handleClick(target);
     const cardForm = event.target.closest?.('form[data-form="card"]');
-    if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee", "ignoreUnpaid", "postsScreenshots"].includes(event.target.name)) updateCardPreview(cardForm);
+    if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee", "ignoreUnpaid", "postsScreenshots", "showsActivity"].includes(event.target.name)) updateCardPreview(cardForm);
     if (cardForm && ["frame", "frameColor", "sealShape", "sealInk"].includes(event.target.name)) {
       if (event.target.name === "frame") refreshFrameColors(cardForm);
       updateDecorations(cardForm);
@@ -4106,6 +4117,7 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   accepting: true,
   vault: { level: 4, id: "treasury", label: "宝物庫" },
   activeContracts: 4,
+  showsActivity: true,
   lastActiveAt: Date.now(),
 });
 
@@ -4234,9 +4246,9 @@ function previewCall(action, payload) {
         ok: true,
         managers: [
           PREVIEW_MANAGER_CARD,
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"] },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [] },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [] },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"], showsActivity: false, lastActiveAt: 0 },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], lastActiveAt: now - 5 * 3_600_000 },
+          { ...PREVIEW_MANAGER_CARD, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [], showsActivity: false, lastActiveAt: 0 },
           { ...PREVIEW_MANAGER_CARD, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, vault: { level: 3 }, intro: "毎日決まった額を、決まった時間に。", frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane", achievements: ["battle_total_1"] },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
       });

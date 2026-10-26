@@ -288,7 +288,9 @@ function publicCard(profile, monthKey, now) {
     accepting: profile.accepting,
     vault: vaultBadge(profile),
     activeContracts: profile.counts.managerActive,
-    lastActiveAt: profile.lastActiveAt,
+    // 最後に動いた時は、管理人が出すと選んだカードだけ相手に渡す。出さないカードも、掲示板は動いた順に並ぶ。
+    showsActivity: card.showsActivity === true,
+    lastActiveAt: card.showsActivity === true ? profile.lastActiveAt : 0,
   };
 }
 
@@ -296,7 +298,8 @@ function publicCard(profile, monthKey, now) {
 function ownProfileView(profile, monthKey, now) {
   return {
     walletName: profile.walletName,
-    card: profile.card ? publicCard(profile, monthKey, now) : null,
+    // 自分のカードには、出さない設定でも自分の最後に動いた時を入れる（カードの見え方と掲示板に出ていられる期限）。
+    card: profile.card ? { ...publicCard(profile, monthKey, now), lastActiveAt: profile.lastActiveAt } : null,
     accepting: profile.accepting,
     publicManagerId: profile.publicManagerId,
     hidden: profileIsHidden(profile, monthKey),
