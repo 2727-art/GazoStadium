@@ -9,6 +9,7 @@ const { pathToFileURL } = require("node:url");
 const rules = require("../tribute-rules");
 const { viewContract: serverView } = require("../tribute-service");
 const { migrateTributeLimits } = require("../scripts/migrate-tribute-limits.cjs");
+const { applyFirestoreSet } = require("./helpers/firestore-merge.cjs");
 
 const root = path.resolve(__dirname, "../..");
 // Windows の取り出しでは CRLF になるので、改行を揃えてから読む（下の照合は LF で書いている）。
@@ -143,7 +144,7 @@ function fakeFirestore(seed) {
       path: refPath,
       collection: (name) => collectionRef(`${refPath}/${name}`),
       async get() { return snapshotOf(refPath); },
-      async set(value, options = {}) { writes.push(refPath); docs.set(refPath, { ...(options.merge ? docs.get(refPath) || {} : {}), ...structuredClone(value) }); },
+      async set(value, options = {}) { writes.push(refPath); docs.set(refPath, applyFirestoreSet(docs.has(refPath) ? structuredClone(docs.get(refPath)) : undefined, structuredClone(value), options)); },
       async update(value) {
         writes.push(refPath);
         const next = { ...docs.get(refPath) };

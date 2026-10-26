@@ -231,6 +231,8 @@ Out of scope: 現金・外部決済・換金、個人情報の交換、晒し、
 
 すべて Cloud Firestore。クライアントの直接書き込みは全面禁止。読み取りは契約の参加者による `tributeContracts/{contractId}` と、その `events`、預ける側だけによる `private/limits` を許可する（スレッドの即時表示のため）。それ以外は Callable `tributeAction`（App Check 必須）が本人の権限を確かめて返す。
 
+契約の記録は、書いた欄を丸ごと置き換える（`set` の `mergeFields`）。`merge: true` は入れ子の地図を深く混ぜるため、`pendingRequests` から払った・取り消した請求の鍵を消しても残り、同じ請求を二度払えた（2026-10-26 に見つけて直した。残った鍵は `functions/scripts/repair-tribute-pending-requests.cjs` で消し、二重払いも数える）。テストの Firestore の偽物も本物と同じ混ぜ方にした（`functions/test/helpers/firestore-merge.cjs`）。地図の欄を書く時は、今の値を広げた丸ごとの地図を渡す。
+
 - `tributeProfiles/{uid}`: 年齢確認、財布名、管理人カード、管理人が財布ごとに付けた呼び名（`payerNicknames`、管理人にだけ返す）、受付中・活動時刻、契約数の計数、金庫（`vaultAmount`・`vaultTier`・`vaultTierAt`・`vaultBestTier`・`vaultQualifiedAt`・`vaultRecentOps`）、限定称号の確認済み（`honorRecordsChecked`）
 - `tributeContracts/{contractId}`（参加者のみ読取）と `events/{eventId}`。既読無視の `ignoredSince`・`lastPayerMessageSeq`・`lastManagerReplySeq`、宣言の写し `managerIgnoreUnpaid` を持つ。
 - `tributeContracts/{contractId}/private/limits`（預ける側のみ読取）: `caps`・`pendingCaps`・`pendingCapsEffectiveDateKey`。以前の契約は、サーバーが契約に触れた時に契約の記録から移して消す。残りは公開後に `functions/scripts/migrate-tribute-limits.cjs`（既定は数えるだけ、`--apply` で移す）で一度に移し、出来事（申し込み・限度額の変更）に残っていた限度額も消す。

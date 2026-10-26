@@ -6,6 +6,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const test = require("node:test");
 const { createTributeService } = require("../tribute-service");
+const { applyFirestoreSet } = require("./helpers/firestore-merge.cjs");
 const { TRIBUTE_AGE_VERSION } = require("../tribute-rules");
 
 const clone = (value) => value === undefined ? undefined : structuredClone(value);
@@ -53,7 +54,7 @@ function storage() {
         });
         if (commit) for (const write of pending) {
           writes.push(write);
-          documents.set(write.path, write.options?.merge ? { ...documents.get(write.path), ...write.value } : write.value);
+          documents.set(write.path, applyFirestoreSet(clone(documents.get(write.path)), write.value, write.options));
         }
         return result;
       }
