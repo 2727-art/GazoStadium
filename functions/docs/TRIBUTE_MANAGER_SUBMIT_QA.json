@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-26",
+  "baseCommit": "935ffac24c76bd667dfc18ac73a545d7eb8919b3",
+  "changes": [
+    "Manager requests use the 10,000 Pay request maximum instead of private payer caps.",
+    "Manager escrow takes use the visible escrow balance; server-side payer limits remain enforced.",
+    "Unexpected form submission errors are displayed.",
+    "The tribute.js cache key is updated to ranch-manager-submit-v1."
+  ],
+  "regression": {
+    "newTests": 5,
+    "failedBeforeFix": 5,
+    "passedAfterFix": 5,
+    "relatedTestsPassed": 64
+  },
+  "fullCheck": {
+    "command": "npm --prefix functions run check",
+    "tests": 2140,
+    "passed": 2108,
+    "failed": 0,
+    "skipped": 32,
+    "skipReason": "Emulator-only tests"
+  },
+  "hosting": {
+    "publicFiles": 156,
+    "unexpectedFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js"
+    ]
+  },
+  "scope": {
+    "backendChanges": false,
+    "databaseMigration": false
+  },
+  "limitations": [
+    "No physical iPhone or Safari test.",
+    "No production game contract or wallet operations were performed."
+  ]
+}

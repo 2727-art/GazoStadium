@@ -2641,7 +2641,8 @@ async function handleSubmit(form) {
       return;
     }
     case "request": {
-      const amount = readAmount(form, Math.min(view.caps.perTribute, view.allowance));
+      // 管理人には財布の限度額を渡さない。請求自体の上限だけを確かめる。
+      const amount = readAmount(form, LIMITS.requestMax);
       if (amount.error) return setFormError(form, amount.error);
       const note = String(form.elements.note.value || "");
       const problem = note ? messageProblem(note, { role: "manager", ngWords: view.ngWords }) : "";
@@ -2652,7 +2653,8 @@ async function handleSubmit(form) {
       return;
     }
     case "take": {
-      const amount = readAmount(form, Math.min(view.escrowBalance, view.allowance));
+      // 財布の非公開の限度額は、徴収を確定するサーバーで確かめる。
+      const amount = readAmount(form, view.escrowBalance);
       if (amount.error) return setFormError(form, amount.error);
       const result = await mutate("escrow_take", contractPayload({ amount: amount.value, clientRequestId: state.sheet.clientRequestId }), { form, success: "管理口座から徴収しました。" });
       if (result) {
@@ -3101,7 +3103,7 @@ function bindRoot(root) {
     event.preventDefault();
     // 金庫の「入れる」「出す」のように、押したボタンで向きが変わるフォーム。
     if (event.submitter?.name === "direction") form.dataset.direction = event.submitter.value;
-    handleSubmit(form);
+    handleSubmit(form).catch((error) => setFormError(form, friendlyError(error)));
   });
 
   root.addEventListener("input", (event) => {
