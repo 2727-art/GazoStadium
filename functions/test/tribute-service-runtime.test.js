@@ -1446,3 +1446,38 @@ test("ranch decorations and card achievements need a purchase or an unlock, reac
   const reset = await save({ frame: "<script>", frameColor: "pink", sealShape: "star", sealInk: "#000" });
   assert.deepEqual({ frame: reset.profile.card.frame, frameColor: reset.profile.card.frameColor, sealShape: reset.profile.card.sealShape, sealInk: reset.profile.card.sealInk }, { frame: "", frameColor: "", sealShape: "date", sealInk: "shu" });
 });
+
+test("screenshot consent is the payer's contract setting, shown to the manager without asking, and managers can declare posting", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000, keen: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager", { postsScreenshots: true });
+  await confirmAge(harness, "payer");
+  // 管理人の宣言「スクショを載せる」は、詳細と掲示板のカードに出る。
+  assert.equal((await harness.act("payer", "manager", { publicManagerId })).card.postsScreenshots, true);
+  assert.equal((await harness.act("payer", "board")).managers.find((card) => card.publicManagerId === publicManagerId).postsScreenshots, true);
+
+  // 申し込みで選ばなければ、許していない（既定）。
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId);
+  const managerRow = () => harness.act("manager", "state").then((state) => state.contracts.find((row) => row.contractId === contractId));
+  assert.equal((await managerRow()).allowScreenshots, false);
+  assert.equal(harness.events(contractId)[0].allowScreenshots, false);
+
+  // 決めるのは財布だけ。管理人は変えられない。
+  await rejects(harness.act("manager", "set_screenshots", { contractId, allowScreenshots: true }), /この操作はできません/);
+  const allowed = await harness.act("payer", "set_screenshots", { contractId, allowScreenshots: true });
+  assert.equal(allowed.contract.allowScreenshots, true);
+  assert.equal((await managerRow()).allowScreenshots, true, "the manager sees the consent as a tag, not by asking");
+  assert.equal((await harness.act("payer", "set_screenshots", { contractId, allowScreenshots: true })).unchanged, true);
+  await harness.act("payer", "set_screenshots", { contractId, allowScreenshots: false });
+  assert.equal(harness.contract(contractId).allowScreenshots, false);
+  assert.deepEqual(harness.events(contractId).filter((event) => event.type === "screenshots_changed").map((event) => [event.actor, event.allowScreenshots]), [["payer", true], ["payer", false]]);
+
+  // 申し込みで許すと、最初から「可」。
+  const keenContract = await startContract(harness, "manager", "keen", publicManagerId, { allowScreenshots: true, walletName: "撮られ財布" });
+  assert.equal(harness.contract(keenContract).allowScreenshots, true);
+  assert.equal(harness.events(keenContract)[0].allowScreenshots, true);
+
+  // 宣言は外せる。
+  harness.advance(2_100);
+  const saved = await harness.act("manager", "save_profile", { card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 10, sigil: 2, postsScreenshots: false }, accepting: true });
+  assert.equal(saved.profile.card.postsScreenshots, false);
+});

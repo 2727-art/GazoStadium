@@ -1481,10 +1481,11 @@ export async function renderRecruitImage(data) {
   const achievements = (Array.isArray(data.achievements) ? data.achievements : []).slice(0, 3);
   // 金庫の段階（外に見せるのは段階だけ。額は入れない）。
   const vaultLabel = String(data.vaultLabel || "");
-  // 中の人の札を先頭に。宣言「未払いは既読無視」と「高額請求」は、型と金庫の段階より先に並べる。
+  // 中の人の札を先頭に。宣言「未払いは既読無視」「スクショを載せる」と「高額請求」は、型と金庫の段階より先に並べる。
   const OATH = "未払いは既読無視";
+  const SHOT = "スクショを載せる";
   const HIGH = "高額請求";
-  const tags = [manager.disclosureLabel, data.ignoreUnpaid ? OATH : "", data.highRequest ? HIGH : "", manager.styleLabel, vaultLabel].filter(Boolean);
+  const tags = [manager.disclosureLabel, data.ignoreUnpaid ? OATH : "", data.postsScreenshots ? SHOT : "", data.highRequest ? HIGH : "", manager.styleLabel, vaultLabel].filter(Boolean);
   await loadFonts([manager.personaName, word, intro, tags.join(""), achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布募集中入場料管理中今月の財布人アプリ内ポイントだけ現金なし#WALLET WANTED"].join(""));
   const image = await loadImage(manager.avatarUrl);
   const canvas = canvasFor();
@@ -1541,9 +1542,10 @@ export async function renderRecruitImage(data) {
     const isDisclosure = index === 0;
     const isHonor = !isDisclosure && (label === vaultLabel || label === HIGH);
     const isOath = !isDisclosure && label === OATH;
+    const isShot = !isDisclosure && label === SHOT;
     const nekama = manager.disclosureKey === "nekama";
-    const color = isDisclosure ? (nekama ? "#9fe6ff" : TEXT) : isOath ? "#ffb3c6" : isHonor ? "#f6dfa6" : TEXT;
-    const border = isDisclosure ? (nekama ? "#5fd4ff" : "rgba(255, 255, 255, 0.45)") : isOath ? "#ff6b8a" : isHonor ? GOLD : "rgba(255, 255, 255, 0.3)";
+    const color = isDisclosure ? (nekama ? "#9fe6ff" : TEXT) : isOath ? "#ffb3c6" : isShot ? "#b8e0ff" : isHonor ? "#f6dfa6" : TEXT;
+    const border = isDisclosure ? (nekama ? "#5fd4ff" : "rgba(255, 255, 255, 0.45)") : isOath ? "#ff6b8a" : isShot ? "#78c4ff" : isHonor ? GOLD : "rgba(255, 255, 255, 0.3)";
     tagX += paintPill(ctx, { x: tagX, y: tagY, text: label, height: 50, font, color, border, padding: 20, lineWidth: 3 }) + 12;
   });
   // 札が2段になった分だけ下げる（紹介を1行減らして、カードの高さに収める）。

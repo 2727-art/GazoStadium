@@ -85,14 +85,14 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
   renderExcerptImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-vault-v1";
+} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1";
 import {
   CARD_FRAMES,
   FRAME_PALETTES,
@@ -765,7 +765,7 @@ function renderApply() {
   const perTribute = defaults.perTribute;
   return frame(`<form class="tribute-panel tribute-apply" data-form="apply">
     <div class="tribute-apply-head">${sigil(target)}<div><span class="tribute-eyebrow">管理を申し込む</span><h1>${escapeHtml(target.personaName)}</h1>${disclosureTag(target.disclosure)}${declarationTags(target)}</div></div>
-    <p class="tribute-note">${target.ignoreUnpaid ? `${escapeHtml(target.personaName)}は「未払いは既読無視」を宣言しています。` : ""}請求は断れません。払うか、解約するかです。</p>
+    <p class="tribute-note">${target.ignoreUnpaid ? `${escapeHtml(target.personaName)}は「未払いは既読無視」を宣言しています。` : ""}${target.postsScreenshots ? `${escapeHtml(target.personaName)}は「スクショを載せる」管理人です。` : ""}請求は断れません。払うか、解約するかです。</p>
     <fieldset><legend>あなたの限度額（管理人には見えません・1回 ≦ 1日 ≦ 契約合計）</legend>
       <div class="tribute-three">
         <label><span>1回</span><select name="perTribute">${optionList(PER_TRIBUTE_OPTIONS, perTribute)}</select></label>
@@ -784,6 +784,7 @@ function renderApply() {
     <label class="tribute-check"><input type="checkbox" name="rankOptIn" /><span>この管理人の番付に財布名で載る</span></label>
     <label class="tribute-check is-consent"><input type="checkbox" name="acceptNoDecline" required /><span>請求は断れず、払うか解約するかであることを確かめました<small>限度額を超える請求は、払えないまま残ります。限度額と解約は、いつでも自分で設定できます。</small></span></label>
     <label class="tribute-check is-sexual"><input type="checkbox" name="allowSexualPurposes" /><span>性的な名目（${escapeHtml(SEXUAL_PURPOSE_SUMMARY)}）で請求されてもよい<small>許すと、管理人はこの名目で請求でき、あなたも無言の献上に付けられます。契約の「名目の設定」でいつでも外せます。</small></span></label>
+    <label class="tribute-check is-shot"><input type="checkbox" name="allowScreenshots" /><span>管理人のXに、スクショを載せられてもいい<small>スレッドや献上レシートなど、あなたが写る画面です。財布名や会話が写ることがあります。管理人のスレッドに「スクショ掲載 可」の札が出るので、会話で頼まれることはありません。契約の「スクショの設定」でいつでも外せますが、すでに載ったものはアプリでは消せません。</small></span></label>
     <label class="tribute-field"><span>財布名</span><input name="walletName" maxlength="${LIMITS.walletName}" value="${escapeHtml(profile.walletName || "")}" /></label>
     <dl class="tribute-facts">
       <div><dt>入場料</dt><dd>${escapeHtml(formatPay(target.entryFee))}${target.entryFee ? "（受理された時に1回の献上として移ります）" : ""}</dd></div>
@@ -812,6 +813,7 @@ function renderCardEditor() {
     <div data-achievement-section>${renderCardAchievementPicker(card)}</div>
     <fieldset><legend>宣言</legend>
       <label class="tribute-check"><input type="checkbox" name="ignoreUnpaid" ${card.ignoreUnpaid === true ? "checked" : ""} /><span>「未払いは既読無視」を宣言する<small>財布の画面と、掲示板のカードに札が出ます。返事をするかどうかは、いつでもあなたが決められます。</small></span></label>
+      <label class="tribute-check"><input type="checkbox" name="postsScreenshots" ${card.postsScreenshots === true ? "checked" : ""} /><span>「スクショを載せる」を宣言する<small>掲示板のカード・申し込み・財布募集の画像に札が出ます。財布が写る画面を X に載せてよいのは、財布が申し込みで許した契約だけです（スレッドに「スクショ掲載 可」の札が出ます）。</small></span></label>
     </fieldset>
     <fieldset><legend>貢ぎ報告</legend>
       <label class="tribute-check"><input type="checkbox" name="reportConsent" ${(profile.card ? card.reportConsent === true : true) ? "checked" : ""} /><span>財布の貢ぎ報告の画像に、名前とアイコンを出してよい<small>外すと「管理人様」とシルエットになります。画像を作れるのは財布だけで、URLは入りません。</small></span></label>
@@ -1174,6 +1176,7 @@ function updateCardPreview(form) {
     entryFee: Number(data.get("entryFee") || 0),
     xHandle: normalizeXProfile(data.get("xProfile")).xHandle || "",
     ignoreUnpaid: data.get("ignoreUnpaid") === "on",
+    postsScreenshots: data.get("postsScreenshots") === "on",
     ...formDecorations(form),
     achievements: data.has("achievements") ? data.getAll("achievements").map(String).slice(0, CARD_ACHIEVEMENT_LIMIT) : state.profile?.card?.achievements || [],
   };
@@ -1241,6 +1244,9 @@ function renderTally(view) {
   if (view.rewardCount) parts.push(`<span class="is-reward">ご褒美 <b>${Number(view.rewardCount)}回</b></span>`);
   if (view.role === "manager" && view.awaitingReceipt) parts.push(`<span class="is-awaiting">受け取り待ち <b>${Number(view.awaitingReceipt)}</b></span>`);
   if (view.allowSexualPurposes) parts.push('<span class="is-sexual">性的な名目 可</span>');
+  // スクショ掲載の許可。管理人には「不可」も出す（載せてよいかを、会話で確かめなくて済むように）。
+  if (view.allowScreenshots) parts.push('<span class="is-shot">スクショ掲載 可</span>');
+  else if (view.role === "manager") parts.push('<span class="is-shot-off">スクショ掲載 不可</span>');
   return parts.length ? `<p class="tribute-tally">${parts.join("")}</p>` : "";
 }
 
@@ -1262,7 +1268,7 @@ function renderEvent(event, view, statuses) {
         <span class="tribute-bubble">${escapeHtml(event.text)}</span>${mine && view.role === "payer" && view.peerReadSeq >= Number(event.seq) ? '<span class="tribute-read">既読</span>' : ""}${time}</li>`;
     case "applied":
       // 限度額は出さない（管理人も読む出来事のため）。
-      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_LABELS[event.tone] || "普通")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}`);
+      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_LABELS[event.tone] || "普通")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}`);
     case "accepted": {
       const collarNo = Number(event.collarNo) || 0;
       const collar = collarNo
@@ -1309,6 +1315,10 @@ function renderEvent(event, view, statuses) {
       }
       return system(`${escapeHtml(managerName)}が ${escapeHtml(formatPay(event.amount))} を受け取りました。`, "is-received");
     }
+    case "screenshots_changed":
+      return system(event.allowScreenshots
+        ? `${escapeHtml(payerName)}が、管理人のXにスクショを載せることを許しました。`
+        : `${escapeHtml(payerName)}がスクショ掲載の許可を外しました。`, "is-caps");
     case "purposes_changed":
       return system(event.allowSexualPurposes
         ? `${escapeHtml(payerName)}が性的な名目（${escapeHtml(SEXUAL_PURPOSE_SUMMARY)}）を許しました。`
@@ -1422,7 +1432,7 @@ function renderIgnoreState(view) {
 
 // 管理人の宣言と「高額請求」の札（掲示板・詳細・申し込み）。
 function declarationTags(card) {
-  return `${card?.ignoreUnpaid ? '<span class="tribute-oath">未払いは既読無視</span>' : ""}${card?.highRequest ? '<span class="tribute-high">高額請求</span>' : ""}`;
+  return `${card?.ignoreUnpaid ? '<span class="tribute-oath">未払いは既読無視</span>' : ""}${card?.postsScreenshots ? '<span class="tribute-shot">スクショを載せる</span>' : ""}${card?.highRequest ? '<span class="tribute-high">高額請求</span>' : ""}`;
 }
 
 // 経った時間（請求の未払い）。
@@ -1468,7 +1478,7 @@ function renderThreadActions(view) {
     return view.role === "manager"
       ? `<div class="tribute-actions"><button class="button button-primary" type="button" data-t="accept">受理する${view.entryFee ? `（入場料 ${escapeHtml(formatPay(view.entryFee))}）` : ""}</button><button class="button button-ghost" type="button" data-t="decline">断る</button></div>`
       : `<p class="tribute-note">受理されると管理が始まります。${view.entryFee ? `入場料 ${escapeHtml(formatPay(view.entryFee))} は受理の時に移ります。` : ""}</p>
-        <div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button></div>`;
+        <div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button></div>`;
   }
   if (view.status !== "active") {
     return `<div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button></div>`;
@@ -1480,6 +1490,7 @@ function renderThreadActions(view) {
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="escrow">管理口座</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="caps">限度額を変える</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button>
+      <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button>
       <button class="button button-ghost button-small" type="button" data-t="report-balance">残高を報告</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button>
       ${previewScreen ? "" : renderBlockButton({ mode: "tribute", contractId: view.contractId }, "ブロック")}
@@ -1688,6 +1699,17 @@ function renderSheet() {
         <p>いま：<b>${allow ? "許可している" : "許可していない"}</b></p>
         <p class="tribute-note">許すと、管理人はこの名目で請求でき、あなたも無言の献上に付けられます。外すと、その名目の未払いの請求はすぐ無効になり、スレッドと回数の表示からも消えます。上限や解約には関係しません。</p>
         <button class="button ${allow ? "button-ghost" : "button-primary"}" type="button" data-t="set-purposes" data-allow="${allow ? "0" : "1"}" ${state.busy ? "disabled" : ""}>${allow ? "許可を外す" : "許可する"}</button>
+        <button class="button button-ghost" type="button" data-t="sheet-close">閉じる</button>
+      </div>`);
+    }
+    case "screenshots": {
+      if (view.role !== "payer") return "";
+      const allow = view.allowScreenshots;
+      return wrap("スクショの設定", `<div class="tribute-confirm">
+        <p>${escapeHtml(view.manager.personaName)}の X に、あなたが写る画面（スレッド・献上レシートなど）のスクショを載せてよいかを決めます。決めるのはあなただけで、いつでも変えられます。</p>
+        <p>いま：<b>${allow ? "許可している" : "許可していない"}</b></p>
+        <p class="tribute-note">許すと、管理人のスレッドに「スクショ掲載 可」の札が出ます。財布名や会話が写ることがあります。外すと、それより後は載せられなくなりますが、すでに載ったものはアプリでは消せません。</p>
+        <button class="button ${allow ? "button-ghost" : "button-primary"}" type="button" data-t="set-screenshots" data-allow="${allow ? "0" : "1"}" ${state.busy ? "disabled" : ""}>${allow ? "許可を外す" : "許可する"}</button>
         <button class="button button-ghost" type="button" data-t="sheet-close">閉じる</button>
       </div>`);
     }
@@ -1965,6 +1987,7 @@ function recruitData(card, month) {
     },
     vaultLabel: vaultTierInfo(card.vault?.level)?.label || "",
     ignoreUnpaid: card.ignoreUnpaid === true,
+    postsScreenshots: card.postsScreenshots === true,
     highRequest: card.highRequest === true,
     ...look,
     word: card.word?.text || "",
@@ -2775,6 +2798,7 @@ async function handleSubmit(form) {
           achievements: data.getAll("achievements").map(String).slice(0, CARD_ACHIEVEMENT_LIMIT),
           reportConsent: data.get("reportConsent") === "on",
           ignoreUnpaid: data.get("ignoreUnpaid") === "on",
+          postsScreenshots: data.get("postsScreenshots") === "on",
         },
         accepting: data.get("accepting") === "on",
       }, {
@@ -2818,6 +2842,7 @@ async function handleSubmit(form) {
           allowReportRequests: data.get("allowReportRequests") === "on",
           rankOptIn: data.get("rankOptIn") === "on",
           allowSexualPurposes: data.get("allowSexualPurposes") === "on",
+          allowScreenshots: data.get("allowScreenshots") === "on",
           acceptNoDecline: data.get("acceptNoDecline") === "on",
           walletName: String(data.get("walletName") || ""),
         },
@@ -3213,6 +3238,14 @@ async function handleClick(target) {
         input.value = target.dataset.text || "";
         input.focus();
       }
+      return;
+    }
+    case "set-screenshots": {
+      const allow = target.dataset.allow === "1";
+      const result = await mutate("set_screenshots", contractPayload({ allowScreenshots: allow }), {
+        success: allow ? "スクショの掲載を許しました。" : "スクショ掲載の許可を外しました。",
+      });
+      if (result) closeSheet();
       return;
     }
     case "set-purposes": {
@@ -3709,6 +3742,7 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   avatar: 7,
   seals: ["yoku", "zako", "kakunin"],
   ignoreUnpaid: true,
+  postsScreenshots: true,
   highRequest: true,
   frame: "gyokuza",
   frameColor: "pink",
@@ -3744,6 +3778,7 @@ function previewRaw(role, status = "active") {
     allowReportRequests: true,
     rankOptIn: true,
     allowSexualPurposes: true,
+    allowScreenshots: role === "manager",
     collarNo: 3,
     purposeCounts: { edging: 2 },
     rewardCount: 1,
@@ -3978,6 +4013,13 @@ function previewCall(action, payload) {
         push({ type: "request_declined", actor: "payer", requestId: payload.requestId });
       });
       return Promise.resolve({ ok: true });
+    }
+    case "set_screenshots": {
+      const view = previewThreadChange((raw, push) => {
+        raw.allowScreenshots = payload.allowScreenshots === true;
+        push({ type: "screenshots_changed", actor: "payer", allowScreenshots: raw.allowScreenshots });
+      });
+      return Promise.resolve({ ok: true, contract: view });
     }
     case "set_purposes": {
       const view = previewThreadChange((raw, push) => {

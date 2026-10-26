@@ -428,6 +428,7 @@ export function viewContract(contract, uid, now = Date.now()) {
     allowReportRequests: raw.allowReportRequests === true,
     rankOptIn: raw.rankOptIn === true,
     allowSexualPurposes: raw.allowSexualPurposes === true,
+    allowScreenshots: raw.allowScreenshots === true,
     entryFee: integer(raw.entryFee, 0, 1_000),
     renewal: raw.renewal === true,
     createdAt: integer(raw.createdAt),

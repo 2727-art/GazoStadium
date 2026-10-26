@@ -88,6 +88,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "report_balance",
   "request_report",
   "set_purposes",
+  "set_screenshots",
   "receive",
   "share_info",
   "set_word",
@@ -261,8 +262,9 @@ function publicCard(profile, monthKey, now) {
     ...normalizeDecorations(card),
     achievements: cardAchievements(card.achievements),
     reportConsent: card.reportConsent === true,
-    // 管理人の宣言「未払いは既読無視」と、直近30日に3,000 Pay以上を請求した「高額請求」の札。
+    // 管理人の宣言「未払いは既読無視」「スクショを載せる」と、直近30日に3,000 Pay以上を請求した「高額請求」の札。
     ignoreUnpaid: card.ignoreUnpaid === true,
+    postsScreenshots: card.postsScreenshots === true,
     highRequest: profile.highRequestAt > 0 && now - profile.highRequestAt < LIMITS.highRequestWindowMs,
     word: activeWord(profile, now),
     xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
@@ -369,6 +371,7 @@ function viewContract(contract, uid, now) {
     allowReportRequests: contract.allowReportRequests === true,
     rankOptIn: contract.rankOptIn === true,
     allowSexualPurposes: contract.allowSexualPurposes === true,
+    allowScreenshots: contract.allowScreenshots === true,
     entryFee: integer(contract.entryFee, 0, 1_000, 0),
     renewal: contract.renewal === true,
     createdAt: integer(contract.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -1615,6 +1618,7 @@ function createTributeService(deps) {
         allowReportRequests: application.allowReportRequests,
         rankOptIn: application.rankOptIn,
         allowSexualPurposes: application.allowSexualPurposes,
+        allowScreenshots: application.allowScreenshots,
         purposeCounts: {},
         rewardCount: 0,
         awaitingReceipt: 0,
@@ -1652,6 +1656,7 @@ function createTributeService(deps) {
         tone: application.tone,
         entryFee,
         allowSexualPurposes: application.allowSexualPurposes,
+        allowScreenshots: application.allowScreenshots,
         createdAt: now,
       });
       transaction.set(profileRef(uid), {
@@ -2065,6 +2070,19 @@ function createTributeService(deps) {
         pushEvent(ctx, { type: "report_requested", actor: "manager" });
         markManagerActive(ctx);
         return { ok: true };
+      },
+    },
+    // スクショ掲載の許可（管理人のXに、財布が写る画面を載せてよいか）。決めるのは預ける側だけで、いつでも変えられる。
+    // 会話で頼まなくて済むよう、管理人にはスレッドの札で見せる。すでに載ったものは、アプリでは消せない。
+    set_screenshots: {
+      roles: ["payer"],
+      statuses: ["pending", "active"],
+      write(ctx, _extra, data) {
+        const allow = data?.allowScreenshots === true;
+        if ((ctx.contract.allowScreenshots === true) === allow) return { ok: true, contract: view(ctx), unchanged: true };
+        setContract(ctx, { allowScreenshots: allow });
+        pushEvent(ctx, { type: "screenshots_changed", actor: "payer", allowScreenshots: allow });
+        return { ok: true, contract: view(ctx) };
       },
     },
     // 性的な名目の許可。決めるのは預ける側だけ。外すと、性的な名目の未払いの請求はその場で無効になる。

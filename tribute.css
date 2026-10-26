@@ -650,6 +650,10 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
 .tribute-tally .is-sexual { border-color: rgba(255, 79, 163, 0.4); color: #ffb3d6; }
 .tribute-tally .is-reward { border-color: rgba(255, 79, 163, 0.6); background: rgba(255, 79, 163, 0.12); color: #ffd1e6; }
 .tribute-tally .is-awaiting { border-color: rgba(232, 194, 122, 0.5); color: var(--tr-gold); }
+/* スクショ掲載の許可（財布が申し込み・設定で決める）と、管理人の宣言「スクショを載せる」 */
+.tribute-tally .is-shot { border-color: rgba(120, 196, 255, 0.55); background: rgba(80, 160, 255, 0.1); color: #b8e0ff; }
+.tribute-tally .is-shot-off { border-style: dashed; color: var(--tr-mist); }
+.tribute-check.is-shot small { display: block; margin-top: 2px; font-size: 0.74rem; }
 .tribute-chip.is-awaiting { background: rgba(232, 194, 122, 0.16); color: var(--tr-gold); }
 
 /* 財布の始め方・招待リンク・見学 */
@@ -1221,10 +1225,13 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 /* ───────────── 既読無視・宣言・見えない限度額 ───────────── */
 /* 管理人の宣言「未払いは既読無視」と「高額請求」の札 */
 .tribute-oath,
+.tribute-shot,
 .tribute-high { display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px 2px 0; padding: 1px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
 .tribute-oath { border: 1px solid rgba(255, 107, 138, 0.6); background: rgba(255, 60, 100, 0.12); color: #ffb3c6; }
 .tribute-oath::before { content: "既読"; padding: 0 4px; border-radius: 4px; background: #ff6b8a; color: #2a0510; font-size: 0.56rem; font-weight: 900; }
 .tribute-high { border: 1px solid rgba(232, 194, 122, 0.7); background: rgba(232, 194, 122, 0.12); color: #f6dfa6; }
+.tribute-shot { border: 1px solid rgba(120, 196, 255, 0.6); background: rgba(80, 160, 255, 0.12); color: #b8e0ff; }
+.tribute-shot::before { content: "X"; padding: 0 4px; border-radius: 4px; background: #9fd3ff; color: #06213a; font-size: 0.56rem; font-weight: 900; }
 /* 財布の側の「既読無視 ○日目」 */
 .tribute-ignored { display: grid; gap: 2px; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(255, 90, 120, 0.5); background: linear-gradient(135deg, rgba(255, 60, 100, 0.18), rgba(60, 0, 30, 0.35)); }
 .tribute-ignored strong { color: #ffd0dc; font-size: 1.2rem; font-weight: 900; letter-spacing: 0.04em; }

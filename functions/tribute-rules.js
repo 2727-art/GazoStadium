@@ -451,6 +451,8 @@ function normalizeManagerCard(value) {
       reportConsent: value?.reportConsent === true,
       // 管理人の宣言「未払いは既読無視」。財布の画面と掲示板のカードに札として出す。
       ignoreUnpaid: value?.ignoreUnpaid === true,
+      // 管理人の宣言「スクショを載せる」。載せてよいのは、財布が申し込みで許した契約だけ（allowScreenshots）。
+      postsScreenshots: value?.postsScreenshots === true,
       xHandle: x.xHandle,
       accepting: value?.accepting === true,
     },
@@ -487,6 +489,8 @@ function normalizeApplication(value, { entryFee = 0 } = {}) {
       allowReportRequests: value?.allowReportRequests === true,
       rankOptIn: value?.rankOptIn === true,
       allowSexualPurposes: value?.allowSexualPurposes === true,
+      // 管理人のXに、自分が写る画面のスクショを載せられてもよいか。決めるのは財布だけ（既定は許さない）。
+      allowScreenshots: value?.allowScreenshots === true,
       walletName: normalizeWalletName(value?.walletName),
     },
   };
