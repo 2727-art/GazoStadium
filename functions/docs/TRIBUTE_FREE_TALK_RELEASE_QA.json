@@ -1,0 +1,450 @@
+{
+  "checkedAt": "2026-10-26T11:26:53.457Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "014c269",
+  "originalCommit": "aee9975",
+  "releaseHead": "7bf0c40",
+  "baseCommit": "1483329",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-free-talk-v2, no upstream)",
+  "decision": {
+    "date": "2026-10-24",
+    "reason": "Players are men role-playing as girls; nobody uses the ranch for dating, so in-contract chat is widened for role-play (user decision).",
+    "afterContract": {
+      "refused": [
+        "external_payment",
+        "real_money",
+        "payer NG words (manager side)"
+      ],
+      "passes": [
+        "contact apps and SNS IDs",
+        "URLs and handles",
+        "meeting",
+        "personal info words",
+        "exposure threats",
+        "管理口座"
+      ]
+    },
+    "unchanged": "manager card, today's word and wallet name keep the full filter",
+    "premiseRewritten": true,
+    "ageCheckReasked": false
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "serverCodeOtherwiseUnchangedSince": "3b84444",
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "hostingFiles": 169,
+    "newPublicFiles": [],
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute-core.mjs"
+    ],
+    "dataMigration": false
+  },
+  "tests": {
+    "total": 2181,
+    "passed": 2149,
+    "failed": 0,
+    "skipped": 32
+  },
+  "push": "1483329..7bf0c40",
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "10c11ab1d3bd95b73186accc9f91ef67c343ad2c",
+        "sourceHash": "0ff38f3f632663f51f96aefb7cb786b7c2c5119d"
+      }
+    ],
+    "unchangedGroups": [
+      {
+        "sourceHash": "1985007e7c61e4d76dfc57783d61b62ea5020c59",
+        "count": 1,
+        "functions": [
+          "accountTransfer"
+        ]
+      },
+      {
+        "sourceHash": "bd1fe90724dc260c449e7e57447900f10139f0f3",
+        "count": 27
+      },
+      {
+        "sourceHash": "10c11ab1d3bd95b73186accc9f91ef67c343ad2c",
+        "count": 3,
+        "functions": [
+          "cleanupPlayerSafety",
+          "expireTributeContracts",
+          "playerSafetyAction"
+        ]
+      },
+      {
+        "sourceHash": "6843453913f3ba6a72668211fd6ce505b10bb868",
+        "count": 1,
+        "functions": [
+          "economyAction"
+        ]
+      },
+      {
+        "sourceHash": "7fddff5edcfd9a04ee575d0d2a406c0781a83df1",
+        "count": 1,
+        "functions": [
+          "getP2pIceServers"
+        ]
+      },
+      {
+        "sourceHash": "13d06efcf41342277521de26566389d8f6c3ace4",
+        "count": 1,
+        "functions": [
+          "redeemAchievementCode"
+        ]
+      },
+      {
+        "sourceHash": "29d2c57ee9459ec9204a2c26ef68b041b9d9bda1",
+        "count": 2,
+        "functions": [
+          "reportMarketP2pConnectivity",
+          "reportP2pConnectivity"
+        ]
+      }
+    ]
+  },
+  "workersBuild": {
+    "conclusion": "success",
+    "completedAt": "2026-10-26T11:24:11Z"
+  },
+  "delivery": {
+    "readOnly": true,
+    "marker": "ranch-free-talk-v1",
+    "commit": "7bf0c40fbe246062e9f4b9fe1efac21cce13ded5",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-free-talk-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-rules.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-free-talk-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-rules.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-free-talk-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-rules.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-free-talk-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-rules.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "tribute-core.mjs": true
+    },
+    "servedContractCheck": {
+      "会いたいな": "passes",
+      "管理口座に入れなさい": "passes",
+      "LINE IDおしえて": "passes",
+      "PayPayで払え": "external_payment",
+      "3000円分の価値もない": "real_money"
+    },
+    "servedCardCheck": {
+      "会いたいな": "meeting"
+    },
+    "premiseUpdated": true,
+    "navigationStillServed": true,
+    "consoleErrors": 0,
+    "ranchActionsInProduction": false
+  },
+  "limits": [
+    "Clients loaded before the release (HTML max-age 3600) still pre-check with the old filter until reloaded; the server uses the new one.",
+    "Request notes can now carry SNS IDs and may appear in a payer's tribute report image when the manager allows the note.",
+    "Players who already passed the age check were not asked to agree to the rewritten premise.",
+    "No real send, two-player run, iPhone/Android device or Safari check in production."
+  ]
+}
