@@ -1,0 +1,499 @@
+{
+  "checkedAt": "2026-10-26T14:35:18.339Z",
+  "status": "released",
+  "project": "gazostadium",
+  "sourceCommit": "b218fad",
+  "releaseHead": "84a0807",
+  "baseCommit": "a1ea5c5",
+  "worktree": ".claude/worktrees/ranch-work-orders",
+  "pullRequest": "https://github.com/2727-art/GazoStadium/pull/7",
+  "decision": "財布の金欠対策として、新しくPayを配らずに、管理人が「1on1を○回完走して稼いでこい」と命じる出稼ぎ命令を入れる。申し込みの既定は「受ける」、回数は1/3/5/10回（ユーザー決定、2026-10-26）",
+  "mechanism": {
+    "actions": [
+      "work_order",
+      "work_withdraw",
+      "work_confirm",
+      "work_report",
+      "set_work_orders",
+      "work_progress"
+    ],
+    "counting": "命令の後に確定した通常型・戦略型1on1の正式完走（economyProgress の achievementStats.totalMatches）。報告の数はサーバーが記入",
+    "baseline": "tributeContracts/{id}/private/work（財布だけが読める。Firestore ルールは変更なし）",
+    "payMoved": false
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "hosting": true,
+    "hostingFiles": 169,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "productionDataWritten": "none"
+  },
+  "tests": {
+    "total": 2216,
+    "passed": 2184,
+    "failed": 0,
+    "skipped": 32
+  },
+  "emulatorRules": {
+    "project": "demo-gazostadium",
+    "rules": "firestore.rules（変更なし）",
+    "checks": {
+      "payerReadsWork": 200,
+      "managerReadsWork": 403,
+      "strangerReadsWork": 403,
+      "managerReadsLimits": 403,
+      "payerWritesWork": 403,
+      "managerWritesWork": 403
+    }
+  },
+  "push": "PR #7 merged into main as 84a0807 (gh pr merge --merge)",
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "before": "3a828657772aa0663e8b06ab97c5a21d5e1be37b",
+        "after": "7109a97168acbd9ebf3778eb269830d34f94b306"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "commit": "84a0807",
+    "conclusion": "success",
+    "completedAt": "2026-10-26T14:34:28Z"
+  },
+  "deliveryBeforeHosting": "workers.dev・hariaistadium.com は 84a0807 と一致、web.app・firebaseapp.com は前回のまま（14:34:44Z）",
+  "delivery": {
+    "checkedAt": "2026-10-26T14:35:18.339Z",
+    "readOnly": true,
+    "marker": "ranch-work-orders-v1",
+    "commit": "84a08077a8dec9a2fa58db1c711022b0b13c382f",
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "url": "https://gazostadium.web.app/tribute.js?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "url": "https://gazostadium.web.app/tribute.css?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "url": "https://gazostadium.web.app/account.js?v=anju-pay-wallet-v1-auth-session-v1-account-feedback-v1-account-diagnostics-v1-account-switch-v1-account-protection-v1-app-check-v3-pay-unit-v1-patron-circulation-v1-flea-market-v1-oshijo-patron-v2-wallet-cap-v2-remove-royale-v1-retire-team-v1-ai-text-training-v1-retire-training-v1-roulette-training-v1-tribute-v1-tribute-ranch-v1-my-stadium-v1-ranch-vault-v1-ranch-double-pay-refund-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-auth-session-v1-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1-my-stadium-v1-normal-dm-thread-v1-ranch-nav-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "url": "https://gazostadium.web.app/tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "url": "https://gazostadium.web.app/tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "url": "https://gazostadium.web.app/tribute-deco.mjs?v=ranch-vault-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/.env.gazostadium",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-work-orders-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-work-orders.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/launch.json",
+            "status": 404
+          }
+        ],
+        "ok": true
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "url": "https://gazostadium.firebaseapp.com/tribute.js?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "url": "https://gazostadium.firebaseapp.com/tribute.css?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "url": "https://gazostadium.firebaseapp.com/account.js?v=anju-pay-wallet-v1-auth-session-v1-account-feedback-v1-account-diagnostics-v1-account-switch-v1-account-protection-v1-app-check-v3-pay-unit-v1-patron-circulation-v1-flea-market-v1-oshijo-patron-v2-wallet-cap-v2-remove-royale-v1-retire-team-v1-ai-text-training-v1-retire-training-v1-roulette-training-v1-tribute-v1-tribute-ranch-v1-my-stadium-v1-ranch-vault-v1-ranch-double-pay-refund-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-auth-session-v1-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1-my-stadium-v1-normal-dm-thread-v1-ranch-nav-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "url": "https://gazostadium.firebaseapp.com/tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "url": "https://gazostadium.firebaseapp.com/tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "url": "https://gazostadium.firebaseapp.com/tribute-deco.mjs?v=ranch-vault-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/.env.gazostadium",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-work-orders-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-work-orders.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/launch.json",
+            "status": 404
+          }
+        ],
+        "ok": true
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "url": "https://gazostadium.anjugames.workers.dev/tribute.js?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "url": "https://gazostadium.anjugames.workers.dev/tribute.css?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "url": "https://gazostadium.anjugames.workers.dev/account.js?v=anju-pay-wallet-v1-auth-session-v1-account-feedback-v1-account-diagnostics-v1-account-switch-v1-account-protection-v1-app-check-v3-pay-unit-v1-patron-circulation-v1-flea-market-v1-oshijo-patron-v2-wallet-cap-v2-remove-royale-v1-retire-team-v1-ai-text-training-v1-retire-training-v1-roulette-training-v1-tribute-v1-tribute-ranch-v1-my-stadium-v1-ranch-vault-v1-ranch-double-pay-refund-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-auth-session-v1-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1-my-stadium-v1-normal-dm-thread-v1-ranch-nav-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "url": "https://gazostadium.anjugames.workers.dev/tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "url": "https://gazostadium.anjugames.workers.dev/tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "url": "https://gazostadium.anjugames.workers.dev/tribute-deco.mjs?v=ranch-vault-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/.env.gazostadium",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-work-orders-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-work-orders.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/launch.json",
+            "status": 404
+          }
+        ],
+        "ok": true
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "url": "https://hariaistadium.com/tribute.js?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "url": "https://hariaistadium.com/tribute.css?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "url": "https://hariaistadium.com/account.js?v=anju-pay-wallet-v1-auth-session-v1-account-feedback-v1-account-diagnostics-v1-account-switch-v1-account-protection-v1-app-check-v3-pay-unit-v1-patron-circulation-v1-flea-market-v1-oshijo-patron-v2-wallet-cap-v2-remove-royale-v1-retire-team-v1-ai-text-training-v1-retire-training-v1-roulette-training-v1-tribute-v1-tribute-ranch-v1-my-stadium-v1-ranch-vault-v1-ranch-double-pay-refund-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "url": "https://hariaistadium.com/app.js?v=global-player-block-v1-copy-v2-auth-session-v1-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1-my-stadium-v1-normal-dm-thread-v1-ranch-nav-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "url": "https://hariaistadium.com/tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "url": "https://hariaistadium.com/tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "url": "https://hariaistadium.com/tribute-deco.mjs?v=ranch-vault-v1",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "safety/index.html",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/README.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/.env.gazostadium",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-work-orders-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-work-orders.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          },
+          {
+            "file": "/.claude/launch.json",
+            "status": 404
+          }
+        ],
+        "ok": true
+      }
+    ],
+    "ok": true
+  },
+  "servedClient": {
+    "origin": "https://gazostadium.web.app",
+    "fetchOnly": true,
+    "tributeJsKeyEndsWith": true,
+    "coreKeyEndsWith": true,
+    "tributeJsHas": {
+      "function renderWorkOrder": true,
+      "function refreshWorkProgress": true,
+      "data-sheet=\"work-settings\"": true
+    },
+    "coreHas": {
+      "WORK_ORDER_TARGETS": true,
+      "export function workOrderView": true,
+      "workOrderNotesFor": true
+    }
+  },
+  "open": [
+    "本番での命令・報告・確認の操作は確認していない（テスト・見本・プレビューで確認）。ブラウザーで本番を開くと匿名のゲストが作られるため、ページの読み込みもしていない",
+    "expireTributeContracts と共通ブロックの関数は前の版のまま。期限切れ・ブロックで終わった契約は命令を消さないが、終わった契約では命令を表示しないので影響はない",
+    "第2段（未受取の報酬の額、1on1の結果画面の進み具合、貢ぎ報告の画像、実績系列）は未着手"
+  ]
+}
