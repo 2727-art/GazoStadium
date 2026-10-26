@@ -49,6 +49,7 @@ import {
   TRIBUTE_AGE_VERSION,
   VAULT_QUALIFY,
   VAULT_TIERS,
+  WORK_ORDER_TARGETS,
   capViolation,
   X_EXTERNAL_CONFIRM_MESSAGE,
   X_HANDLE_PATTERN,
@@ -86,7 +87,8 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1";
+  workOrderNotesFor,
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -796,6 +798,7 @@ function renderApply() {
       <small>辛口は徹底して辛く罵られます。自傷や死をすすめる言葉・脅し・差別語・晒しは、どの強さでもありません。</small></fieldset>
     <label class="tribute-field"><span>言われたくない言葉（最大${LIMITS.ngWordCount}語・各${LIMITS.ngWordLength}文字、読点区切り）</span><input name="ngWords" maxlength="80" placeholder="例：ブス、デブ" /></label>
     <label class="tribute-check"><input type="checkbox" name="allowReportRequests" /><span>残高報告を求められてもよい</span></label>
+    <label class="tribute-check is-work"><input type="checkbox" name="allowWorkOrders" checked /><span>出稼ぎ命令を受ける<small>管理人が「1on1を○回完走して稼いでこい」と命じられます。命令ではPayは動かず、期限も罰もありません。命令の後に完走した数を、あなたが報告します。契約の「出稼ぎの設定」でいつでも外せます。</small></span></label>
     <label class="tribute-check"><input type="checkbox" name="rankOptIn" /><span>この管理人の番付に財布名で載る</span></label>
     <label class="tribute-check is-consent"><input type="checkbox" name="acceptNoDecline" required /><span>請求は断れず、払うか解約するかであることを確かめました<small>限度額を超える請求は、払えないまま残ります。限度額と解約は、いつでも自分で設定できます。</small></span></label>
     <label class="tribute-check is-sexual"><input type="checkbox" name="allowSexualPurposes" /><span>性的な名目（${escapeHtml(SEXUAL_PURPOSE_SUMMARY)}）で請求されてもよい<small>許すと、管理人はこの名目で請求でき、あなたも無言の献上に付けられます。契約の「名目の設定」でいつでも外せます。</small></span></label>
@@ -1258,11 +1261,13 @@ function renderTally(view) {
     .filter((purpose) => view.purposeCounts?.[purpose.id])
     .map((purpose) => `<span class="${purpose.sexual ? "is-sexual" : ""}">${escapeHtml(purpose.label)} <b>${Number(view.purposeCounts[purpose.id])}回</b></span>`)];
   if (view.rewardCount) parts.push(`<span class="is-reward">ご褒美 <b>${Number(view.rewardCount)}回</b></span>`);
+  if (view.workOrdersDone) parts.push(`<span class="is-work">出稼ぎ <b>${Number(view.workOrdersDone)}回</b></span>`);
   if (view.role === "manager" && view.awaitingReceipt) parts.push(`<span class="is-awaiting">受け取り待ち <b>${Number(view.awaitingReceipt)}</b></span>`);
   if (view.allowSexualPurposes) parts.push('<span class="is-sexual">性的な名目 可</span>');
   // スクショ掲載の許可。管理人には「不可」も出す（載せてよいかを、会話で確かめなくて済むように）。
   if (view.allowScreenshots) parts.push('<span class="is-shot">スクショ掲載 可</span>');
   else if (view.role === "manager") parts.push('<span class="is-shot-off">スクショ掲載 不可</span>');
+  if (view.allowWorkOrders) parts.push('<span class="is-work">出稼ぎ命令 可</span>');
   return parts.length ? `<p class="tribute-tally">${parts.join("")}</p>` : "";
 }
 
@@ -1284,7 +1289,7 @@ function renderEvent(event, view, statuses) {
         <span class="tribute-bubble">${escapeHtml(event.text)}</span>${mine && view.role === "payer" && view.peerReadSeq >= Number(event.seq) ? '<span class="tribute-read">既読</span>' : ""}${time}</li>`;
     case "applied":
       // 限度額は出さない（管理人も読む出来事のため）。
-      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_LABELS[event.tone] || "普通")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}`);
+      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_LABELS[event.tone] || "普通")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}${event.allowWorkOrders ? " ・ 出稼ぎ命令 可" : ""}`);
     case "accepted": {
       const collarNo = Number(event.collarNo) || 0;
       const collar = collarNo
@@ -1331,6 +1336,27 @@ function renderEvent(event, view, statuses) {
       }
       return system(`${escapeHtml(managerName)}が ${escapeHtml(formatPay(event.amount))} を受け取りました。`, "is-received");
     }
+    case "work_order":
+      return `<li class="tribute-event is-work-order ${mine ? "is-mine" : "is-theirs"}"><div class="tribute-work-card"><span class="tribute-eyebrow">出稼ぎ命令</span><strong>1on1を ${Number(event.target)}回 完走</strong>${event.note ? `<p>「${escapeHtml(event.note)}」</p>` : ""}</div>${time}</li>`;
+    case "work_report":
+      return system(`出稼ぎ報告：命令の後の1on1 <b>${Number(event.count)} / ${Number(event.target)}回</b>（サーバーが記入）${event.done ? " ・ 果たしました" : ""}`, "is-report");
+    case "work_confirm": {
+      const seal = sealLabel(event.seal)
+        ? `<span class="tribute-stamp-seal">${sealSvg({ label: sealLabel(event.seal), name: managerName, at: event.createdAt, size: 64, shape: event.sealShape, ink: event.sealInk, rough: false })}</span>`
+        : "";
+      const reward = rewardLabel(event.reward);
+      return `<li class="tribute-event is-system is-work-confirm"><p>${escapeHtml(managerName)}が出稼ぎ（${Number(event.count)} / ${Number(event.target)}回）を確かめました。</p>${seal}${time}</li>${reward
+        ? `<li class="tribute-event is-message is-reward ${mine ? "is-mine" : "is-theirs"} is-manager"><span class="tribute-bubble"><span class="tribute-visually-hidden">${escapeHtml(managerName)}から出稼ぎへのご褒美：</span>${escapeHtml(reward)}</span>${time}</li>`
+        : ""}`;
+    }
+    case "work_withdrawn":
+      return system(event.reason === "setting"
+        ? `${escapeHtml(payerName)}が出稼ぎ命令を受けるのをやめたので、命令は消えました。`
+        : `${escapeHtml(managerName)}が出稼ぎ命令を取り下げました。`);
+    case "work_orders_changed":
+      return system(event.allowWorkOrders
+        ? `${escapeHtml(payerName)}が出稼ぎ命令を受けるようにしました。`
+        : `${escapeHtml(payerName)}が出稼ぎ命令を受けるのをやめました。`, "is-caps");
     case "screenshots_changed":
       return system(event.allowScreenshots
         ? `${escapeHtml(payerName)}が、管理人のXにスクショを載せることを許しました。`
@@ -1420,7 +1446,7 @@ function renderThreadNext() {
   const next = nextTodoContract(state.contracts, state.thread.contractId);
   if (!next) return "";
   const name = contractCounterpart(next.contract).name;
-  return `<div class="tribute-thread-next"><button type="button" class="tribute-link" data-t="open-thread" data-contract="${escapeHtml(next.contract.contractId)}">次へ：${escapeHtml(name)}（${escapeHtml(next.label)}${next.kind === "applied" || next.kind === "withdraw" || next.kind === "report" ? "" : ` ${next.count}`}）</button></div>`;
+  return `<div class="tribute-thread-next"><button type="button" class="tribute-link" data-t="open-thread" data-contract="${escapeHtml(next.contract.contractId)}">次へ：${escapeHtml(name)}（${escapeHtml(next.label)}${["applied", "withdraw", "report", "work", "work_done"].includes(next.kind) ? "" : ` ${next.count}`}）</button></div>`;
 }
 
 // スレッドで変わった「やること」を、契約の一覧の行にも写す（一覧に戻る前に「次へ」が古い行を選ばないため）。
@@ -1433,6 +1459,7 @@ function syncContractRow(view) {
     pendingRequests: view.pendingRequests,
     escrowWithdrawRequest: view.escrowWithdrawRequest,
     reportRequested: view.reportRequested,
+    workOrder: view.workOrder,
   });
 }
 
@@ -1502,7 +1529,7 @@ function renderThreadActionButtons(view) {
     return view.role === "manager"
       ? `<div class="tribute-actions"><button class="button button-primary" type="button" data-t="accept">受理する${view.entryFee ? `（入場料 ${escapeHtml(formatPay(view.entryFee))}）` : ""}</button><button class="button button-ghost" type="button" data-t="decline">断る</button></div>`
       : `<p class="tribute-note">受理されると管理が始まります。${view.entryFee ? `入場料 ${escapeHtml(formatPay(view.entryFee))} は受理の時に移ります。` : ""}</p>
-        <div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button></div>`;
+        <div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button></div>`;
   }
   if (view.status !== "active") {
     return `<div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button></div>`;
@@ -1515,6 +1542,7 @@ function renderThreadActionButtons(view) {
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="caps">限度額を変える</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button>
+      <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button>
       <button class="button button-ghost button-small" type="button" data-t="report-balance">残高を報告</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button>
       ${previewScreen ? "" : renderBlockButton({ mode: "tribute", contractId: view.contractId }, "ブロック")}
@@ -1523,6 +1551,7 @@ function renderThreadActionButtons(view) {
   }
   return `<div class="tribute-actions">
     <button class="button button-primary" type="button" data-t="sheet" data-sheet="request" ${view.pendingRequests.length < LIMITS.pendingRequests ? "" : "disabled"}>請求する</button>
+    ${view.allowWorkOrders ? `<button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work" ${view.workOrder && !view.workOrder.done ? "disabled" : ""}>${view.workOrder && !view.workOrder.done ? "出稼ぎ中" : "出稼ぎに行かせる"}</button>` : ""}
     <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="take" ${view.escrowBalance ? "" : "disabled"}>管理口座から徴収</button>
     ${view.allowReportRequests ? `<button class="button button-ghost button-small" type="button" data-t="request-report" ${view.reportRequested ? "disabled" : ""}>${view.reportRequested ? "報告待ち" : "報告を求める"}</button>` : ""}
     <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button>
@@ -1546,6 +1575,81 @@ function renderTemplates(view) {
 function renderPendingRequests(view) {
   if (view.status !== "active" || !view.pendingRequests.length) return "";
   return `<section class="tribute-panel"><h2>未払いの請求</h2><ol class="tribute-pending-requests">${view.pendingRequests.map((request) => renderEvent({ ...request, type: "request", actor: "manager" }, view, new Map())).join("")}</ol></section>`;
+}
+
+// 出稼ぎ命令。Payは動かさず、期限も罰もない。財布には進み具合（その場で数え直す）と1on1への近道、
+// 管理人には財布が報告した数だけを出す。果たした命令は、管理人が印とご褒美で確かめる。
+function renderWorkOrder(view) {
+  const order = view.status === "active" ? view.workOrder : null;
+  if (!order) return "";
+  const head = (eyebrow, title) => `<div class="tribute-work-head"><span class="tribute-eyebrow">${eyebrow}</span><strong>${title}</strong></div>${order.note ? `<p class="tribute-work-note">「${escapeHtml(order.note)}」</p>` : ""}`;
+  const goal = `1on1を ${Number(order.target)}回 完走`;
+  if (view.role === "manager") {
+    if (order.done) {
+      return `<section class="tribute-panel tribute-work-order is-done">${head("出稼ぎの報告", `果たしました（${Number(order.reportedCount)} / ${Number(order.target)}回）`)}
+        ${renderWorkConfirmControls(view)}</section>`;
+    }
+    const reported = order.reportedAt
+      ? `報告 <b>${Number(order.reportedCount)} / ${Number(order.target)}回</b>（${escapeHtml(formatDateTime(order.reportedAt))}）`
+      : "まだ報告はありません。";
+    return `<section class="tribute-panel tribute-work-order">${head("出稼ぎ命令", goal)}
+      <p class="tribute-work-reported">${reported}</p>
+      <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="work-withdraw">取り下げる</button></div></section>`;
+  }
+  if (order.done) {
+    return `<section class="tribute-panel tribute-work-order is-done">${head("出稼ぎ命令", `果たしました（${Number(order.target)} / ${Number(order.target)}回）`)}
+      <p class="tribute-work-reported">${escapeHtml(view.manager.personaName)}の確認を待っています。</p></section>`;
+  }
+  const work = state.thread.work?.orderSeq === order.orderSeq ? state.thread.work : null;
+  const count = Number.isSafeInteger(work?.count) ? work.count : null;
+  const ratio = count === null ? 0 : Math.min(100, Math.round((count / order.target) * 100));
+  const progress = count === null
+    ? `<span>${state.thread.workLoading || !work ? "数えています…" : "数えられませんでした"}</span>`
+    : `<span>いま <b>${count} / ${Number(order.target)}回</b>（命令の後の完走）</span>`;
+  const reached = count !== null && count >= order.target;
+  const demo = state.thread.demo === true;
+  return `<section class="tribute-panel tribute-work-order">${head("出稼ぎ命令", goal)}
+    <div class="tribute-work-progress"><i style="--ratio:${ratio}%"></i>${progress}<button class="tribute-link" type="button" data-t="work-refresh" ${state.thread.workLoading ? "disabled" : ""}>数え直す</button></div>
+    <div class="tribute-row">${demo ? "" : `<button class="button button-primary button-small" type="button" data-t="earn" data-mode="battle">1on1へ</button>`}<button class="button ${reached ? "button-primary" : "button-ghost"} button-small" type="button" data-t="work-report">${reached ? "果たしたと報告する" : "途中まで報告する"}</button></div>
+    ${demo ? "" : `<div class="tribute-earn"><small>稼いだPayを受け取る</small><button type="button" data-t="earn" data-mode="missions">デイリーミッション</button></div>`}
+    <small class="tribute-work-rule">${demo
+    ? "見本では完走を数えず、何も送りません。実際の命令では、通常型・戦略型1on1の完走（勝ち負けは関係なし）を数え、報告の数はサーバーが記入します。"
+    : "勝ち負けは関係なく、通常型・戦略型1on1の完走だけを数えます。報告の数はサーバーが記入します。"}期限はなく、果たさなくても何も起きません。</small></section>`;
+}
+
+// 果たした出稼ぎに、管理人が押す受取印とご褒美（受け取りと同じ一覧）。押すのは毎回管理人。
+function renderWorkConfirmControls(view) {
+  const rewards = rewardsFor(view.tone, view.ngWords);
+  const seals = sealsFor(state.profile?.card?.seals, view.ngWords);
+  const chosen = seals.includes(sealChoices.get("work")) ? sealChoices.get("work") : seals[0];
+  const look = normalizeDecorations(state.profile?.card);
+  return `<div class="tribute-receive tribute-work-confirm">
+    <div class="tribute-seal-pick" role="radiogroup" aria-label="押す印">${seals.map((id) => `<label><input type="radio" name="seal-work" value="${id}" ${id === chosen ? "checked" : ""} /><span>${sealSvg({ label: sealLabel(id), name: view.manager.personaName, at: Date.now(), size: 52, shape: look.sealShape, ink: look.sealInk, rough: false })}<small>${escapeHtml(sealLabel(id))}</small></span></label>`).join("")}</div>
+    <button class="button button-primary button-small" type="button" data-t="work-confirm">印を押して確かめる</button>
+    ${rewards.length ? `<div class="tribute-reward-chips" role="group" aria-label="ご褒美を添えて確かめる">${rewards.map((reward) => `<button type="button" data-t="work-confirm" data-reward="${escapeHtml(reward.id)}">${escapeHtml(reward.label)}</button>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+// 出稼ぎの進み具合（財布だけ）。命令が変わった時と開き直した時、「数え直す」を押した時にだけ、サーバーで数え直す。
+async function refreshWorkProgress({ force = false } = {}) {
+  const thread = state.thread;
+  const view = thread.view;
+  const order = view?.workOrder;
+  if (view?.role !== "payer" || view.status !== "active" || !order || order.done || thread.workLoading) return;
+  if (!force && thread.work?.orderSeq === order.orderSeq) return;
+  thread.workLoading = true;
+  if (state.screen === "thread") updateThreadParts();
+  let work = { orderSeq: order.orderSeq, count: null };
+  try {
+    const result = await call("work_progress", { contractId: view.contractId });
+    if (result?.workOrder) work = { orderSeq: result.workOrder.orderSeq, count: Number(result.count) || 0 };
+  } catch {
+    // 数えられなかった時は「数え直す」で試し直す。
+  }
+  thread.workLoading = false;
+  if (state.thread !== thread || state.screen !== "thread") return;
+  thread.work = work;
+  updateThreadParts();
 }
 
 function renderThreadHistory() {
@@ -1604,6 +1708,7 @@ function renderThread() {
     ${demoBanner}
     <div class="tribute-thread-head" id="tributeThreadHead">${renderThreadHead(view)}</div>
     <div id="tributePendingRequests">${renderPendingRequests(view)}</div>
+    <div id="tributeWorkOrder">${renderWorkOrder(view)}</div>
     <div id="tributeThreadHistory">${renderThreadHistory()}</div>
     <ol class="tribute-events" id="tributeThreadEvents" aria-live="polite">${renderThreadEvents(view)}</ol>
     ${view.status === "active" && !thread.demo ? `<form class="tribute-composer" data-form="message">
@@ -1641,6 +1746,8 @@ function updateThreadParts() {
   const pending = document.querySelector("#tributePendingRequests");
   const history = document.querySelector("#tributeThreadHistory");
   if (pending) pending.innerHTML = renderPendingRequests(view);
+  const work = document.querySelector("#tributeWorkOrder");
+  if (work) work.innerHTML = renderWorkOrder(view);
   if (history) history.innerHTML = renderThreadHistory();
   list.innerHTML = renderThreadEvents(view);
   actions.innerHTML = renderThreadActions(view);
@@ -1781,6 +1888,31 @@ function renderSheet() {
         <p>いま：<b>${allow ? "許可している" : "許可していない"}</b></p>
         <p class="tribute-note">許すと、管理人のスレッドに「スクショ掲載 可」の札が出ます。財布名や会話が写ることがあります。外すと、それより後は載せられなくなりますが、すでに載ったものはアプリでは消せません。</p>
         <button class="button ${allow ? "button-ghost" : "button-primary"}" type="button" data-t="set-screenshots" data-allow="${allow ? "0" : "1"}" ${state.busy ? "disabled" : ""}>${allow ? "許可を外す" : "許可する"}</button>
+        <button class="button button-ghost" type="button" data-t="sheet-close">閉じる</button>
+      </div>`);
+    }
+    case "work": {
+      if (view.role !== "manager") return "";
+      const notes = workOrderNotesFor(view.tone, { collarNo: view.collarNo, ngWords: view.ngWords });
+      return wrap("出稼ぎに行かせる", `<form class="tribute-sheet-form" data-form="work-order">
+        <p>${escapeHtml(contractCounterpart(view).name)}に、1on1を完走して稼いでくるよう命じます。数えるのは、命令の後に完走した通常型・戦略型1on1だけです（勝ち負けは関係ありません）。</p>
+        <fieldset><legend>回数</legend><div class="tribute-radio-row">${WORK_ORDER_TARGETS.map((target) => `<label><input type="radio" name="target" value="${target}" ${target === 3 ? "checked" : ""} /><span>${target}回</span></label>`).join("")}</div>
+          <small>10回は、毎日のプレイ報酬の「本日の基本目標」です。</small></fieldset>
+        <label class="tribute-field"><span>一言（${LIMITS.requestNote}文字まで）</span><input name="note" maxlength="${LIMITS.requestNote}" /></label>
+        ${notes.length ? `<div class="tribute-note-chips">${notes.map((line) => `<button type="button" data-t="pick-note" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div>` : ""}
+        <p class="tribute-note">Payは動かず、期限もありません。財布が報告するまで、進み具合は見えません。命令は1件ずつで、いつでも取り下げられます。</p>
+        <p class="tribute-form-error" data-form-error role="alert"></p>
+        <button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>命令する</button>
+      </form>`);
+    }
+    case "work-settings": {
+      if (view.role !== "payer") return "";
+      const allow = view.allowWorkOrders;
+      return wrap("出稼ぎの設定", `<div class="tribute-confirm">
+        <p>${escapeHtml(view.manager.personaName)}から、出稼ぎ命令（1on1を○回完走して稼いでこい）を受けるかを決めます。決めるのはあなただけで、いつでも変えられます。</p>
+        <p>いま：<b>${allow ? "受けている" : "受けていない"}</b></p>
+        <p class="tribute-note">命令ではPayは動かず、期限も罰もありません。命令の後に完走した数を、あなたが報告します（数はサーバーが記入）。受けるのをやめると、まだ果たしていない命令はすぐ消えます。</p>
+        <button class="button ${allow ? "button-ghost" : "button-primary"}" type="button" data-t="set-work-orders" data-allow="${allow ? "0" : "1"}" ${state.busy ? "disabled" : ""}>${allow ? "受けるのをやめる" : "受ける"}</button>
         <button class="button button-ghost" type="button" data-t="sheet-close">閉じる</button>
       </div>`);
     }
@@ -2554,6 +2686,7 @@ function openThread(contractId) {
     state.thread = { contractId, raw: fixture.raw, view: viewContract(fixture.raw, state.uid), events: fixture.events, status: "ready", demo };
     render();
     scrollThreadToEnd();
+    refreshWorkProgress();
     return;
   }
   const generation = lifecycleGeneration;
@@ -2581,6 +2714,7 @@ function openThread(contractId) {
     state.thread.status = "ready";
     updateThreadParts();
     scheduleMarkRead();
+    refreshWorkProgress();
   }, (error) => {
     if (!current()) return;
     state.thread.status = "error";
@@ -2917,6 +3051,7 @@ async function handleSubmit(form) {
           rankOptIn: data.get("rankOptIn") === "on",
           allowSexualPurposes: data.get("allowSexualPurposes") === "on",
           allowScreenshots: data.get("allowScreenshots") === "on",
+          allowWorkOrders: data.get("allowWorkOrders") === "on",
           acceptNoDecline: data.get("acceptNoDecline") === "on",
           walletName: String(data.get("walletName") || ""),
         },
@@ -2960,6 +3095,16 @@ async function handleSubmit(form) {
       if (problem) return setFormError(form, problem);
       const purpose = String(new FormData(form).get("purpose") || "");
       const result = await mutate("request", contractPayload({ amount: amount.value, note, purpose }), { form, success: "請求を送りました。" });
+      if (result) closeSheet();
+      return;
+    }
+    case "work-order": {
+      const target = Number(new FormData(form).get("target"));
+      if (!WORK_ORDER_TARGETS.includes(target)) return setFormError(form, "回数を選んでください。");
+      const note = String(form.elements.note.value || "");
+      const problem = note ? contractTextProblem(note, { role: "manager", ngWords: view.ngWords }) : "";
+      if (problem) return setFormError(form, problem);
+      const result = await mutate("work_order", contractPayload({ target, note }), { form, success: `出稼ぎ命令を出しました（1on1を${target}回）。` });
       if (result) closeSheet();
       return;
     }
@@ -3357,6 +3502,41 @@ async function handleClick(target) {
       if (result) closeSheet();
       return;
     }
+    case "set-work-orders": {
+      const allow = target.dataset.allow === "1";
+      const result = await mutate("set_work_orders", contractPayload({ allowWorkOrders: allow }), {
+        success: allow ? "出稼ぎ命令を受けるようにしました。" : "出稼ぎ命令を受けるのをやめました。",
+      });
+      if (result) closeSheet();
+      return;
+    }
+    case "work-refresh":
+      await refreshWorkProgress({ force: true });
+      return;
+    case "work-report": {
+      const thread = state.thread;
+      await mutate("work_report", contractPayload(), {
+        after: (result) => {
+          const count = Number(result?.count) || 0;
+          if (state.thread === thread && result?.contract?.workOrder) thread.work = { orderSeq: result.contract.workOrder.orderSeq, count };
+          showToast(result?.done ? `出稼ぎを報告しました（${count}回）。果たしました。` : `出稼ぎを報告しました（${count}回）。`);
+          if (state.screen === "thread") updateThreadParts();
+        },
+      });
+      return;
+    }
+    case "work-withdraw":
+      await mutate("work_withdraw", contractPayload(), { success: "出稼ぎ命令を取り下げました。" });
+      return;
+    case "work-confirm": {
+      const reward = target.dataset.reward || "";
+      const seal = target.closest(".tribute-work-confirm")?.querySelector('input[name="seal-work"]:checked')?.value || sealChoices.get("work") || "";
+      const result = await mutate("work_confirm", contractPayload({ reward, seal }), {
+        success: reward ? `「${sealLabel(seal) || "受領"}」の印に「${rewardLabel(reward)}」を添えて、出稼ぎを確かめました。` : `「${sealLabel(seal) || "受領"}」の印を押して、出稼ぎを確かめました。`,
+      });
+      if (result) sealChoices.delete("work");
+      return;
+    }
     case "set-purposes": {
       const allow = target.dataset.allow === "1";
       const result = await mutate("set_purposes", contractPayload({ allowSexualPurposes: allow }), {
@@ -3506,6 +3686,7 @@ function bindRoot(root) {
     }
     const sealPick = String(event.target.name || "").match(/^seal-(\d+)$/);
     if (sealPick) sealChoices.set(Number(sealPick[1]), event.target.value);
+    if (event.target.name === "seal-work") sealChoices.set("work", event.target.value);
     const requestForm = event.target.closest?.('form[data-form="request"]');
     if (requestForm && event.target.name === "purpose" && state.thread.view) {
       const chips = requestForm.querySelector("[data-note-chips]");
@@ -3779,8 +3960,11 @@ function demoThread() {
     escrowWithdrawRequest: null,
     pendingRequests: { "0123456789abcdef": { amount: 30, note: "待たせた罰金。", purpose: "penalty", createdAt: at(3) } },
     reportRequestedAt: 0,
-    eventSeq: 9,
-    readSeq: { manager: 9, payer: 9 },
+    allowWorkOrders: true,
+    workOrderSeq: 1,
+    workOrder: { orderSeq: 1, target: 3, note: "3号、出稼ぎの時間だ。", issuedAt: at(2), reportedCount: 0, reportedAt: 0, doneAt: 0 },
+    eventSeq: 10,
+    readSeq: { manager: 10, payer: 10 },
   };
   const events = [
     { seq: 1, type: "applied", actor: "payer", caps: raw.caps, durationDays: 3, tone: "harsh", entryFee: 0, createdAt: at(180) },
@@ -3792,6 +3976,7 @@ function demoThread() {
     { seq: 7, type: "tribute", actor: "payer", kind: "silent", amount: 30, purpose: "reward_fee", receiptId: "c".repeat(40), createdAt: at(30) },
     { seq: 8, type: "message", actor: "manager", text: "それっぽっち？まあ、あとで受け取ってやる。", createdAt: at(20) },
     { seq: 9, type: "request", actor: "manager", requestId: "0123456789abcdef", amount: 30, note: "待たせた罰金。", purpose: "penalty", createdAt: at(3) },
+    { seq: 10, type: "work_order", actor: "manager", orderSeq: 1, target: 3, note: "3号、出稼ぎの時間だ。", createdAt: at(2) },
   ];
   return { raw, events };
 }
@@ -3908,6 +4093,12 @@ function previewRaw(role, status = "active") {
     managerIgnoreUnpaid: true,
     ignoredSince: now - 2 * 86_400_000 - 3_600_000,
     reportRequestedAt: role === "payer" ? now - 30_000 : 0,
+    allowWorkOrders: true,
+    workOrderSeq: 1,
+    workOrder: role === "payer"
+      ? { orderSeq: 1, target: 3, note: "財布が空なら稼いでこい。", issuedAt: now - 50 * 60_000, reportedCount: 1, reportedAt: now - 20 * 60_000, doneAt: 0 }
+      : { orderSeq: 1, target: 3, note: "稼いでから顔を出せ。", issuedAt: now - 50 * 60_000, reportedCount: 3, reportedAt: now - 4 * 60_000, doneAt: now - 4 * 60_000 },
+    workOrdersDone: role === "payer" ? 0 : 1,
     eventSeq: 16,
     readSeq: { manager: 16, payer: 14 },
   };
@@ -4134,6 +4325,65 @@ function previewCall(action, payload) {
       const row = state.contracts.find((contract) => contract.contractId === payload.contractId);
       if (row) row.nickname = nickname;
       return Promise.resolve({ ok: true, nickname });
+    }
+    // 出稼ぎ命令。見本では完走を数えず、報告のたびに1回ずつ進める。
+    case "work_progress": {
+      const view = state.thread.view;
+      const order = view?.workOrder && !view.workOrder.done ? view.workOrder : null;
+      const counted = state.thread.demo ? 0 : Math.min(order?.target || 0, (order?.reportedCount || 0) + 1);
+      return Promise.resolve({ ok: true, contractId: payload.contractId, workOrder: order, count: order ? counted : 0 });
+    }
+    case "work_order": {
+      const view = previewThreadChange((raw, push, at) => {
+        const orderSeq = Number(raw.workOrderSeq || 0) + 1;
+        raw.workOrderSeq = orderSeq;
+        raw.workOrder = { orderSeq, target: Number(payload.target), note: String(payload.note || ""), issuedAt: at, reportedCount: 0, reportedAt: 0, doneAt: 0 };
+        push({ type: "work_order", actor: "manager", orderSeq, target: Number(payload.target), ...(payload.note ? { note: payload.note } : {}) });
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "work_report": {
+      let count = 0;
+      let done = false;
+      const view = previewThreadChange((raw, push, at) => {
+        const order = raw.workOrder;
+        if (!order || order.doneAt) return;
+        const known = state.thread.work?.orderSeq === order.orderSeq ? state.thread.work.count : order.reportedCount;
+        count = Math.min(order.target, Number(known) || 0);
+        done = count >= order.target;
+        raw.workOrder = { ...order, reportedCount: count, reportedAt: at, ...(done ? { doneAt: at } : {}) };
+        if (done) raw.workOrdersDone = Number(raw.workOrdersDone || 0) + 1;
+        push({ type: "work_report", actor: "payer", orderSeq: order.orderSeq, target: order.target, count, done });
+      });
+      return Promise.resolve({ ok: true, count, done, contract: view });
+    }
+    case "work_withdraw": {
+      const view = previewThreadChange((raw, push) => {
+        if (!raw.workOrder || raw.workOrder.doneAt) return;
+        push({ type: "work_withdrawn", actor: "manager", orderSeq: raw.workOrder.orderSeq, reason: "withdrawn" });
+        raw.workOrder = null;
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "work_confirm": {
+      const view = previewThreadChange((raw, push) => {
+        const order = raw.workOrder;
+        if (!order?.doneAt) return;
+        const look = normalizeDecorations(state.profile?.card);
+        push({ type: "work_confirm", actor: "manager", orderSeq: order.orderSeq, target: order.target, count: order.reportedCount, seal: payload.seal || "juryo", sealShape: look.sealShape, sealInk: look.sealInk, ...(payload.reward ? { reward: payload.reward } : {}) });
+        raw.workOrder = null;
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "set_work_orders": {
+      const view = previewThreadChange((raw, push) => {
+        raw.allowWorkOrders = payload.allowWorkOrders === true;
+        push({ type: "work_orders_changed", actor: "payer", allowWorkOrders: raw.allowWorkOrders });
+        if (raw.allowWorkOrders || !raw.workOrder || raw.workOrder.doneAt) return;
+        push({ type: "work_withdrawn", actor: "system", orderSeq: raw.workOrder.orderSeq, reason: "setting" });
+        raw.workOrder = null;
+      });
+      return Promise.resolve({ ok: true, contract: view });
     }
     case "set_screenshots": {
       const view = previewThreadChange((raw, push) => {

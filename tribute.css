@@ -553,6 +553,7 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
 .tribute-thread-screen.is-shot .tribute-header,
 .tribute-thread-screen.is-shot .tribute-thread-head,
 .tribute-thread-screen.is-shot #tributePendingRequests,
+.tribute-thread-screen.is-shot #tributeWorkOrder,
 .tribute-thread-screen.is-shot #tributeThreadHistory,
 .tribute-thread-screen.is-shot .tribute-composer,
 .tribute-thread-screen.is-shot .tribute-thread-actions,
@@ -1375,3 +1376,32 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .vl-ranch-resume-text { display: grid; flex: 1; min-width: 0; font-size: 0.95rem; font-weight: 800; }
 .vl-ranch-resume-text small { color: rgba(244, 236, 246, 0.7); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; }
 .vl-ranch-resume-go { color: #ff4fa3; font-size: 1.4rem; line-height: 1; }
+
+/* 出稼ぎ命令（ranch-work-orders-v1）: Payは動かさず、命令の後の1on1の完走を数える。緑で請求（金）と見分ける。 */
+.tribute-check.is-work small { display: block; margin-top: 2px; font-size: 0.74rem; }
+.tribute-tally .is-work { border-color: rgba(126, 224, 138, 0.5); background: rgba(126, 224, 138, 0.08); color: #c9f5cf; }
+.tribute-work-order { display: grid; gap: 8px; border-color: rgba(126, 224, 138, 0.45); }
+.tribute-work-order.is-done { background: linear-gradient(160deg, rgba(126, 224, 138, 0.12), var(--tr-panel) 60%); }
+.tribute-work-head { display: grid; gap: 2px; }
+.tribute-work-head strong { color: #c9f5cf; font-size: 1.1rem; }
+.tribute-work-note { margin: 0; color: var(--tr-text); font-size: 0.86rem; overflow-wrap: anywhere; }
+.tribute-work-reported { margin: 0; color: var(--tr-mist); font-size: 0.8rem; }
+.tribute-work-reported b { color: #c9f5cf; }
+.tribute-work-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.tribute-work-progress i { display: block; flex: 1 0 100%; height: 8px; border-radius: 999px; background: linear-gradient(90deg, #7ee08a, #5fd4ff) 0 0 / var(--ratio, 0%) 100% no-repeat, rgba(255, 255, 255, 0.08); }
+.tribute-work-progress span { font-size: 0.8rem; }
+.tribute-work-progress b { color: #c9f5cf; }
+.tribute-work-rule { color: var(--tr-mist); font-size: 0.72rem; }
+.tribute-work-card {
+  display: grid;
+  gap: 4px;
+  min-width: 200px;
+  max-width: min(86%, 380px);
+  padding: 10px 14px;
+  border: 1px dashed rgba(126, 224, 138, 0.6);
+  border-radius: 14px;
+  background: rgba(126, 224, 138, 0.08);
+}
+.tribute-work-card strong { color: #c9f5cf; }
+.tribute-work-card p { margin: 0; font-size: 0.84rem; overflow-wrap: anywhere; }
+.tribute-event.is-work-confirm .tribute-stamp-seal { position: static; display: block; transform: rotate(-8deg); }

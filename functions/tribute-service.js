@@ -10,6 +10,7 @@ const {
   REPORT_REASONS,
   SEVERE_REPORT_REASONS,
   LIMITS,
+  WORK_ORDER_TARGETS,
   FORBIDDEN_MESSAGES,
   cleanLine,
   forbiddenReason,
@@ -91,6 +92,12 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "set_purposes",
   "set_screenshots",
   "set_nickname",
+  "set_work_orders",
+  "work_order",
+  "work_withdraw",
+  "work_report",
+  "work_confirm",
+  "work_progress",
   "receive",
   "share_info",
   "set_word",
@@ -334,6 +341,38 @@ function pendingRequestList(contract) {
     .sort((left, right) => left.createdAt - right.createdAt);
 }
 
+// 出稼ぎ命令。果たした後も、管理人が確認するか次の命令を出すまで残す（done で見分ける）。
+function workOrderView(contract) {
+  const order = contract.workOrder && typeof contract.workOrder === "object" ? contract.workOrder : null;
+  const target = integer(order?.target, 0, 1_000, 0);
+  const orderSeq = integer(order?.orderSeq, 0, Number.MAX_SAFE_INTEGER, 0);
+  if (!order || !WORK_ORDER_TARGETS.includes(target) || orderSeq < 1) return null;
+  const doneAt = integer(order.doneAt, 0, Number.MAX_SAFE_INTEGER, 0);
+  return {
+    orderSeq,
+    target,
+    note: cleanLine(order.note, LIMITS.requestNote),
+    issuedAt: integer(order.issuedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    reportedCount: integer(order.reportedCount, 0, target, 0),
+    reportedAt: integer(order.reportedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    done: doneAt > 0,
+    doneAt,
+  };
+}
+
+// まだ果たしていない命令（報告を待っている命令）。
+function openWorkOrder(contract) {
+  const order = workOrderView(contract);
+  return order && !order.done ? order : null;
+}
+
+// 命令の後の完走数。命令した時の完走数（private/work）と、いまの完走数の差を、回数で頭打ちにする。
+function workCount(order, work, matches) {
+  if (!order || integer(work?.orderSeq, 0, Number.MAX_SAFE_INTEGER, 0) !== order.orderSeq) return null;
+  const baseline = integer(work.baselineMatches, 0, Number.MAX_SAFE_INTEGER, 0);
+  return Math.min(order.target, Math.max(0, integer(matches, 0, Number.MAX_SAFE_INTEGER, 0) - baseline));
+}
+
 // 名目ごとの回数。許可が外れた契約では、性的な名目の回数を出さない。
 function purposeCountsView(contract) {
   const counts = object(contract.purposeCounts);
@@ -383,6 +422,7 @@ function viewContract(contract, uid, now) {
     rankOptIn: contract.rankOptIn === true,
     allowSexualPurposes: contract.allowSexualPurposes === true,
     allowScreenshots: contract.allowScreenshots === true,
+    allowWorkOrders: contract.allowWorkOrders === true,
     entryFee: integer(contract.entryFee, 0, 1_000, 0),
     renewal: contract.renewal === true,
     createdAt: integer(contract.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -408,6 +448,8 @@ function viewContract(contract, uid, now) {
     managerIgnoreUnpaid: contract.managerIgnoreUnpaid === true,
     pendingRequests: pendingRequestList(contract),
     reportRequested: Number(contract.reportRequestedAt || 0) > 0,
+    workOrder: status === "active" ? workOrderView(contract) : null,
+    workOrdersDone: integer(contract.workOrdersDone, 0, Number.MAX_SAFE_INTEGER, 0),
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
     peerReadSeq: Math.min(eventSeq, peerReadSeq),
@@ -469,6 +511,9 @@ function createTributeService(deps) {
     bestEffort,
     playerSafety = null,
     syncAchievementPublicSurfaces = null,
+    // 出稼ぎ命令の数え方。マイスタジアムの観客と同じ正本（検証済みの正式完走数）を読む。
+    economyProgressRef = null,
+    totalVerifiedMatches = null,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -479,6 +524,8 @@ function createTributeService(deps) {
   const profileRef = (uid) => firestore.collection("tributeProfiles").doc(uid);
   const contractRef = (contractId) => firestore.collection("tributeContracts").doc(contractId);
   const limitsRef = (contractId) => contractRef(contractId).collection("private").doc("limits");
+  // 出稼ぎ命令を出した時の完走数。管理人に財布の通算を見せないよう、財布だけが読める場所に置く。
+  const workRef = (contractId) => contractRef(contractId).collection("private").doc("work");
   const eventRef = (contractId, seq) => contractRef(contractId).collection("events").doc(eventId(seq));
   const receiptRef = (uid, receiptId) => firestore.collection("tributeReceipts").doc(uid).collection("items").doc(receiptId);
   const pairRef = (managerUid, payerUid) => firestore.collection("tributePairs").doc(pairId(managerUid, payerUid));
@@ -781,6 +828,7 @@ function createTributeService(deps) {
       escrowWithdrawRequest: null,
       pendingRequests: {},
       reportRequestedAt: 0,
+      workOrder: null,
       pendingCaps: null,
       pendingCapsEffectiveDateKey: "",
       awaitingReceipt: 0,
@@ -1638,6 +1686,10 @@ function createTributeService(deps) {
         rankOptIn: application.rankOptIn,
         allowSexualPurposes: application.allowSexualPurposes,
         allowScreenshots: application.allowScreenshots,
+        allowWorkOrders: application.allowWorkOrders,
+        workOrder: null,
+        workOrderSeq: 0,
+        workOrdersDone: 0,
         purposeCounts: {},
         rewardCount: 0,
         awaitingReceipt: 0,
@@ -1676,6 +1728,7 @@ function createTributeService(deps) {
         entryFee,
         allowSexualPurposes: application.allowSexualPurposes,
         allowScreenshots: application.allowScreenshots,
+        allowWorkOrders: application.allowWorkOrders,
         createdAt: now,
       });
       transaction.set(profileRef(uid), {
@@ -1728,6 +1781,32 @@ function createTributeService(deps) {
 
   function view(ctx) {
     return viewContract(ctx.contract, ctx.uid, ctx.now);
+  }
+
+  function requireWorkCounting() {
+    if (!economyProgressRef || typeof totalVerifiedMatches !== "function") {
+      fail("unavailable", "出稼ぎ命令は今使えません。時間をおいてお試しください。");
+    }
+  }
+
+  function matchesOf(progressSnapshot) {
+    return integer(totalVerifiedMatches(progressSnapshot.exists ? progressSnapshot.data() : {}), 0, Number.MAX_SAFE_INTEGER, 0);
+  }
+
+  // 財布のいまの正式完走数（と、報告の時は命令した時の完走数）。対戦の確定処理には触れず、ここで読み直す。
+  async function readPayerMatches(transaction, ctx, { withBaseline = false } = {}) {
+    requireWorkCounting();
+    const [progressSnapshot, workSnapshot] = await Promise.all([
+      transaction.get(economyProgressRef(ctx.payerUid)),
+      withBaseline ? transaction.get(workRef(ctx.contractId)) : null,
+    ]);
+    return { matches: matchesOf(progressSnapshot), work: workSnapshot?.exists ? object(workSnapshot.data()) : null };
+  }
+
+  function requireWorkCount(order, extra) {
+    const count = workCount(order, extra.work, extra.matches);
+    if (count === null) fail("failed-precondition", "出稼ぎ命令を確認できません。開き直してください。");
+    return count;
   }
 
   const contractActions = {
@@ -2118,6 +2197,116 @@ function createTributeService(deps) {
         if ((ctx.contract.allowScreenshots === true) === allow) return { ok: true, contract: view(ctx), unchanged: true };
         setContract(ctx, { allowScreenshots: allow });
         pushEvent(ctx, { type: "screenshots_changed", actor: "payer", allowScreenshots: allow });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 出稼ぎ命令を受けるか。決めるのは預ける側だけで、いつでも変えられる。外すと、まだ果たしていない命令はその場で消える。
+    set_work_orders: {
+      roles: ["payer"],
+      statuses: ["pending", "active"],
+      write(ctx, _extra, data) {
+        const allow = data?.allowWorkOrders === true;
+        if ((ctx.contract.allowWorkOrders === true) === allow) return { ok: true, contract: view(ctx), unchanged: true };
+        const order = openWorkOrder(ctx.contract);
+        setContract(ctx, { allowWorkOrders: allow });
+        pushEvent(ctx, { type: "work_orders_changed", actor: "payer", allowWorkOrders: allow });
+        if (!allow && order) {
+          setContract(ctx, { workOrder: null });
+          pushEvent(ctx, { type: "work_withdrawn", actor: "system", orderSeq: order.orderSeq, reason: "setting" });
+        }
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 出稼ぎ命令。管理人が「1on1を○回完走してこい」と命じる。Payは動かさず、期限もない。
+    // 命令した時の財布の完走数は、財布だけが読める private/work に残す（管理人に通算を見せない）。
+    work_order: {
+      roles: ["manager"],
+      statuses: ["active"],
+      read: (transaction, ctx) => readPayerMatches(transaction, ctx),
+      write(ctx, extra, data) {
+        if (ctx.contract.allowWorkOrders !== true) fail("failed-precondition", "この契約では、出稼ぎ命令を出せません。");
+        if (openWorkOrder(ctx.contract)) fail("failed-precondition", "出稼ぎ命令は1件ずつです。");
+        const target = Number(data?.target);
+        if (!WORK_ORDER_TARGETS.includes(target)) fail("invalid-argument", "回数を選び直してください。");
+        const note = cleanLine(data?.note, LIMITS.requestNote);
+        if (note) checkManagerText(ctx, note);
+        messageRate(ctx);
+        // 確認していない前の命令は、ここで確認なしに閉じる。
+        const orderSeq = integer(ctx.contract.workOrderSeq, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+        setContract(ctx, {
+          workOrderSeq: orderSeq,
+          workOrder: { orderSeq, target, note, issuedAt: ctx.now, reportedCount: 0, reportedAt: 0, doneAt: 0 },
+        });
+        ctx.extraWrites.push((transaction) => transaction.set(workRef(ctx.contractId), {
+          contractId: ctx.contractId,
+          payerUid: ctx.payerUid,
+          orderSeq,
+          baselineMatches: extra.matches,
+          updatedAt: ctx.now,
+        }));
+        pushEvent(ctx, { type: "work_order", actor: "manager", orderSeq, target, ...(note ? { note } : {}) });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    work_withdraw: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        const order = openWorkOrder(ctx.contract);
+        if (!order) fail("failed-precondition", "取り下げられる出稼ぎ命令はありません。");
+        setContract(ctx, { workOrder: null });
+        pushEvent(ctx, { type: "work_withdrawn", actor: "manager", orderSeq: order.orderSeq, reason: "withdrawn" });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 出稼ぎの報告。完走数はサーバーが記入し、端末からは受け取らない。回数に届いた報告で、命令を果たしたことになる。
+    // 残高報告と同じく、財布の発言には数えない（既読無視を始めない）。
+    work_report: {
+      roles: ["payer"],
+      statuses: ["active"],
+      read: (transaction, ctx) => readPayerMatches(transaction, ctx, { withBaseline: true }),
+      write(ctx, extra) {
+        const order = openWorkOrder(ctx.contract);
+        if (!order) fail("failed-precondition", "報告できる出稼ぎ命令はありません。");
+        const count = requireWorkCount(order, extra);
+        messageRate(ctx);
+        const done = count >= order.target;
+        setContract(ctx, {
+          workOrder: { ...ctx.contract.workOrder, reportedCount: count, reportedAt: ctx.now, ...(done ? { doneAt: ctx.now } : {}) },
+          ...(done ? { workOrdersDone: integer(ctx.contract.workOrdersDone, 0, Number.MAX_SAFE_INTEGER, 0) + 1 } : {}),
+        });
+        pushEvent(ctx, { type: "work_report", actor: "payer", orderSeq: order.orderSeq, target: order.target, count, done });
+        return { ok: true, count, done, contract: view(ctx) };
+      },
+    },
+    // 果たした命令を、管理人が確かめる。受取印を1つ押し、ご褒美を1つ添えられる（受け取りと同じ一覧と置き換え）。
+    work_confirm: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        const order = workOrderView(ctx.contract);
+        if (!order?.done) fail("failed-precondition", "確認できる出稼ぎ報告はありません。");
+        const normalized = normalizeReward(data?.reward, { tone: ctx.contract.tone, ngWords: ctx.contract.ngWords });
+        if (normalized.error) fail("invalid-argument", normalized.error);
+        const reward = normalized.reward;
+        const card = ctx.profiles.manager.value.card;
+        const seal = sealFor(data?.seal, { seals: card?.seals, ngWords: ctx.contract.ngWords });
+        setContract(ctx, { workOrder: null });
+        pushEvent(ctx, {
+          type: "work_confirm",
+          actor: "manager",
+          orderSeq: order.orderSeq,
+          target: order.target,
+          count: order.reportedCount,
+          seal,
+          ...sealLook(card),
+          ...(reward ? { reward } : {}),
+        });
+        // ご褒美の一言は返事なので、既読無視を終える。
+        if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
+        markManagerActive(ctx);
         return { ok: true, contract: view(ctx) };
       },
     },
@@ -2670,6 +2859,32 @@ function createTributeService(deps) {
     return result;
   }
 
+  // 出稼ぎの進み具合。財布にだけ、その場で読み直して返す。読むだけで、何も書かない。
+  // 管理人には返さない（管理人に見えるのは、財布が報告した数だけ）。
+  async function workProgressAction(uid, data) {
+    const contractId = requireContractId(data?.contractId);
+    requireWorkCounting();
+    const [contractSnapshot, profileSnapshot] = await Promise.all([
+      contractRef(contractId).get(),
+      profileRef(uid).get(),
+    ]);
+    if (!contractSnapshot.exists) fail("not-found", "契約が見つかりません。");
+    const contract = object(contractSnapshot.data());
+    if (contract.payerUid !== uid) fail("permission-denied", "この操作はできません。");
+    requireAge(readProfile(profileSnapshot));
+    const now = currentTime();
+    const live = contract.status === "active" && integer(contract.expiresAt, 0, Number.MAX_SAFE_INTEGER, 0) > now;
+    const order = live ? openWorkOrder(contract) : null;
+    if (!order) return { ok: true, contractId, workOrder: null, count: 0 };
+    const [workSnapshot, progressSnapshot] = await Promise.all([
+      workRef(contractId).get(),
+      economyProgressRef(uid).get(),
+    ]);
+    const count = workCount(order, workSnapshot.exists ? object(workSnapshot.data()) : null, matchesOf(progressSnapshot));
+    if (count === null) fail("failed-precondition", "出稼ぎ命令を確認できません。開き直してください。");
+    return { ok: true, contractId, workOrder: order, count };
+  }
+
   async function performAction(uidValue, dataValue, context = {}) {
     const uid = String(uidValue || "");
     if (!uid) fail("unauthenticated", "ログインが必要です。");
@@ -2697,6 +2912,7 @@ function createTributeService(deps) {
       case "vault_deposit": return vaultMoveAction(uid, data, "deposit");
       case "vault_withdraw": return vaultMoveAction(uid, data, "withdraw");
       case "claim_refund": return claimRefundAction(uid);
+      case "work_progress": return workProgressAction(uid, data);
       default: return runNamedContractAction(uid, action, data, context);
     }
   }

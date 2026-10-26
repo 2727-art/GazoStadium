@@ -258,6 +258,8 @@ function createHarness({ balances = {}, playerSafety } = {}) {
     syncAchievementPublicSurfaces: async (uid, profile) => {
       achievementSyncs.push({ uid, unlocked: Object.keys(profile?.unlocked || {}) });
     },
+    economyProgressRef: (uid) => firestore.collection("economyProgress").doc(uid),
+    totalVerifiedMatches: (progress) => Number(progress?.achievementStats?.totalMatches || 0),
     now: () => clock,
   });
   const act = (uid, action, data = {}, context = {}) => service.performAction(uid, { action, ...data }, context);
@@ -272,6 +274,10 @@ function createHarness({ balances = {}, playerSafety } = {}) {
     },
     now: () => clock,
     balance: (uid) => firestore.read(`wallets/${uid}`).balance,
+    // 検証済みの正式完走数（economyProgress の achievementStats.totalMatches）。
+    setMatches(uid, totalMatches) {
+      firestore.write(`economyProgress/${uid}`, { achievementStats: { totalMatches } });
+    },
     contract: (contractId) => firestore.read(`tributeContracts/${contractId}`),
     events(contractId) {
       return firestore.keys(`tributeContracts/${contractId}/events/`).sort().map((path) => firestore.read(path));
