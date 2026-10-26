@@ -506,7 +506,8 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
   padding: 6px 2px;
   overflow-y: auto;
   list-style: none;
-  overscroll-behavior: contain;
+  /* 履歴の上下端ではページへスクロールを渡し、下の入力欄へ進めるようにする。 */
+  overscroll-behavior: contain auto;
 }
 
 .tribute-event { display: grid; gap: 2px; min-width: 0; }
