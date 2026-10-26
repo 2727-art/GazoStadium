@@ -53,7 +53,7 @@ test("the hero opens like an X DM thread that only this site can decorate", asyn
   assert.match(hero, /<span class="vl-dm-who"><b>シオン<\/b><small><span class="chat-persona-mark is-koakuma" aria-hidden="true"><\/span>小悪魔で貼り合い中<\/small><\/span>/);
   assert.match(hero, /<span class="vl-dm-lock">P2P<\/span>/);
   assert.match(hero, /<span class="ha-bubble vl-persona-bubble chat-persona-koakuma chat-fx-hearts">ねぇ、これ好きでしょ？♡<span class="chat-reaction-sticker is-kiss"><\/span><\/span>/);
-  assert.match(hero, /class="ha-bubble ha-score-bubble vl-persona-bubble chat-persona-tsuyotsuyo" data-hero-reply><span class="vl-crit">CRITICAL<\/span><b class="ha-score-number">90<small>点<\/small><\/b>っ…90点。ずるい…♡<\/span>/);
+  assert.match(hero, /class="ha-bubble ha-score-bubble vl-persona-bubble chat-persona-tsuyotsuyo" data-hero-reply><span class="vl-crit">刺さった<\/span><b class="ha-score-number">90<small>点<\/small><\/b>っ…90点。ずるい…♡<\/span>/);
   // 入力中の一文は、チャットで実際に出る口調ごとの文言と同じ
   assert.ok(hero.includes(`${personaTypingText("koakuma", "シオン")}<span class="chat-typing-dots">`));
   assert.doesNotMatch(hero, /https?:\/\/|www\./, "the hero carries no URL");

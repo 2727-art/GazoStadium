@@ -1,7 +1,8 @@
 /*
   Velvet Stage：通常型1on1
-  対戦画面（.vb-screen）とFINISHカットインの見た目。戦略型と共有するクラスには手を入れない。
-  2026-09 から「DMの密室 × 採点メーター」：画像とひとことは吹き出し、点数は1〜10のメーターで返す。
+  マッチ成立（VS）の後は、相手とのDMスレッド1本で進める（.vb-dm）。FINISHカットインと試合結果もここで決める。
+  主役は相手が貼ってきた画像と言葉、そしてチャット。自分の画像は「貼った」印だけにする。
+  戦略型と共有する ha-*（velvet.css）と .vb-preview-bar の見た目は変えない。
   演出の長さは --vb-fx-speed（標準1・短め0.5・即時0）を掛けて決める。
 */
 
@@ -29,7 +30,7 @@
   letter-spacing: 0.12em;
 }
 
-/* ---------- 全体の配置 ---------- */
+/* ---------- マッチ成立（VS）の配置 ---------- */
 
 .vb-layout {
   display: grid;
@@ -51,20 +52,11 @@
   gap: 4px;
 }
 
-.vb-heading.is-center {
-  justify-items: center;
-  text-align: center;
-}
-
 .vb-title {
   margin: 0;
   font: 400 clamp(1.3rem, 5.4vw, 1.7rem)/1.35 var(--ha-font-display);
   letter-spacing: 0.02em;
   text-wrap: balance;
-}
-
-.vb-title.is-accent {
-  font: 400 clamp(1.4rem, 6vw, 1.9rem)/1.25 var(--ha-font-display);
 }
 
 .vb-lead {
@@ -114,20 +106,6 @@
   font-size: 0.8rem;
 }
 
-/* 演出の途中は、後から出るものを隠しておく */
-.vb-after {
-  transition:
-    opacity calc(360ms * var(--vb-fx-speed, 1)) var(--vs-ease-out),
-    transform calc(360ms * var(--vb-fx-speed, 1)) var(--vs-ease-out);
-}
-
-.vb-screen[data-fx="pending"] .vb-after,
-.vb-screen[data-fx="play"] .vb-after {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px);
-}
-
 .vb-flash {
   position: fixed;
   z-index: 45;
@@ -137,117 +115,194 @@
   background: #fff;
 }
 
-/* ---------- HUD ---------- */
+/* ---------- DMの骨組み ---------- */
 
-.vb-hud {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 18px;
-  background: var(--ha-surface);
+body:has(.vb-dm) #app {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+body:has(.vb-dm) .site-footer {
+  display: none;
+}
+
+/* 画面の高さに収め、スレッドだけを内側でスクロールさせる。--vb-dm-top は online.js が測る。 */
+.vb-dm {
+  position: relative;
+  display: flex;
+  width: 100%;
+  max-width: 720px;
+  height: calc(100dvh - var(--vb-dm-top, 120px) - 12px);
+  min-height: 480px;
+  flex-direction: column;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 22px;
+  background: var(--ha-ground);
   box-shadow: inset 0 0 0 1px var(--vs-line-soft);
 }
 
-.vb-hud-player {
-  --side: var(--vs-violet);
-  --side-hp: var(--vs-rose);
-  position: relative;
+.vb-dm-icon {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+}
+
+/* DMヘッダー：相手の名前と口調、ROUND、ふたりの理性 */
+.vb-dm-head {
+  display: grid;
+  flex: none;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--ha-surface);
+  box-shadow: 0 1px 0 var(--vs-line-soft);
+}
+
+.vb-dm-who {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 10px;
 }
 
-.vb-hud-player.is-local {
-  --side: var(--vs-rose);
-  --side-hp: var(--vs-mint);
-}
-
-.vb-hud-player.is-right {
-  flex-direction: row-reverse;
-  text-align: right;
-}
-
-.vb-hud .battle-avatar {
-  width: 40px;
-  height: 40px;
-  border: 0;
-  font-size: 0.9rem;
-  box-shadow: 0 0 0 1.5px var(--side);
-}
-
-.vb-hud-info {
+.vb-dm-avatar-wrap {
   position: relative;
+  flex: none;
+}
+
+.vb-dm-head .battle-avatar {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  font-size: 0.95rem;
+  box-shadow: 0 0 0 2px var(--vs-violet);
+}
+
+.vb-dm-avatar-wrap .battle-avatar.is-default,
+.vb-msg-avatar.battle-avatar.is-default {
+  background: radial-gradient(circle at 35% 30%, #cbb8ff, #3a2380 75%);
+}
+
+.vb-dm-avatar-mark {
+  position: absolute;
+  right: -5px;
+  bottom: -3px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ha-surface);
+}
+
+.vb-dm-avatar-mark .chat-persona-mark {
+  margin: 0;
+}
+
+.vb-dm-name {
+  display: grid;
   min-width: 0;
   flex: 1;
+  gap: 3px;
 }
 
-.vb-hud-name {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.vb-dm-name b {
   overflow: hidden;
-  font-size: 0.8rem;
-  line-height: 1.25;
+  font-size: 1rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.is-right .vb-hud-name {
-  justify-content: flex-end;
+.vb-dm-name small {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  color: var(--vs-mist);
+  font-size: 0.74rem;
 }
 
-.vb-hud-name b {
-  overflow: hidden;
-  font-weight: 800;
-  text-overflow: ellipsis;
+.vb-dm-presence.connection-pill {
+  min-height: 20px;
+  padding: 2px 8px;
+  font-size: 0.6rem;
+  letter-spacing: 0.02em;
 }
 
-.vb-hud-name em {
+/* 相手がつながっている時は静かに、切れた時だけ目立たせる */
+.vb-dm-presence.connected {
+  display: none;
+}
+
+.vb-dm-round {
   flex: none;
-  padding: 2px 5px;
+  color: var(--vs-mist);
+  font: 500 0.82rem/1 var(--vs-font-number);
+  letter-spacing: 0.06em;
+}
+
+.vb-dm-round b {
+  color: var(--vs-pearl);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.vb-dm-gauges {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.vb-dm-gauge {
+  --side-hp: var(--vs-rose);
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.vb-dm-gauge.is-local {
+  --side-hp: var(--vs-mint);
+}
+
+.vb-dm-gauge-label {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--vs-mist);
+  font-size: 0.7rem;
+}
+
+.vb-dm-gauge-label > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-dm-gauge-label em.is-sample {
+  margin-left: 6px;
+  padding: 1px 5px;
   border-radius: 4px;
-  color: var(--vs-rose-soft);
-  background: rgba(255, 63, 134, 0.14);
+  color: var(--vs-gold);
+  background: rgba(230, 193, 122, 0.14);
   font: 600 0.56rem/1 var(--vs-font-number);
   font-style: normal;
   letter-spacing: 0.08em;
 }
 
-.vb-hud-name em.is-sample {
-  color: var(--vs-gold);
-  background: rgba(230, 193, 122, 0.14);
-}
-
-.vb-hud-name em.is-streak {
-  color: var(--vs-gold-hi);
-  background: rgba(230, 193, 122, 0.1);
-}
-
-/* 展示実績は名前の下に小さく。右側のプレイヤーは右寄せ。 */
-.vb-hud-info .match-achievement-showcase.is-hud {
-  margin: 4px 0 0;
-}
-
-.vb-hud-player.is-right .match-achievement-showcase.is-hud .achievement-badges {
-  justify-content: flex-end;
-}
-
-.vb-hud-player.is-right .match-achievement-showcase.is-hud .match-danwaku-badge {
-  justify-self: end;
-}
-
-.vb-vs-status .online-status-details > .match-achievement-showcase,
-.vb-vs-status .match-achievement-showcase.is-match-found {
-  width: 100%;
-  justify-items: center;
+.vb-dm-gauge .match-achievement-showcase.is-hud {
+  margin: 0;
 }
 
 .vb-hp {
   position: relative;
   height: 6px;
-  margin-top: 6px;
   overflow: hidden;
   border-radius: 3px;
   background: var(--ha-bubble-theirs);
@@ -257,10 +312,6 @@
   position: absolute;
   inset: 0;
   transform-origin: left center;
-}
-
-.is-right .vb-hp i {
-  transform-origin: right center;
 }
 
 .vb-hp-ghost {
@@ -282,7 +333,7 @@
 }
 
 .vb-hp-value {
-  margin-top: 4px;
+  flex: none;
   color: var(--vs-mist);
   font: 500 0.7rem/1 var(--vs-font-number);
   letter-spacing: 0.04em;
@@ -290,45 +341,19 @@
 
 .vb-hp-value b {
   color: var(--vs-pearl);
-  font-size: 0.86rem;
+  font-size: 0.9rem;
   font-weight: 600;
-}
-
-.vb-round {
-  line-height: 1;
-  text-align: center;
-}
-
-.vb-round small {
-  display: block;
-  color: var(--vs-mist);
-  font: 700 0.56rem/1 var(--vs-font-body);
-  letter-spacing: 0.14em;
-}
-
-.vb-round strong {
-  font: 600 1.7rem/1.1 var(--vs-font-number);
-}
-
-.vb-round span {
-  color: var(--vs-dim);
-  font-size: 0.85rem;
 }
 
 .vb-damage-pop {
   position: absolute;
-  top: -10px;
-  left: 12%;
+  top: -14px;
+  right: 36px;
   opacity: 0;
   pointer-events: none;
   color: var(--vs-danger);
-  font: 600 1.7rem/1 var(--vs-font-number);
+  font: 600 1.5rem/1 var(--vs-font-number);
   text-shadow: 0 2px 0 #000;
-}
-
-.is-right .vb-damage-pop {
-  right: 12%;
-  left: auto;
 }
 
 .vb-damage-pop.is-shown {
@@ -342,46 +367,17 @@
   100% { opacity: 0; transform: translateY(-18px) scale(1); }
 }
 
-.online-room-strip.vb-room-strip {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  margin: -4px 0 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--vs-dim);
-  font: 500 0.64rem/1 var(--vs-font-number);
-  letter-spacing: 0.08em;
-}
-
-.vb-room-id {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vb-room-strip .connection-pill {
-  min-height: 22px;
-  padding: 3px 8px;
-  font-size: 0.58rem;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-
 .vb-menu {
   position: relative;
-  margin-left: auto;
+  flex: none;
 }
 
 .vb-menu summary {
   display: grid;
-  width: 42px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
   place-items: center;
-  border-radius: 15px;
+  border-radius: 14px;
   cursor: pointer;
   color: var(--vs-mist);
   background: rgba(255, 255, 255, 0.07);
@@ -447,222 +443,470 @@
   color: var(--vs-danger);
 }
 
-/* ---------- ステージカード ---------- */
+.vb-menu-room {
+  margin: 4px 12px 6px;
+  color: var(--vs-mist);
+  font: 500 0.66rem/1.5 var(--vs-font-number);
+  letter-spacing: 0.06em;
+}
 
-.vb-card {
+/* スレッド：全ラウンドの出来事とチャットを、起きた順に積む */
+.vb-dm-thread {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px 8px;
+  scrollbar-width: thin;
+  container-type: size;
+}
+
+.vb-dm-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.vb-dm-item {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.vb-dm-item .ha-divider {
+  margin: 8px 0 2px;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.vb-dm .ha-msg-body {
+  max-width: min(82%, 420px);
+}
+
+.vb-dm .vb-msg-avatar.battle-avatar {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  font-size: 0.7rem;
+  box-shadow: 0 0 0 1.5px var(--vs-violet);
+}
+
+.vb-dm-from {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--vs-mist);
+  font-size: 0.68rem;
+  line-height: 1.3;
+}
+
+.ha-msg.is-mine .vb-dm-from {
+  justify-content: flex-end;
+}
+
+/* 口調の吹き出し。口調の変数（chat-persona-*）がない時は通常の吹き出しの色 */
+.vb-dm-bubble {
   position: relative;
   isolation: isolate;
   display: block;
-  width: 100%;
+  width: fit-content;
   max-width: 100%;
-  aspect-ratio: 2 / 3;
+  margin: 0;
+  padding: 9px 13px;
+  border: var(--chat-border-width, 0) var(--chat-border-style, solid) var(--chat-border, transparent);
+  border-radius: var(--chat-radius, 16px 16px 16px 4px);
+  color: var(--chat-text, var(--vs-pearl));
+  background: var(--chat-surface, var(--ha-bubble-theirs));
+  box-shadow: var(--chat-shadow, none);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.ha-msg.is-mine .vb-dm-bubble:not([class*="chat-persona-"]) {
+  border-radius: 16px 16px 4px 16px;
+  background: var(--ha-bubble-mine);
+}
+
+.vb-dm-bubble::after {
+  position: absolute;
+  z-index: 2;
+  top: -11px;
+  right: -7px;
+  color: var(--chat-charm-color, #fff);
+  font-size: 0.82rem;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+
+/* 自分が貼った1枚は、画像を出さずに「貼った」印とひとことだけ。押すと自分だけ確認できる。 */
+.vb-dm-sent {
+  display: grid;
+  min-height: 44px;
+  gap: 3px;
+  cursor: zoom-in;
+  font: inherit;
+}
+
+.vb-dm-sent:disabled {
+  cursor: default;
+}
+
+.vb-dm-sent-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--vs-rose-soft);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.vb-dm-sent-caption {
+  font-size: 0.9rem;
+}
+
+.vb-dm-sent:focus-visible,
+.vb-dm-photo:focus-visible {
+  outline: 2px solid var(--vs-gold-hi);
+  outline-offset: 3px;
+}
+
+/* 相手が貼ってきた1枚。画像の形のまま、DMの写真のように見せる */
+.vb-dm-photo {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
   overflow: hidden;
-  border-radius: 16px;
+  border: 0;
+  border-radius: 18px 18px 18px 6px;
+  cursor: zoom-in;
   background: #0b070d;
-  box-shadow: 0 0 0 1px var(--vs-line-soft), 0 14px 30px -12px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 0 1.5px rgba(255, 79, 160, 0.55), 0 0 22px rgba(255, 79, 160, 0.22);
 }
 
-.vb-card-fill {
-  position: absolute;
-  top: -12%;
-  left: -12%;
-  width: 124%;
-  max-width: none;
-  height: 124%;
-  object-fit: cover;
-  filter: blur(18px) saturate(1.3) brightness(0.5);
-}
-
-.vb-card-fill.is-small {
-  filter: blur(7px) saturate(1.3) brightness(0.5);
-}
-
-.vb-card-image {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+.vb-dm-photo img {
+  display: block;
+  width: auto;
+  max-width: min(100%, 360px);
+  height: auto;
+  /* 届いた1枚とひとことが、スレッドの見えている高さに収まるようにする */
+  max-height: min(46dvh, 420px);
+  max-height: min(70cqh, 420px);
   object-fit: contain;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
 
-.vb-card-frame {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow: inset 0 0 0 1px rgba(248, 238, 242, 0.12);
+.vb-dm-photo.is-gone {
+  padding: 16px 18px;
+  color: var(--vs-mist);
+  font-size: 0.76rem;
+  cursor: default;
 }
 
-.vb-card-ring,
-.vb-card.is-perfect::after {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  padding: 3px;
-  border-radius: inherit;
-  content: "";
-  pointer-events: none;
-  background: var(--vs-gold);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+/* 届いた時だけ、メッセージが下から入ってくる */
+.vb-dm[data-fx="pending"] .vb-dm-item.is-arriving,
+.vb-dm[data-fx="play"] .vb-dm-item.is-arriving:not(.is-in) {
+  opacity: 0;
 }
 
-.vb-card-signature {
-  position: absolute;
-  z-index: 4;
-  top: 10px;
-  left: 50%;
-  padding: 3px 8px;
-  border-radius: 999px;
-  color: var(--ha-ink);
-  background: var(--vs-gold);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
-  font: 800 0.56rem/1.2 var(--vs-font-body);
-  letter-spacing: 0.12em;
-  white-space: nowrap;
-  transform: translateX(-50%);
+.vb-dm-item.is-arriving.is-in {
+  animation: vb-dm-arrive calc(520ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
 }
 
-.vb-card.is-empty {
-  background: var(--vs-night-2);
+.vb-dm-item.is-scores.is-arriving.is-in {
+  animation: none;
 }
 
-.vb-card.is-critical {
-  box-shadow: 0 0 0 2px var(--vs-rose), 0 0 28px rgba(255, 63, 134, 0.45), 0 18px 36px -10px rgba(0, 0, 0, 0.8);
+.vb-dm-item.is-scores.is-arriving.is-in > * {
+  animation: vb-dm-arrive calc(420ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
 }
 
-.vb-card.is-critical::before {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  border-radius: inherit;
-  content: "";
-  pointer-events: none;
-  box-shadow: inset 0 0 26px rgba(255, 63, 134, 0.8);
-  animation: vb-pulse 1.1s ease-in-out infinite alternate;
+.vb-dm-item.is-scores.is-arriving.is-in > :nth-child(3) { animation-delay: calc(220ms * var(--vb-fx-speed, 1)); }
+.vb-dm-item.is-scores.is-arriving.is-in > :nth-child(4) { animation-delay: calc(560ms * var(--vb-fx-speed, 1)); }
+.vb-dm-item.is-scores.is-arriving.is-in > :nth-child(n + 5) { animation-delay: calc(760ms * var(--vb-fx-speed, 1)); }
+
+@keyframes vb-dm-arrive {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
 }
 
-.vb-card.is-perfect {
-  box-shadow: 0 0 0 2px var(--vs-gold), 0 18px 36px -10px rgba(0, 0, 0, 0.8);
-}
-
-@keyframes vb-pulse {
-  from { opacity: 0.3; }
-  to { opacity: 1; }
-}
-
-.vb-seal {
-  position: absolute;
-  z-index: 6;
-  top: 50%;
-  left: 50%;
+/* 点数の吹き出し：返した点数と、相手から返ってきた点数 */
+.vb-dm-score-bubble {
   display: grid;
-  width: 104px;
-  height: 104px;
-  margin: -52px 0 0 -52px;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--ha-ink);
-  background: var(--vs-rose);
-  box-shadow: 0 0 0 3px var(--ha-ground), 0 10px 24px rgba(0, 0, 0, 0.6);
-  font: 400 0.9rem/1 var(--ha-font-display);
-  letter-spacing: 0.04em;
-  transform: rotate(-12deg);
-  animation: vb-seal-in calc(380ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both;
+  min-width: 132px;
+  gap: 4px;
 }
 
-.vb-seal.is-small {
-  width: 56px;
-  height: 56px;
-  margin: -28px 0 0 -28px;
-  font-size: 0.56rem;
+.vb-dm-score-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
-@keyframes vb-seal-in {
-  from { opacity: 0; transform: rotate(-30deg) scale(2.2); }
+.vb-dm-score-head .ha-score-number {
+  font-size: 1.9rem;
 }
 
-/* めくれるカード */
-.vb-flip {
-  position: relative;
-  perspective: 1100px;
+.vb-dm-score-word {
+  padding: 2px 8px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px currentColor;
+  font-size: 0.68rem;
+  font-weight: 800;
 }
 
-.vb-flip-inner {
-  position: relative;
-  aspect-ratio: 2 / 3;
-  transform-style: preserve-3d;
-  transition: transform calc(560ms * var(--vb-fx-speed, 1)) var(--vs-ease-out);
+.vb-dm-score-bubble.is-low .vb-dm-score-word { color: #d9c8dc; }
+.vb-dm-score-bubble.is-mid .vb-dm-score-word { color: var(--vs-gold); }
+.vb-dm-score-bubble.is-high .vb-dm-score-word { color: #ff8ab6; }
+
+.vb-dm-score.is-draft .vb-dm-score-bubble {
+  outline: 1.5px dashed var(--vs-rose-soft);
+  outline-offset: 2px;
 }
 
-.vb-flip.is-open .vb-flip-inner,
-.vb-screen:not([data-fx]) .vb-flip-inner {
-  transform: rotateY(180deg);
+.vb-dm-score .ha-meter10 {
+  width: 150px;
 }
 
-.vb-flip-face {
-  position: absolute;
-  inset: 0;
-  -webkit-backface-visibility: hidden;
-  backface-visibility: hidden;
+.ha-msg.is-mine.vb-dm-score .ha-meter10 {
+  align-self: flex-end;
 }
 
-.vb-flip-face > * {
-  width: 100%;
-  height: 100%;
+.vb-dm-outcome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 2px 0 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  font-size: 0.84rem;
 }
 
-.vb-flip-face.is-front {
+.vb-dm-outcome.is-remote {
+  box-shadow: inset 0 0 0 1px rgba(255, 63, 134, 0.4);
+}
+
+.vb-dm-outcome.is-local {
+  box-shadow: inset 0 0 0 1px rgba(111, 227, 207, 0.4);
+}
+
+.vb-dm-outcome b {
+  font-family: var(--vs-font-number);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.vb-dm-outcome.is-remote b { color: #ff8ab6; }
+.vb-dm-outcome.is-local b { color: var(--vs-mint); }
+
+.vb-dm-outcome em {
+  margin-left: 6px;
+  color: var(--vs-danger);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.vb-dm-pursuit .vb-dm-bubble {
+  font-weight: 700;
+}
+
+/* チャットの吹き出しは、DMでは自分を右・相手を左に置く */
+.vb-dm-chat.chat-message {
+  max-width: 88%;
+  margin: 0;
+}
+
+.vb-dm-chat.chat-message p {
+  font-size: 0.9rem;
+}
+
+.vb-dm-chat.is-mine.chat-message > small {
+  display: none;
+}
+
+.vb-dm-typing,
+.vb-dm-status {
+  padding: 2px 0 4px;
+}
+
+.vb-dm-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--vs-rose-soft);
+  font-size: 0.78rem;
+}
+
+.vb-dm-status small {
+  color: var(--vs-mist);
+  font: 500 0.7rem/1 var(--vs-font-number);
+}
+
+.vb-dm-transfer {
+  width: 120px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.vb-dm-transfer i {
   display: block;
+  height: 100%;
+  background: var(--vs-rose-soft);
+  transform: scaleX(var(--transfer, 0));
+  transform-origin: left;
+  transition: transform 160ms linear;
+}
+
+.vb-dm .finish-reply-slot:empty {
+  display: none;
+}
+
+/* 上を読んでいる間に新しいメッセージが来たら、下へ戻るボタンを出す */
+.vb-dm-jump {
+  position: sticky;
+  z-index: 5;
+  bottom: 4px;
+  flex: none;
+  align-self: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 18px;
+  cursor: pointer;
+  color: var(--ha-ink);
+  background: var(--vs-rose-soft);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.vb-dm-jump[hidden] {
+  display: none;
+}
+
+/* その時の操作枠 */
+.vb-dm-dock {
+  flex: none;
+  max-height: 62%;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border-radius: 20px 20px 0 0;
+  background: var(--ha-raised);
+  box-shadow: 0 -1px 0 rgba(255, 63, 134, 0.35), 0 -14px 30px rgba(0, 0, 0, 0.35);
+}
+
+.vb-dm-dock .vb-actions .button {
+  min-height: 50px;
+  max-width: none;
+}
+
+.vb-dm-alert {
+  display: grid;
+  gap: 10px;
+}
+
+.vb-dm-alert p {
+  margin: 0;
+  color: var(--vs-danger);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+/* チャットの入力欄。言い方・ことば・スタンプは左のボタンから開く */
+.vb-dm-composer {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: var(--ha-raised);
+  box-shadow: 0 -1px 0 var(--vs-line-soft);
+}
+
+.vb-dm-composer .chat-form {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  gap: 8px;
   padding: 0;
   border: 0;
-  border-radius: 14px;
-  cursor: zoom-in;
-  background: none;
-  transform: rotateY(180deg);
 }
 
-.vb-screen[data-fx] .vb-flip:not(.is-open) .vb-flip-face.is-front {
-  pointer-events: none;
+.vb-dm-composer .chat-input {
+  min-width: 0;
+  min-height: 44px;
+  flex: 1;
+  border-radius: 22px;
+  background: var(--ha-ground);
+  font-size: 0.9rem;
 }
 
-.vb-flip.is-tremble {
-  animation: vb-tremble calc(150ms * var(--vb-fx-speed, 1)) linear 2;
+.vb-dm-composer .chat-form .button {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 22px;
 }
 
-@keyframes vb-tremble {
-  0%, 100% { transform: none; }
-  25% { transform: translateX(-3px) rotate(-1deg); }
-  75% { transform: translateX(3px) rotate(1deg); }
-}
-
-.vb-burst {
-  position: absolute;
-  z-index: 5;
-  inset: -30%;
+.vb-dm-tools summary {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
   border-radius: 50%;
-  opacity: 0;
-  pointer-events: none;
-  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.95), rgba(255, 226, 170, 0.6) 30%, rgba(255, 63, 134, 0.25) 55%, transparent 72%);
-  mix-blend-mode: screen;
+  cursor: pointer;
+  color: var(--vs-rose-soft);
+  box-shadow: inset 0 0 0 1px rgba(255, 63, 134, 0.45);
+  list-style: none;
 }
 
-.vb-flip.is-burst .vb-burst {
-  animation: vb-burst calc(700ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
+.vb-dm-tools summary::-webkit-details-marker {
+  display: none;
 }
 
-@keyframes vb-burst {
-  0% { opacity: 0; transform: scale(0.2); }
-  20% { opacity: 1; }
-  100% { opacity: 0; transform: scale(1.5); }
+.vb-dm-tools[open] summary {
+  color: var(--ha-ink);
+  background: var(--vs-rose-soft);
 }
 
-/* ---------- マッチング成立（VS） ---------- */
+.vb-dm-tools-panel {
+  position: absolute;
+  z-index: 6;
+  right: 10px;
+  bottom: calc(100% + 8px);
+  left: 10px;
+  display: grid;
+  gap: 4px;
+  padding: 8px 0 10px;
+  border-radius: 18px;
+  background: rgba(31, 20, 35, 0.98);
+  box-shadow: 0 0 0 1px var(--vs-line), 0 18px 40px rgba(0, 0, 0, 0.6);
+  animation: vs-fade-up 200ms var(--vs-ease-out) both;
+}
+
+.vb-dm-tools-panel .chat-effect-picker {
+  border-top: 0;
+}
+
+/* ---------- マッチ成立（VS） ---------- */
 
 .vb-vs-stage {
   position: relative;
@@ -719,12 +963,10 @@
 }
 
 /* 初期アイコンも、あなた＝ローズ・相手＝バイオレットにそろえる */
-.vb-hud-player.is-local .battle-avatar.is-default,
 .vb-vs-half.is-local .battle-avatar.is-default {
   background: radial-gradient(circle at 35% 30%, var(--vs-rose-soft), var(--vs-wine) 75%);
 }
 
-.vb-hud-player.is-remote .battle-avatar.is-default,
 .vb-vs-half.is-remote .battle-avatar.is-default {
   background: radial-gradient(circle at 35% 30%, #cbb8ff, #3a2380 75%);
 }
@@ -842,13 +1084,22 @@
   gap: 6px;
 }
 
-/* ---------- 画像選択 ---------- */
+/* ---------- 次に貼る1枚（手札シート） ---------- */
+
+.vb-dm-pick {
+  display: grid;
+  gap: 10px;
+}
 
 .vb-select-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
-  gap: 8px 12px;
+  gap: 6px 12px;
+}
+
+.vb-select-head .vb-title {
+  font-size: 1.2rem;
 }
 
 .vb-timer {
@@ -861,15 +1112,15 @@
 .vb-timer strong {
   display: inline-block;
   min-width: 1.3em;
-  font: 600 2.4rem/1 var(--vs-font-number);
+  font: 600 2.1rem/1 var(--vs-font-number);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
 .vb-timer span {
   color: var(--vs-mist);
-  font: 600 0.62rem/1 var(--vs-font-number);
-  letter-spacing: 0.2em;
+  font-size: 0.7rem;
+  font-weight: 700;
 }
 
 .vb-select-head.pending .vb-timer strong {
@@ -909,32 +1160,11 @@
   background: var(--vs-rose);
 }
 
-.vb-select-stage {
-  display: flex;
-  justify-content: center;
-}
-
-.vb-select-preview {
-  height: clamp(220px, 42dvh, 520px);
-  max-width: 100%;
-  aspect-ratio: 2 / 3;
-  animation: vb-pop calc(240ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
-}
-
-.vb-select-preview > * {
-  width: 100%;
-  height: 100%;
-}
-
-@keyframes vb-pop {
-  from { opacity: 0.6; transform: scale(0.94); }
-}
-
 .vb-hand {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 12px 2px 6px;
+  padding: 10px 2px 4px;
   scrollbar-width: none;
 }
 
@@ -942,23 +1172,15 @@
   display: none;
 }
 
-.vb-hand > :first-child {
-  margin-left: auto;
-}
-
-.vb-hand > :last-child {
-  margin-right: auto;
-}
-
 .vb-hand-card {
   position: relative;
   flex: none;
-  width: 60px;
-  aspect-ratio: 2 / 3;
+  width: 72px;
+  aspect-ratio: 3 / 4;
   overflow: hidden;
   padding: 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: 12px;
   cursor: pointer;
   background: #000;
   box-shadow: 0 0 0 1px var(--vs-line-soft);
@@ -978,11 +1200,12 @@
   right: 0;
   bottom: 0;
   left: 0;
-  padding: 10px 0 3px;
+  padding: 10px 0 4px;
   color: var(--vs-pearl);
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
-  font: 600 0.54rem/1 var(--vs-font-number);
-  letter-spacing: 0.1em;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
   text-align: center;
 }
 
@@ -995,8 +1218,8 @@
 }
 
 .vb-hand-card.is-selected {
-  box-shadow: 0 0 0 2px var(--vs-rose), 0 8px 18px rgba(255, 63, 134, 0.3);
-  transform: translateY(-8px) !important;
+  box-shadow: 0 0 0 3px var(--vs-rose), 0 8px 18px rgba(255, 63, 134, 0.35);
+  transform: translateY(-6px);
 }
 
 .vb-hand-card:disabled {
@@ -1012,242 +1235,48 @@
 }
 
 .vb-hand-card.is-used span {
-  color: var(--vs-dim);
+  color: var(--vs-mist);
 }
 
-.vb-hand-signature {
-  position: absolute;
-  top: 3px;
-  right: 5px;
-  color: var(--vs-gold-hi);
-  font-size: 0.7rem;
-  font-style: normal;
-  text-shadow: 0 0 6px var(--vs-gold);
-}
-
-/* ---------- 相手待ち・転送 ---------- */
-
-.vb-wait-head {
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  text-align: center;
-}
-
-.vb-wait-stage {
-  position: relative;
+.vb-dm-caption-row {
   display: flex;
-  min-height: clamp(260px, 40dvh, 440px);
+  min-width: 0;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
 }
 
-.vb-wait-back {
-  position: relative;
-  width: clamp(150px, 42vw, 220px);
-}
-
-.vb-wait-back::before {
-  position: absolute;
-  inset: -18px;
-  border-radius: 28px;
-  content: "";
-  background: radial-gradient(closest-side, rgba(255, 63, 134, 0.5), transparent);
-  animation: vb-breathe 2.4s ease-in-out infinite;
-}
-
-@keyframes vb-breathe {
-  50% { opacity: 0.25; transform: scale(0.94); }
-}
-
-.vb-wait-mine {
-  position: absolute;
-  bottom: 2%;
-  left: 4%;
-  width: clamp(72px, 20vw, 110px);
-  transform: rotate(-7deg);
-}
-
-.vb-wait-stage.is-pair {
-  gap: 18px;
-}
-
-.vb-wait-pair-card {
-  position: relative;
-  width: clamp(120px, 36vw, 200px);
-}
-
-.vb-wait-pair-badge {
-  position: absolute;
-  z-index: 5;
-  top: 50%;
-  left: 50%;
-  display: grid;
-  width: 56px;
-  height: 56px;
-  margin: -28px 0 0 -28px;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--vs-pearl);
-  background: rgba(15, 9, 19, 0.85);
-  box-shadow: 0 0 0 1px var(--vs-line-soft);
-  font: 400 1.6rem/1 var(--ha-font-display);
-  animation: vb-breathe 2.4s ease-in-out infinite;
-}
-
-.vb-transfer {
-  width: min(320px, 80%);
-  height: 3px;
-  margin: 0 auto;
-  overflow: hidden;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.vb-transfer i {
-  display: block;
-  height: 100%;
-  background: var(--vs-rose-soft);
-  transform: scaleX(var(--transfer, 0));
-  transform-origin: left;
-  transition: transform 160ms linear;
-}
-
-/* ---------- 画像公開 ---------- */
-
-/* 相手（左）とあなた（右）の吹き出しを、少し段違いに並べる */
-.vb-reveal-stage {
-  position: relative;
-  display: grid;
-  width: min(560px, 100%);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 12px;
-  margin: 0 auto;
-}
-
-.vb-reveal-dim {
-  position: fixed;
-  z-index: 0;
-  inset: 0;
-  opacity: 0;
-  pointer-events: none;
-  background: rgba(0, 0, 0, 0.6);
-  transition: opacity calc(300ms * var(--vb-fx-speed, 1));
-}
-
-.vb-screen.is-dimmed .vb-reveal-dim {
-  opacity: 1;
-}
-
-.vb-reveal-col {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  min-width: 0;
-  justify-items: start;
-  gap: 6px;
-}
-
-.vb-reveal-col.is-local {
-  justify-items: end;
-  margin-top: 56px;
-}
-
-.vb-reveal-col .vb-flip {
-  width: 100%;
-}
-
-.vb-reveal-col .vb-flip-inner {
-  aspect-ratio: 4 / 5;
-}
-
-.vb-reveal-col .vb-card,
-.vb-reveal-col .vs-card-back,
-.vb-reveal-col .vb-flip-face.is-front {
-  border-radius: 18px 18px 18px 4px;
-}
-
-.vb-reveal-col.is-local .vb-card,
-.vb-reveal-col.is-local .vs-card-back,
-.vb-reveal-col.is-local .vb-flip-face.is-front {
-  border-radius: 18px 18px 4px 18px;
-}
-
-.vb-plate {
+.vb-dm-caption-choices {
   display: flex;
-  max-width: 100%;
-  align-items: baseline;
+  min-width: 0;
+  flex: 1;
   gap: 6px;
-  line-height: 1.25;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.vb-plate b {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 0.84rem;
-  font-weight: 800;
-  text-overflow: ellipsis;
+.vb-dm-caption-choices::-webkit-scrollbar {
+  display: none;
+}
+
+.vb-dm-caption-choices .vb-reaction-chip {
+  flex: none;
   white-space: nowrap;
 }
 
-.vb-plate small {
+.vb-hand-zoom {
   flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 14px;
+  cursor: zoom-in;
   color: var(--vs-mist);
-  font-size: 0.68rem;
-}
-
-.is-local .vb-plate b {
-  color: var(--vs-rose-soft);
-}
-
-.is-remote .vb-plate b {
-  color: #c9bcff;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 /* ---------- 採点 ---------- */
-
-.vb-thread {
-  display: grid;
-  gap: 12px;
-}
-
-.vb-thread .battle-avatar,
-.vb-result-stage .battle-avatar {
-  width: 28px;
-  height: 28px;
-  flex: none;
-  border: 0;
-  font-size: 0.7rem;
-  box-shadow: 0 0 0 1.5px var(--vs-violet);
-}
-
-.vb-score-card {
-  display: block;
-  width: min(64vw, 280px);
-  padding: 0;
-  border: 0;
-  border-radius: 18px 18px 18px 4px;
-  cursor: zoom-in;
-  background: none;
-}
-
-.vb-score-card .vb-card {
-  aspect-ratio: 4 / 5;
-  border-radius: inherit;
-}
-
-.vb-own-post .vb-card {
-  width: min(34vw, 150px);
-  aspect-ratio: 4 / 5;
-  border-radius: 16px 16px 4px 16px;
-}
-
-.ha-msg.vb-score-draft .ha-bubble {
-  background: var(--ha-surface);
-  outline: 1.5px dashed var(--vs-rose-soft);
-  outline-offset: -1.5px;
-}
 
 .ha-score-number.is-low { color: #c7b6cb; }
 .ha-score-number.is-mid { color: var(--vs-gold); }
@@ -1261,27 +1290,26 @@
 
 .vb-composer {
   display: grid;
-  gap: 14px;
-  margin-top: 4px;
-  padding: 18px 16px 20px;
-  border-radius: 24px;
-  background: var(--ha-surface);
-  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  gap: 12px;
 }
 
 .vb-composer-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  gap: 6px 10px;
 }
 
 .vb-composer-title {
   flex: 1 1 auto;
   margin: 0;
-  font-size: 1rem;
-  font-weight: 800;
-  line-height: 1.4;
+  font: 400 1.05rem/1.4 var(--ha-font-display);
+  letter-spacing: 0.02em;
+}
+
+.vb-dm-hint {
+  color: var(--vs-mist);
+  font-size: 0.7rem;
 }
 
 .vb-band-chip {
@@ -1290,7 +1318,7 @@
   align-items: center;
   padding: 0 10px;
   border-radius: 14px;
-  background: var(--ha-raised);
+  background: var(--ha-surface);
   font-size: 0.75rem;
   font-weight: 800;
 }
@@ -1299,25 +1327,25 @@
 .vb-band-chip.is-mid { color: var(--vs-gold); }
 .vb-band-chip.is-high { color: #ff6fa3; }
 
-/* 1〜10点のボタンが、そのままメーターになる */
+/* 1〜10点のボタンが、そのままメーターになる。スマホは5つずつ2段。 */
 .vb-score-pad {
   display: grid;
   width: 100%;
   grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 3px;
+  gap: 4px;
   margin: 0;
 }
 
 .vb-score-button {
   min-width: 0;
-  height: 48px;
+  height: 46px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
   color: var(--vs-mist);
   background: #211526;
-  font: 600 1rem/1 var(--vs-font-number);
+  font: 600 1.05rem/1 var(--vs-font-number);
   transition: background-color 120ms ease, box-shadow 120ms ease;
 }
 
@@ -1330,7 +1358,7 @@
 .vb-score-button.is-lit.is-high { background: var(--ha-band-high); }
 
 .vb-score-button[aria-pressed="true"] {
-  box-shadow: 0 0 0 2px var(--vs-pearl);
+  box-shadow: 0 0 0 2px var(--ha-raised), 0 0 0 4px var(--vs-pearl);
 }
 
 .vb-score-button:focus-visible {
@@ -1339,255 +1367,18 @@
 }
 
 .vb-score-legend {
-  display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 3px;
-  margin-top: -6px;
+  display: flex;
+  gap: 12px;
   color: var(--vs-mist);
   font-size: 0.68rem;
   line-height: 1.35;
 }
 
-.vb-score-legend span {
-  padding-top: 4px;
-  border-top: 2px solid var(--ha-band-low);
-}
-
-.vb-score-legend .is-low { grid-column: span 6; }
-
-.vb-score-legend .is-mid {
-  grid-column: span 2;
-  border-color: var(--ha-band-mid);
-}
-
-.vb-score-legend .is-high {
-  grid-column: span 2;
-  border-color: var(--ha-band-high);
-}
+.vb-score-legend .is-mid { color: var(--vs-gold); }
+.vb-score-legend .is-high { color: #ff8ab6; }
 
 .vb-composer .vb-actions .button {
   max-width: none;
-}
-
-/* ---------- ラウンド結果 ---------- */
-
-/* 1組＝貼った画像と、採点した側から返ってきた点数の吹き出し。相手の組、あなたの組の順に並べる。 */
-.vb-result-stage {
-  position: relative;
-  display: grid;
-  width: min(560px, 100%);
-  gap: 18px;
-  margin: 0 auto;
-}
-
-.vb-result-col {
-  position: relative;
-  z-index: 2;
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-}
-
-.vb-result-card {
-  position: relative;
-  width: min(44vw, 190px);
-  transition: filter calc(300ms * var(--vb-fx-speed, 1));
-}
-
-.vb-result-card .vb-card {
-  aspect-ratio: 4 / 5;
-  border-radius: 18px 18px 18px 4px;
-}
-
-.vb-result-col.is-local .vb-result-card .vb-card {
-  border-radius: 18px 18px 4px 18px;
-}
-
-.vb-result-score {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 4px;
-  min-width: 96px;
-}
-
-.vb-result-score b {
-  font: 600 2.2rem/1 var(--vs-font-number);
-  font-variant-numeric: lining-nums tabular-nums;
-}
-
-.vb-result-score > small {
-  margin-right: 6px;
-  font-size: 0.8rem;
-}
-
-.vb-result-score.is-low b { color: #d9cadd; }
-.vb-result-score.is-mid b { color: var(--vs-gold); }
-.vb-result-score.is-high b { color: #ffc2d8; }
-
-.vb-screen.is-landed .vb-result-score b {
-  animation: vb-land calc(420ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
-}
-
-@keyframes vb-land {
-  from { transform: scale(1.5); }
-}
-
-/* 勝った組は点数の吹き出しを金で縁取り、負けた組の画像は暗く。演出中は点数が止まってから。 */
-.vb-screen:not([data-fx="pending"]):not([data-fx="play"]) .vb-result-col.is-winner .vb-result-score,
-.vb-screen.is-landed .vb-result-col.is-winner .vb-result-score {
-  box-shadow: 0 0 0 1.5px var(--vs-gold);
-}
-
-.vb-screen:not([data-fx="pending"]):not([data-fx="play"]) .vb-result-col.is-loser .vb-result-card,
-.vb-screen.is-landed .vb-result-col.is-loser .vb-result-card {
-  filter: brightness(0.6) saturate(0.7);
-}
-
-/* 勝った組の画像に、チャットのスタンプのように押す */
-.vb-stamp {
-  position: absolute;
-  z-index: 5;
-  top: 50%;
-  left: 50%;
-  padding: 6px 12px;
-  border-radius: 10px;
-  color: var(--ha-ink);
-  background: var(--vs-gold);
-  box-shadow: 0 0 0 3px var(--ha-ground);
-  font: 400 1rem/1 var(--ha-font-display);
-  white-space: nowrap;
-  pointer-events: none;
-  transform: translate(-50%, -50%) rotate(-6deg);
-}
-
-.vb-screen[data-fx="pending"] .vb-stamp,
-.vb-screen[data-fx="play"]:not(.is-hit):not(.is-critical-hit):not(.is-perfect-hit) .vb-stamp {
-  opacity: 0;
-}
-
-.vb-screen.is-hit .vb-stamp,
-.vb-screen.is-critical-hit .vb-stamp,
-.vb-screen.is-perfect-hit .vb-stamp {
-  animation: vb-stamp calc(360ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both;
-}
-
-@keyframes vb-stamp {
-  from { opacity: 0; transform: translate(-50%, -50%) rotate(-14deg) scale(2); }
-}
-
-.vb-stamp.is-critical {
-  background: var(--vs-rose);
-}
-
-.vb-stamp.is-perfect {
-  color: var(--vs-rose);
-  background: var(--vs-pearl);
-  box-shadow: 0 0 0 3px var(--ha-ground), 0 0 0 5px var(--vs-rose);
-  font-size: 1.15rem;
-}
-
-.vb-result .vb-flash {
-  z-index: 44;
-}
-
-.vb-screen.is-critical-hit .vb-flash {
-  background: var(--vs-rose);
-  animation: vb-flash calc(260ms * var(--vb-fx-speed, 1)) ease-out both;
-}
-
-.vb-screen.is-perfect-hit .vb-flash {
-  animation: vb-flash calc(340ms * var(--vb-fx-speed, 1)) ease-out both;
-}
-
-.vb-screen.is-critical-hit .vb-main {
-  animation: vb-shake calc(300ms * var(--vb-fx-speed, 1)) linear;
-}
-
-@keyframes vb-shake {
-  0%, 100% { transform: none; }
-  20% { transform: translate(-7px, 3px); }
-  40% { transform: translate(6px, -4px); }
-  60% { transform: translate(-5px, 2px); }
-  80% { transform: translate(4px, -2px); }
-}
-
-.vb-rays {
-  position: absolute;
-  z-index: 1;
-  top: 50%;
-  left: 50%;
-  width: 720px;
-  height: 720px;
-  margin: -360px 0 0 -360px;
-  opacity: 0;
-  pointer-events: none;
-  background: repeating-conic-gradient(from 0deg, rgba(255, 236, 190, 0.3) 0 5deg, transparent 5deg 15deg);
-  -webkit-mask: radial-gradient(closest-side, #000 18%, transparent 75%);
-  mask: radial-gradient(closest-side, #000 18%, transparent 75%);
-}
-
-.vb-screen.is-perfect-hit .vb-rays {
-  animation: vb-rays calc(1500ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
-}
-
-@keyframes vb-rays {
-  0% { opacity: 0; transform: rotate(0) scale(0.6); }
-  20% { opacity: 1; }
-  100% { opacity: 0; transform: rotate(40deg) scale(1.1); }
-}
-
-.vb-sparks {
-  position: absolute;
-  z-index: 6;
-  inset: -40px;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.vb-spark {
-  position: absolute;
-  top: var(--y);
-  left: var(--x);
-  width: var(--s);
-  height: var(--s);
-  border-radius: 50%;
-  opacity: 0;
-  background: var(--c);
-  box-shadow: 0 0 8px var(--c);
-  animation: vb-spark 1000ms var(--vs-ease-out) var(--d) both;
-}
-
-@keyframes vb-spark {
-  0% { opacity: 1; transform: translate(0, 0) scale(1); }
-  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.3); }
-}
-
-.vb-damage {
-  margin: 0;
-  border-color: rgba(255, 85, 102, 0.25);
-  background: rgba(255, 85, 102, 0.07);
-  font-family: var(--vs-font-number);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-align: center;
-}
-
-.vb-result .online-pursuit-lines,
-.vb-result .finish-result-badge,
-.vb-result .finish-reply-slot {
-  margin-top: 10px;
-}
-
-.vb-result .online-pursuit-call {
-  border-color: rgba(255, 63, 134, 0.3);
-  border-radius: 16px 16px 16px 4px;
-  background: rgba(255, 63, 134, 0.08);
-}
-
-.vb-result .online-pursuit-call blockquote {
-  font-family: var(--vs-font-body);
-  font-weight: 800;
 }
 
 /* ---------- 試合結果 ---------- */
@@ -1603,37 +1394,11 @@
   box-shadow: 0 0 0 1px rgba(255, 63, 134, 0.45), var(--shadow);
 }
 
-.vb-emblem {
-  position: relative;
-  display: grid;
-  width: 64px;
-  height: 64px;
-  place-items: center;
-  border: 0;
-  color: var(--vs-rose-soft);
-  background: none;
-  box-shadow: none;
-}
-
-.vb-emblem i {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: var(--vs-rose);
-  -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 87%);
-  mask: radial-gradient(closest-side, transparent 84%, #000 87%);
-}
-
-.vb-emblem span {
-  position: relative;
-  font-size: 1.5rem;
-}
-
 .vb-gameover-card > .vb-outcome {
   margin: 6px 0 0;
   color: var(--vs-rose);
-  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.6));
-  font: 400 clamp(3.6rem, 18vw, 5.6rem)/1 var(--ha-font-display);
+  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6));
+  font: 400 clamp(2.2rem, 10vw, 3.4rem)/1 var(--ha-font-display);
   animation: vb-win-in calc(600ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both;
 }
 
@@ -1654,6 +1419,7 @@
   font-family: var(--ha-font-display);
   font-weight: 400;
   letter-spacing: 0.02em;
+  text-wrap: balance;
 }
 
 .vb-gameover .final-player.winner {
@@ -1661,10 +1427,130 @@
   background: rgba(255, 63, 134, 0.08);
 }
 
-.vb-gameover .stat-box strong {
-  font-family: var(--vs-font-number);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+.vb-final-reason {
+  margin: 8px 0 0;
+  color: var(--vs-mist);
+  font-size: 0.8rem;
+}
+
+.vb-final-reason b {
+  color: var(--vs-pearl);
+  font: 600 1.6rem/1 var(--vs-font-number);
+}
+
+.vb-final-hit,
+.vb-final-words {
+  display: grid;
+  gap: 10px;
+  width: min(560px, 100%);
+  margin: 18px auto 0;
+  text-align: left;
+}
+
+.vb-final-hit h2,
+.vb-final-words h2 {
+  margin: 0;
+  color: var(--vs-rose-soft);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.vb-final-hit-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--ha-raised);
+  box-shadow: inset 0 0 0 1px rgba(255, 63, 134, 0.35);
+}
+
+.vb-final-hit-card .vb-dm-photo {
+  flex: none;
+}
+
+.vb-final-hit-card .vb-dm-photo img {
+  max-width: min(36vw, 170px);
+  max-height: 220px;
+}
+
+.vb-final-hit-body {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.vb-final-hit-score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0;
+}
+
+.vb-final-hit-score small {
+  color: var(--vs-mist);
+  font-size: 0.7rem;
+}
+
+.vb-final-hit-score .ha-score-number {
+  font-size: 1.9rem;
+}
+
+.vb-final-hit-score span {
+  color: #ff8ab6;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.vb-final-hit-reply {
+  margin: 0;
+  color: var(--vs-mist);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.vb-final-words ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vb-final-words li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--ha-ground);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+}
+
+.vb-final-words li .ha-score-number {
+  width: 2ch;
+  flex: none;
+  text-align: center;
+}
+
+.vb-final-words li div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.vb-final-words li span {
+  color: #ffe3ec;
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.vb-final-words li small {
+  color: var(--vs-mist);
+  font-size: 0.72rem;
+  line-height: 1.45;
 }
 
 .vb-confetti-layer {
@@ -1697,176 +1583,7 @@
   100% { opacity: 0; transform: translate(var(--dx), 900px) rotate(540deg); }
 }
 
-/* ---------- チャット ---------- */
-
-.vb-chat-peek {
-  display: flex;
-  width: 100%;
-  min-height: 48px;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 8px 8px 14px;
-  border: 0;
-  border-radius: 16px;
-  cursor: pointer;
-  color: var(--vs-pearl);
-  background: rgba(31, 20, 35, 0.94);
-  box-shadow: inset 0 0 0 1px var(--vs-line-soft), 0 10px 26px rgba(0, 0, 0, 0.45);
-  font-size: 0.8rem;
-  text-align: left;
-}
-
-.vb-chat-peek-text {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  color: var(--vs-mist);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vb-chat-peek-text b {
-  margin-right: 8px;
-  color: var(--vs-violet);
-}
-
-.vb-chat-peek-empty {
-  color: var(--vs-dim);
-}
-
-.vb-chat-peek-label {
-  position: relative;
-  flex: none;
-  padding: 7px 12px;
-  border-radius: 999px;
-  color: var(--vs-gold);
-  box-shadow: inset 0 0 0 1px var(--vs-line);
-  font-size: 0.74rem;
-  font-weight: 700;
-}
-
-.vb-chat-peek.has-new .vb-chat-peek-label::after {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  content: "";
-  background: var(--vs-rose);
-  box-shadow: 0 0 0 2px var(--vs-night-2), 0 0 10px var(--vs-rose);
-}
-
-.vb-chat-close {
-  display: block;
-  margin: 0 0 8px auto;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 999px;
-  cursor: pointer;
-  color: var(--vs-mist);
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.vb-chat .chat-panel {
-  border-color: var(--vs-line-soft);
-  background: rgba(14, 9, 18, 0.92);
-}
-
-/* PC：チャットは右の列に常に表示 */
-@media (min-width: 1024px) {
-  .vb-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-    gap: 28px;
-  }
-
-  .vb-chat {
-    position: sticky;
-    top: 18px;
-  }
-
-  .vb-chat-peek,
-  .vb-chat-close {
-    display: none;
-  }
-
-  .vb-chat .chat-panel {
-    min-height: 0;
-    max-height: calc(100vh - 150px);
-  }
-}
-
-/* スマホ・タブレット：チャットは下の帯から開く */
-@media (max-width: 1023px) {
-  .vb-chat {
-    position: fixed;
-    z-index: 30;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
-    pointer-events: none;
-  }
-
-  .vb-chat-peek {
-    pointer-events: auto;
-  }
-
-  .vb-chat.is-open {
-    pointer-events: auto;
-  }
-
-  .vb-chat.is-open::before {
-    position: fixed;
-    inset: 0;
-    content: "";
-    background: rgba(0, 0, 0, 0.5);
-  }
-
-  .vb-chat-sheet {
-    position: fixed;
-    z-index: 2;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    visibility: hidden;
-    max-height: 80dvh;
-    padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
-    border-radius: 22px 22px 0 0;
-    background: var(--vs-night-2);
-    box-shadow: 0 -1px 0 var(--vs-line), 0 -24px 50px rgba(0, 0, 0, 0.6);
-    transform: translateY(105%);
-    transition: transform 280ms var(--vs-ease-out), visibility 0s linear 280ms;
-  }
-
-  .vb-chat.is-open .vb-chat-sheet {
-    visibility: visible;
-    transform: none;
-    transition: transform 280ms var(--vs-ease-out), visibility 0s;
-  }
-
-  .vb-chat .chat-panel {
-    min-height: 0;
-    max-height: calc(80dvh - 70px);
-    border: 0;
-    border-radius: 16px;
-    box-shadow: none;
-  }
-
-  body:has(.vb-layout) .site-footer {
-    display: none;
-  }
-
-  body:has(.vb-layout) .toast {
-    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
-  }
-
-  body:has(.vb-layout) #app {
-    padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
-  }
-}
+/* ---------- 画面の幅ごとの調整 ---------- */
 
 @media (max-width: 760px) {
   .vb-layout {
@@ -1887,21 +1604,41 @@
     border-radius: 0;
   }
 
-  .vb-hud {
+  body:has(.vb-dm) #app {
+    width: 100%;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  body:has(.vb-dm) .player-safety-contact {
+    margin-inline: 14px;
+  }
+
+  .vb-dm {
+    height: calc(100dvh - var(--vb-dm-top, 96px));
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .vb-score-pad {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
   }
 
-  .vb-hud .battle-avatar {
-    width: 34px;
-    height: 34px;
+  .vb-score-button {
+    height: 44px;
   }
 
-  .vb-hud-name em.is-streak {
+  .vb-dm-dock {
+    padding: 10px 12px;
+  }
+
+  .vb-composer {
+    gap: 10px;
+  }
+
+  .vb-dm-gauge .match-achievement-showcase.is-hud {
     display: none;
-  }
-
-  .vb-reveal-col.is-local {
-    margin-top: 40px;
   }
 }
 
@@ -1968,13 +1705,7 @@
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 40px 100px rgba(0, 0, 0, 0.8), 0 0 80px rgba(255, 63, 134, 0.2);
 }
 
-.finish-cutin.is-signature {
-  border-color: rgba(255, 240, 201, 0.8);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 40px 100px rgba(0, 0, 0, 0.8), 0 0 90px rgba(255, 220, 150, 0.3);
-}
-
-.finish-cutin::after,
-.finish-cutin.is-signature::after {
+.finish-cutin::after {
   display: none;
 }
 
@@ -1983,30 +1714,10 @@
   filter: blur(24px) saturate(1.3) brightness(0.55);
 }
 
-.finish-cutin-shade,
-.finish-cutin.is-signature .finish-cutin-shade {
+.finish-cutin-shade {
   background:
     linear-gradient(180deg, rgba(7, 5, 10, 0.1), rgba(7, 5, 10, 0.86) 78%),
     radial-gradient(90% 70% at 30% 40%, transparent, rgba(0, 0, 0, 0.45));
-}
-
-.finish-cutin-rays {
-  position: absolute;
-  z-index: -1;
-  top: 40%;
-  left: 40%;
-  width: 1100px;
-  height: 1100px;
-  margin: -550px 0 0 -550px;
-  pointer-events: none;
-  background: repeating-conic-gradient(from 0deg, rgba(255, 236, 190, 0.2) 0 4deg, transparent 4deg 12deg);
-  -webkit-mask: radial-gradient(closest-side, #000 12%, transparent 70%);
-  mask: radial-gradient(closest-side, #000 12%, transparent 70%);
-  animation: vb-spin 18s linear infinite, vs-fade-in 600ms 300ms both;
-}
-
-@keyframes vb-spin {
-  to { transform: rotate(360deg); }
 }
 
 .finish-cutin-slash {
@@ -2042,25 +1753,48 @@
   animation: vb-finish-card 480ms var(--vs-ease-out) 300ms both;
 }
 
-.finish-cutin.is-signature .finish-cutin-image-frame {
-  box-shadow: 0 0 0 2px var(--vs-gold-hi), 0 30px 60px rgba(0, 0, 0, 0.8), 0 0 70px rgba(255, 220, 150, 0.4);
-}
-
-.finish-cutin.is-signature .finish-cutin-image-frame::after {
-  position: absolute;
-  inset: 0;
-  padding: 3px;
-  border-radius: inherit;
-  content: "";
-  pointer-events: none;
-  background: var(--vs-gold);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-}
-
 @keyframes vb-finish-card {
   from { opacity: 0; transform: translateX(40%) rotate(6deg); }
+}
+
+/* 負けた側：とどめの1枚に、相手のひとことを吹き出しで重ねる */
+.finish-cutin-caption {
+  position: absolute;
+  z-index: 2;
+  left: 14px;
+  bottom: 14px;
+  max-width: calc(100% - 28px);
+  font-size: 0.95rem;
+  animation: vs-fade-up 320ms 800ms both;
+}
+
+/* 勝った側：自分の画像は出さず、落とした相手を大きく */
+.finish-cutin-image-frame.is-fallen {
+  align-content: center;
+  gap: 10px;
+  background: radial-gradient(circle at 50% 40%, rgba(168, 139, 255, 0.22), #0b070d 70%);
+}
+
+.finish-cutin-image-frame.is-fallen .battle-avatar {
+  width: clamp(96px, 22vw, 150px);
+  height: clamp(96px, 22vw, 150px);
+  border: 0;
+  font-size: clamp(2rem, 6vw, 3.2rem);
+  box-shadow: 0 0 0 3px var(--vs-violet), 0 0 40px rgba(168, 139, 255, 0.45);
+}
+
+.finish-cutin-image-frame.is-fallen .battle-avatar.is-default {
+  background: radial-gradient(circle at 35% 30%, #cbb8ff, #3a2380 75%);
+}
+
+.finish-cutin-fallen-name {
+  font: 400 clamp(1.2rem, 3vw, 1.6rem)/1.2 var(--ha-font-display);
+}
+
+.finish-cutin-image-frame.is-fallen small {
+  color: var(--vs-danger);
+  font: 600 0.9rem/1 var(--vs-font-number);
+  letter-spacing: 0.08em;
 }
 
 .finish-cutin-label {
@@ -2079,16 +1813,6 @@
   font: 400 clamp(3rem, 8vw, 5.2rem)/1 var(--ha-font-display);
 }
 
-.finish-cutin.is-signature .finish-cutin-word::before {
-  width: 100%;
-  margin-bottom: 4px;
-  content: "SIGNATURE";
-  color: var(--vs-gold);
-  font: 800 0.8rem/1 var(--vs-font-body);
-  letter-spacing: 0.3em;
-  animation: vs-fade-in 300ms 500ms both;
-}
-
 .finish-cutin-word span {
   display: inline-block;
   color: transparent;
@@ -2097,13 +1821,6 @@
   background-clip: text;
   filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6)) drop-shadow(0 0 16px rgba(255, 63, 134, 0.6));
   animation: vb-letter 300ms var(--vs-ease-snap) calc(500ms + var(--i) * 45ms) both;
-}
-
-.finish-cutin.is-signature .finish-cutin-word span {
-  background: linear-gradient(180deg, #fff3d2, var(--vs-gold));
-  -webkit-background-clip: text;
-  background-clip: text;
-  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6)) drop-shadow(0 0 18px rgba(255, 220, 150, 0.55));
 }
 
 @keyframes vb-letter {
@@ -2122,8 +1839,35 @@
   animation: vs-fade-up 300ms 900ms both;
 }
 
-.finish-cutin-line,
-.finish-cutin.is-signature .finish-cutin-line {
+.finish-cutin-blow {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(15, 9, 19, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(255, 63, 134, 0.35);
+  animation: vs-fade-up 320ms 1000ms both;
+}
+
+.finish-cutin-blow small {
+  color: var(--vs-rose-soft);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.finish-cutin-blow span {
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.finish-cutin-blow b {
+  color: #ff8ab6;
+  font: 600 0.9rem/1 var(--vs-font-number);
+}
+
+.finish-cutin-line {
   border-color: rgba(255, 63, 134, 0.35);
   background: rgba(15, 9, 19, 0.6);
   font-family: var(--vs-font-body);
@@ -2215,46 +1959,16 @@ body:has(.vl-landing) .vb-preview-bar {
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
   }
-
-  .vb-wait-back::before,
-  .vb-wait-pair-badge,
-  .finish-cutin-rays {
-    animation: none !important;
-  }
 }
 
-/* ---------- 気軽な貼り合い：カードのひとこと・採点リアクション・採点ログ ---------- */
+/* ---------- 気軽な貼り合い：カードのひとこと・採点リアクション ---------- */
 
-/* カードのひとことは、画像の下に出る吹き出し */
-.vb-card-caption {
-  display: block;
-  width: fit-content;
-  max-width: 100%;
-  margin: 0;
-  padding: 8px 12px;
-  border-radius: 16px 16px 16px 4px;
-  color: var(--vs-pearl);
-  background: var(--ha-bubble-theirs);
-  font-size: 0.86rem;
-  line-height: 1.55;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-
-.vb-card-caption.is-local {
-  border-radius: 16px 16px 4px 16px;
-  background: var(--ha-bubble-mine);
-}
-
+/* 相手のひとことは、相手の口調の吹き出し（.vb-dm-bubble）で画像の下に出る */
 .vb-card-caption small {
   display: block;
   margin-top: 2px;
   color: var(--vs-mist);
   font-size: 0.64rem;
-}
-
-.vb-card-caption.is-local small {
-  color: #f6d9e5;
 }
 
 .vb-reaction-picker {
@@ -2270,26 +1984,34 @@ body:has(.vl-landing) .vb-preview-bar {
 }
 
 .vb-reaction-picker > div {
-  display: grid;
+  display: flex;
   gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.vb-reaction-picker > div::-webkit-scrollbar {
+  display: none;
 }
 
 .vb-reaction-chip {
+  flex: none;
   min-height: 44px;
   padding: 8px 14px;
   border: 1.5px solid var(--vs-line-soft);
-  border-radius: 14px;
+  border-radius: 22px;
   cursor: pointer;
   color: var(--vs-pearl);
   background: #1a1120;
-  font-size: 0.86rem;
-  line-height: 1.45;
+  font-size: 0.84rem;
+  line-height: 1.4;
   text-align: left;
+  white-space: nowrap;
 }
 
 .vb-reaction-chip[aria-pressed="true"] {
   border-color: var(--vs-rose);
-  background: rgba(255, 63, 134, 0.12);
+  background: rgba(255, 63, 134, 0.14);
 }
 
 .vb-reaction-chip:focus-visible {
@@ -2297,87 +2019,11 @@ body:has(.vl-landing) .vb-preview-bar {
   outline-offset: 2px;
 }
 
-/* 結果の点数の吹き出しに添える、採点した側のひとこと */
+/* 点数の吹き出しに添える、採点した側のひとこと */
 .vb-result-reaction {
   width: 100%;
-  margin: 4px 0 0;
-  font-size: 0.84rem;
+  margin: 2px 0 0;
+  font-size: 0.86rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
-}
-
-/* これまでの採点は、画像選択の上に小さな札で並べる */
-.vb-score-log {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.vb-score-log h2 {
-  flex: none;
-  margin: 0;
-  color: var(--vs-mist);
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.vb-score-log ol {
-  display: flex;
-  min-width: 0;
-  gap: 8px;
-  margin: 0;
-  padding: 2px;
-  overflow-x: auto;
-  list-style: none;
-  scrollbar-width: none;
-}
-
-.vb-score-log li {
-  display: flex;
-  flex: none;
-  min-height: 34px;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 10px 3px 4px;
-  border-radius: 12px;
-  background: var(--ha-surface);
-  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
-  font-size: 0.75rem;
-}
-
-.vb-score-log li > small {
-  order: -1;
-  padding-left: 6px;
-  color: var(--vs-mist);
-  font-weight: 700;
-}
-
-.vb-score-log li img,
-.vb-log-empty {
-  width: 20px;
-  height: 26px;
-  border-radius: 5px;
-  object-fit: cover;
-  background: var(--ha-hatch);
-}
-
-.vb-log-score {
-  display: flex;
-  align-items: baseline;
-  gap: 3px;
-  font: 600 0.95rem/1 var(--vs-font-number);
-}
-
-.vb-log-score i {
-  color: var(--vs-mist);
-  font-style: normal;
-}
-
-.vb-score-log li.is-win .vb-log-score b.is-local {
-  color: var(--vs-mint);
-}
-
-.vb-score-log li.is-lose .vb-log-score b:not(.is-local) {
-  color: var(--vs-rose-soft);
 }

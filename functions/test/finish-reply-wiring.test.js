@@ -558,7 +558,10 @@ test("final result settlement and result viewing never wait for the opponent's c
   assert.match(online, /async function settleOnlineMatch\(roundContext\)/);
   assert.match(online, /matchFinalizationPromise/);
   assert.match(online, /\$\{isMatchOver\(\) \? "" : '<button class="button button-danger" data-online-destroy>/);
-  assert.match(online, /renderFinishReplySlot\(state\.history\.at\(-1\), \{ terminal: true \}\),\s*!isMatchOver\(\)/);
+  assert.match(
+    extract(/function renderWaitingContinue\(\) \{[\s\S]*?\n\}/, "continue wait renderer"),
+    /renderFinishReplySlot\(state\.history\.at\(-1\), \{ terminal: true \}\)[\s\S]*?menuItems: isMatchOver\(\) \? "" : BATTLE_MENU_DESTROY/,
+  );
 });
 
 test("finish replies remain absent from Firebase queue, room resources, rules, and other modes", () => {
