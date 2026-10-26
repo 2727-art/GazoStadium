@@ -895,7 +895,7 @@
             </div></div>
             <div class="ha-msg is-mine" aria-hidden="true"><div class="ha-msg-body">
               <span class="vl-hero-me"><span class="chat-persona-mark is-tsuyotsuyo" data-hero-mark aria-hidden="true"></span><span data-hero-me>あなた（つよつよ）</span></span>
-              <span class="ha-bubble ha-score-bubble vl-persona-bubble chat-persona-tsuyotsuyo" data-hero-reply><span class="vl-crit">CRITICAL</span><b class="ha-score-number">90<small>点</small></b>っ…90点。ずるい…♡</span>
+              <span class="ha-bubble ha-score-bubble vl-persona-bubble chat-persona-tsuyotsuyo" data-hero-reply><span class="vl-crit">刺さった</span><b class="ha-score-number">90<small>点</small></b>っ…90点。ずるい…♡</span>
               <span class="ha-meter10">${heroMeter}</span>
             </div></div>
             <p class="vl-hero-typing" aria-hidden="true">${personaMark("koakuma")}シオンが、くすくす笑いながら打っています♡<span class="chat-typing-dots"><i></i><i></i><i></i></span></p>
@@ -912,7 +912,7 @@
             <li><i class="is-bolt" aria-hidden="true"></i>登録なしですぐ</li>
             <li><i class="is-spark" aria-hidden="true"></i>なりきり口調6種</li>
           </ul>
-          <p class="vl-rule">5〜8枚の画像で、HP30を削り合う。最大5ラウンド。</p>
+          <p class="vl-rule">5〜8枚の画像で、理性30を削り合う。最大5ラウンド。</p>
         </div>
       </div>
       <section class="vl-meibamen" aria-labelledby="meibamenTitle">

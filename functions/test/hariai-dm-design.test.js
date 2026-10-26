@@ -54,11 +54,38 @@ test("normal 1on1 scores on a ten-step meter banded like the reactions", () => {
   assert.match(score, /id="onlineLockScore"/);
   const meter = sourceBetween(online, "function renderScoreMeter(", "function renderThreadAvatar(");
   assert.match(meter, /is-on is-\$\{scoreReactionBand\(step\)\}/);
-  const result = sourceBetween(online, "function renderRoundResult()", "function renderOnlinePursuitLines(");
-  assert.ok(result.indexOf("${exchange(remoteIndex)}${exchange(state.playerIndex)}") > 0, "the opponent's post comes first, like a DM thread");
-  assert.match(result, /data-result-score="\$\{scores\[index\]\}"/);
-  assert.match(result, /data-result-sparks/);
-  assert.match(sourceBetween(online, "function renderReveal()", "function renderArenaCard("), /renderArenaCard\(remoteIndex, remoteItem\)\}\$\{renderArenaCard\(state\.playerIndex, localItem\)/);
+  // 点数は、相手の1枚に返した点数 → 自分の1枚に返ってきた点数 → ラウンドの結果、の順でスレッドに積む。
+  const scores = sourceBetween(online, "function renderThreadScores(", "function renderDmOpponentStatus(");
+  assert.ok(
+    scores.indexOf("${renderThreadScoreBubble(result, remoteIndex)}") < scores.indexOf("${renderThreadScoreBubble(result, state.playerIndex)}"),
+    "the score given to the opponent's image comes first, then the one returned",
+  );
+  assert.match(scores, /class="vb-dm-outcome is-\$\{outcome\}"/);
+  assert.match(scores, /\$\{renderOnlinePursuitLines\(result\)\}/);
+  assert.doesNotMatch(online, /CRITICAL!|PERFECT!!|vb-stamp/, "no card-battle stamps in the DM thread");
+  // 公開は、相手の1枚がDMのメッセージとして届き、そのまま採点に入る。
+  assert.match(sourceBetween(online, "function renderReveal()", "function renderScoreMeter("), /return renderScore\(\);/);
+  assert.match(online, /if \(state\.screen === "reveal" \|\| state\.screen === "score"\) bindScoreEvents\(\);/);
+});
+
+test("normal 1on1 runs as one DM thread with the opponent's posts and the chat in the same timeline", () => {
+  const online = read("online.js");
+  const screen = sourceBetween(online, "function renderDmScreen(", "// 状態から分かる出来事のうち");
+  assert.match(screen, /\$\{renderOnlineHud\(\{ hpOverride, menuItems \}\)\}/);
+  assert.match(screen, /id="onlineChatMessages" role="log"/);
+  assert.match(screen, /\$\{renderDmComposer\(\)\}/);
+  for (const renderer of ["renderRoundSelect", "renderWaitingPick", "renderWaitingImage", "renderWaitingScore", "renderWaitingContinue", "renderScore", "renderRoundResult"]) {
+    const start = online.indexOf(`function ${renderer}(`);
+    assert.ok(start >= 0, `${renderer} missing`);
+    assert.match(online.slice(start, online.indexOf("\nfunction ", start + 1)), /renderDmScreen\(/, `${renderer} uses the DM thread`);
+  }
+  const items = sourceBetween(online, "function renderThreadItems()", "// 画像を含む吹き出しは");
+  assert.match(items, /renderOnlineChatMessage\(chats\.get\(entry\.chatId\), \{ threadKey: entry\.key \}\)/);
+  assert.match(sourceBetween(online, "function refreshChat(", "function scrollChat()"), /if \(refreshDmThread\(\{ preserveScroll \}\)\) return;/);
+  assert.doesNotMatch(online, /data-battle-chat|vb-chat-peek|renderBattleChatDock/, "the separate chat dock is gone");
+  const css = read("velvet-battle.css");
+  assert.match(css, /\.vb-dm-thread \{[\s\S]*?overflow-y: auto;/);
+  assert.match(css, /\.vb-dm \{[\s\S]*?height: calc\(100dvh - var\(--vb-dm-top, 120px\) - 12px\);/);
 });
 
 test("strategy scores sit on a 70–100 meter whose marker is also the damage", () => {

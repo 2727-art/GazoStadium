@@ -177,6 +177,17 @@ import {
   onlineReserveImageCount,
   onlineSampleFillCount,
 } from "./online-deck.mjs?v=online-deck-reserve-v1";
+import {
+  appendThreadEntries,
+  collectThreadEventKeys,
+  landedLocalCaptions,
+  latestOpponentPersona,
+  localRoundOutcome,
+  localRoundScores,
+  mostEffectiveRemoteResult,
+  orderedThreadEntries,
+  scoreWord,
+} from "./normal-dm-thread.mjs?v=normal-dm-thread-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -392,7 +403,7 @@ const GENERIC_MATCH_MISSION_END_DATE_KEY = "2026-07-23";
 const DAILY_MISSIONS = [
   { id: "complete_match", progressKey: "matches", title: "1試合を完走", description: "ルーム破棄では進みません。", target: 1, reward: 100 },
   { id: "score_three", progressKey: "scores", title: "3回採点する", description: "相手の画像を合計3回採点します。", target: 3, reward: 60 },
-  { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "CRITICAL評価を1回つけます。", target: 1, reward: 90 },
+  { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "相手の1枚に8点以上を1回返します。", target: 1, reward: 90 },
   { id: "play_solo", progressKey: "soloMatches", title: "通常型1on1を1回完走", description: "通常型1on1の正式な決着が対象です。", target: 1, reward: 70 },
   { id: "play_strategy", progressKey: "strategyMatches", title: "戦略型1on1を1回完走", description: "戦略型1on1の正式な決着が対象です。", target: 1, reward: 80 },
   { id: "play_team", progressKey: "teamMatches", title: "ふたりチャレンジを1回完走", description: "終了した推し上手！ふたりチャレンジの記録です。", target: 1, reward: 100, endsAfter: "2026-07-28" },
@@ -495,8 +506,12 @@ let state;
 let economyInitialization = null;
 let lastRenderedScreen = "";
 let finishCutInGeneration = 0;
-let battleChatOpen = false;
-let battleChatSeenCount = 0;
+// 通常型1on1の対戦はDMスレッドで進める。スレッドは一番下に追従し、上を読んでいる間は追従を止める。
+const DM_SCENES = Object.freeze(["select", "waitingPick", "waitingImage", "reveal", "score", "waitingScore", "result", "waitingContinue"]);
+const DM_THREAD_FOLLOW_SLACK_PX = 80;
+let dmThreadFollow = true;
+let dmThreadScrollTop = 0;
+let dmToolsOpen = false;
 let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
 let pendingSampleMatchmakingLaunch = null;
@@ -623,7 +638,6 @@ function createOnlineState() {
     soloFamiliarBookBusy: false,
     soloReunionPreference,
     deck: [],
-    signatureCardId: "",
     roomId: "",
     room: null,
     opponentUid: "",
@@ -658,6 +672,9 @@ function createOnlineState() {
     round: 1,
     selectedCardId: "",
     selectedScore: null,
+    roundCaptionChoice: "",
+    sentCaptions: new Map(),
+    threadLog: [],
     remoteImages: new Map(),
     remoteAvatar: null,
     avatarSent: false,
@@ -1998,24 +2015,24 @@ function start() {
 }
 
 // localhost で ?battlePreview を付けた時だけ、Firebaseにつながずに通常型1on1の画面と演出を確認できる。
+// ROUND 1・2 を終えた ROUND 3 の場面を、DMスレッドごと組み立てて見せる。
 const BATTLE_PREVIEW_STEPS = [
   ["connecting", "VS"],
-  ["select", "画像選択"],
+  ["select", "選ぶ"],
   ["waitingPick", "相手待ち"],
   ["waitingImage", "画像転送"],
-  ["reveal", "画像公開"],
-  ["score", "採点"],
+  ["reveal", "届く・採点"],
   ["waitingScore", "採点待ち"],
-  ["result:great", "結果 GREAT"],
-  ["result:critical", "結果 CRITICAL"],
-  ["result:perfect", "結果 PERFECT"],
-  ["result:draw", "結果 引き分け"],
-  ["finish:standard", "FINISH"],
-  ["finish:signature", "SIGNATURE"],
-  ["gameover:win", "勝利"],
-  ["gameover:lose", "敗北"],
+  ["result:local", "点数 効かせた"],
+  ["result:remote", "点数 効かされた"],
+  ["result:draw", "点数 引き分け"],
+  ["finish:win", "落とした"],
+  ["finish:lose", "落とされた"],
+  ["gameover:win", "結果 勝ち"],
+  ["gameover:lose", "結果 負け"],
 ];
-const battlePreview = { remote: [], landscape: false, lastStep: "connecting", run: 0 };
+const BATTLE_PREVIEW_ROUND = 3;
+const battlePreview = { remote: [], landscape: null, landscapeOn: false, lastStep: "connecting", run: 0 };
 
 function paintBattlePreviewArt(index, { landscape = false } = {}) {
   const canvas = document.createElement("canvas");
@@ -2060,7 +2077,8 @@ async function startBattlePreview() {
   lastRenderedScreen = "";
   setOnlineChrome("BATTLE PREVIEW");
   const deck = await Promise.all(Array.from({ length: 7 }, (_, index) => paintBattlePreviewArt(index, { landscape: index === 4 })));
-  battlePreview.remote = await Promise.all([paintBattlePreviewArt(8), paintBattlePreviewArt(9, { landscape: true })]);
+  battlePreview.remote = await Promise.all([8, 9, 10].map((index) => paintBattlePreviewArt(index)));
+  battlePreview.landscape = await paintBattlePreviewArt(11, { landscape: true });
   Object.assign(state, {
     uid: "preview-local",
     opponentUid: "preview-remote",
@@ -2070,20 +2088,12 @@ async function startBattlePreview() {
     opponentOnline: true,
     peerStatus: "P2P接続を準備中…",
     deck,
-    signatureCardId: deck[0].id,
-    round: 3,
-    roleplayVoiceFallbackId: "koakuma",
-    chatMessages: [
-      { id: "preview-1", authorUid: "preview-remote", name: "シオン", text: "よろしくお願いします！", round: 1, voiceSetId: "oneesan" },
-      { id: "preview-2", authorUid: "preview-local", name: "ルミナ", text: "今夜は本気の5枚で来ました", round: 1, voiceSetId: "koakuma", effect: "emphasis" },
-      { id: "preview-3", authorUid: "preview-remote", name: "シオン", text: "その衣装の色づかい、ずるい…", round: 2, voiceSetId: "oneesan", effect: "tremble" },
-      { id: "preview-4", authorUid: "preview-local", name: "ルミナ", text: "ふふ、もっと見たい？", round: 2, voiceSetId: "koakuma", effect: "whisper" },
-      { id: "preview-5", authorUid: "preview-remote", name: "シオン", text: "見たいです…次も楽しみにしてます", round: 3, voiceSetId: "oneesan", effect: "hearts" },
-    ],
-    chatReactions: new Map([["preview-2", "crown"], ["preview-3", "heart"]]),
+    roleplayVoiceFallbackId: "oneesan",
+    chatReactions: new Map([["preview-2", "kiss"], ["preview-3", "heart"]]),
   });
-  deck[0].caption = "今日の本命、どうぞ♡";
-  deck[1].caption = "ねぇ、これ好きでしょ？♡";
+  deck[0].caption = "お姉さんのとっておき、見て？♡";
+  deck[1].caption = "これで落ちなさい♡";
+  deck[2].caption = "ここ、見て？♡";
   deck[5].caption = "とっておきだよ♡";
   mountBattlePreviewBar();
   showBattlePreviewStep("connecting");
@@ -2111,8 +2121,8 @@ function mountBattlePreviewBar() {
     const button = event.target.closest("button");
     if (!button) return;
     if (button.hasAttribute("data-preview-orientation")) {
-      battlePreview.landscape = !battlePreview.landscape;
-      button.textContent = `相手の画像: ${battlePreview.landscape ? "横長" : "縦長"}`;
+      battlePreview.landscapeOn = !battlePreview.landscapeOn;
+      button.textContent = `相手の画像: ${battlePreview.landscapeOn ? "横長" : "縦長"}`;
       showBattlePreviewStep(battlePreview.lastStep);
       return;
     }
@@ -2121,66 +2131,109 @@ function mountBattlePreviewBar() {
   document.body.append(bar);
 }
 
+function previewRoundResult(round, scorePlayerOne, scorePlayerTwo, localCardId) {
+  const winnerIndex = scorePlayerOne === scorePlayerTwo ? null : scorePlayerOne > scorePlayerTwo ? 0 : 1;
+  const loserIndex = winnerIndex === null ? null : 1 - winnerIndex;
+  const damage = winnerIndex === null ? 0 : Math.max(scorePlayerOne, scorePlayerTwo);
+  const previousHp = loserIndex === null ? null : state.players[loserIndex].hp;
+  if (loserIndex !== null) state.players[loserIndex].hp = Math.max(0, previousHp - damage);
+  const lethal = loserIndex !== null && previousHp > 0 && state.players[loserIndex].hp === 0;
+  return { round, scorePlayerOne, scorePlayerTwo, winnerIndex, loserIndex, damage, previousHp, lethal, finish: null, localCardId };
+}
+
 function showBattlePreviewStep(step) {
   if (!active || !useOfflineBattlePreview) return;
   const [screen, variant = ""] = String(step || "connecting").split(":");
+  const round = BATTLE_PREVIEW_ROUND;
   battlePreview.lastStep = step;
   battlePreview.run += 1;
   clearFinishCutIn({ restoreFocus: false });
   resetSelectionTimerState();
   // 毎回別の部屋として扱い、同じ画面でも演出を最初から再生する。
   state.roomId = `preview-velvet-stage-${battlePreview.run}`;
-  const previewRemote = { ...battlePreview.remote[battlePreview.landscape ? 1 : 0], signature: false, caption: "この衣装の色、ずるいでしょ？", voiceSetId: "oneesan" };
-  state.remoteImages = new Map([[state.round, previewRemote]]);
-  state.localScoreReactions = new Map();
-  state.remoteScoreReactions = new Map();
-  state.selectedScoreReaction = null;
-  state.selectedCardId = state.deck[0].id;
-  state.deck.forEach((item, index) => { item.used = index === 2 || index === 3; });
-  state.players[0] = { ...state.players[0], uid: "preview-local", name: "ルミナ", pursuitLine: "まだまだ、魅せてあげる。", sampleCount: 0, startingHp: MAX_HP, maxHp: MAX_HP, hp: 24, streak: 2, totalReceived: 21, criticals: 1, perfects: 0 };
-  state.players[1] = { ...state.players[1], uid: "preview-remote", name: "シオン", pursuitLine: "", sampleCount: 1, startingHp: getStartingHp(1), maxHp: getStartingHp(1), hp: 16, streak: 0, totalReceived: 13, criticals: 0, perfects: 0 };
-  state.history = [];
+  state.round = round;
+  state.outcome = null;
+  state.roundData = {};
   state.selectedScore = null;
+  state.selectedScoreReaction = null;
+  state.roundCaptionChoice = "";
   state.imageTransferError = "";
   state.transferProgress = 64;
+  state.selectedCardId = state.deck[0].id;
+  state.deck.forEach((item, index) => { item.used = index === 2 || index === 3; });
+  const currentRemote = battlePreview.landscapeOn ? battlePreview.landscape : battlePreview.remote[2];
+  state.remoteImages = new Map([
+    [1, { ...battlePreview.remote[0], caption: "その程度で、もう効いてるの？♡", voiceSetId: "koakuma" }],
+    [2, { ...battlePreview.remote[1], caption: "ふふ、目、そらさないでね♡", voiceSetId: "koakuma" }],
+    [round, { ...currentRemote, caption: "ねぇ、これ好きでしょ？♡", voiceSetId: "koakuma", finishLine: "はい、落ちた♡ わたしの勝ち" }],
+  ]);
+  state.players[0] = { ...state.players[0], uid: "preview-local", name: "ルミナ", pursuitLine: "あら、効いちゃった？ 次はもっと甘やかしてあげる♡", sampleCount: 0, startingHp: MAX_HP, maxHp: MAX_HP, hp: MAX_HP, streak: 2, totalReceived: 0, criticals: 0, perfects: 0 };
+  state.players[1] = { ...state.players[1], uid: "preview-remote", name: "シオン", pursuitLine: "ふふ、今の顔見えちゃった♡ 次もいくよ？", sampleCount: 1, startingHp: getStartingHp(1), maxHp: getStartingHp(1), hp: getStartingHp(1), streak: 0, totalReceived: 0, criticals: 0, perfects: 0 };
+  state.history = [
+    previewRoundResult(1, 8, 6, state.deck[2].id),
+    previewRoundResult(2, 5, 9, state.deck[3].id),
+  ];
+  state.sentCaptions = new Map([[1, state.deck[2].caption], [2, ""]]);
+  state.localScoreReactions = new Map([[1, { voiceSetId: "oneesan", band: "low", index: 0 }], [2, { voiceSetId: "oneesan", band: "high", index: 1 }]]);
+  state.remoteScoreReactions = new Map([[1, { voiceSetId: "koakuma", band: "mid", index: 0 }], [2, { voiceSetId: "koakuma", band: "low", index: 1 }]]);
+  state.chatMessages = [
+    { id: "preview-1", authorUid: "preview-remote", name: "シオン", text: "よろしくね♡ 手加減はしないよ？", round: 1, voiceSetId: "koakuma" },
+    { id: "preview-2", authorUid: "preview-local", name: "ルミナ", text: "あら、かわいい挑発ね", round: 1, voiceSetId: "oneesan", effect: "whisper" },
+    { id: "preview-3", authorUid: "preview-remote", name: "シオン", text: "その衣装の色づかい、ずるい…", round: 2, voiceSetId: "koakuma", effect: "tremble" },
+    { id: "preview-4", authorUid: "preview-local", name: "ルミナ", text: "まだ余裕よ？ かかってらっしゃい♡", round: 2, voiceSetId: "oneesan", effect: "hearts" },
+    { id: "preview-5", authorUid: "preview-remote", name: "シオン", text: "え、もう決めたの？ はや♡", round: 3, voiceSetId: "koakuma" },
+  ];
+  const posted = !["connecting", "select"].includes(screen);
+  const revealed = posted && !["waitingPick", "waitingImage"].includes(screen);
+  if (posted) state.sentCaptions.set(round, roundCaptionFor(state.deck[0]));
+  const keys = [
+    "chat:preview-1", "local:1", "remote:1", "scores:1", "chat:preview-2",
+    "chat:preview-3", "local:2", "remote:2", "scores:2", "chat:preview-4",
+    ...(posted ? [`local:${round}`, "chat:preview-5"] : []),
+    ...(revealed ? [`remote:${round}`] : []),
+  ];
+  state.threadLog = appendThreadEntries([], keys);
+  if (screen === "connecting") {
+    state.history = [];
+    state.threadLog = [];
+    state.round = 1;
+    state.players.forEach((player) => { player.hp = player.maxHp; });
+    state.screen = "connecting";
+    render();
+    return;
+  }
   if (screen === "select") {
-    state.history = [
-      { round: 1, scorePlayerOne: 8, scorePlayerTwo: 6, winnerIndex: 0, loserIndex: 1, damage: 8, previousHp: 24, lethal: false, finish: null, localCardId: state.deck[2].id },
-      { round: 2, scorePlayerOne: 5, scorePlayerTwo: 9, winnerIndex: 1, loserIndex: 0, damage: 9, previousHp: 30, lethal: false, finish: null, localCardId: state.deck[3].id },
-    ];
     state.screen = "select";
     render();
     startSelectionTimer(Date.now());
     return;
   }
-  if (screen === "result" || screen === "finish") {
-    const scoresByVariant = { great: [7, 5], critical: [9, 6], perfect: [10, 7], draw: [6, 6] };
-    const lethal = screen === "finish";
-    if (lethal && variant !== "signature") state.selectedCardId = state.deck[1].id;
-    if (lethal) state.players[1].hp = 9;
-    const [scorePlayerOne, scorePlayerTwo] = lethal ? [9, 4] : scoresByVariant[variant] || scoresByVariant.great;
-    const winnerIndex = scorePlayerOne === scorePlayerTwo ? null : scorePlayerOne > scorePlayerTwo ? 0 : 1;
-    const loserIndex = winnerIndex === null ? null : 1 - winnerIndex;
-    const damage = winnerIndex === null ? 0 : Math.max(scorePlayerOne, scorePlayerTwo);
-    const previousHp = loserIndex === null ? null : state.players[loserIndex].hp;
-    if (loserIndex !== null) state.players[loserIndex].hp = Math.max(0, previousHp - damage);
-    state.history = [{ round: state.round, scorePlayerOne, scorePlayerTwo, winnerIndex, loserIndex, damage, previousHp, lethal, finish: null, localCardId: state.selectedCardId }];
-    state.localScoreReactions.set(state.round, { voiceSetId: localRoleplayVoiceSetId(), band: scoreReactionBand(scorePlayerTwo), index: 0 });
-    state.remoteScoreReactions.set(state.round, { voiceSetId: "oneesan", band: scoreReactionBand(scorePlayerOne), index: 1 });
-    state.screen = "result";
-    if (lethal) state.history[0].finish = createFinishCutInPayload(winnerIndex);
-    render();
-    if (lethal) triggerFinishCutIn(state.history[0].finish);
-    return;
+  if (screen === "waitingScore") {
+    state.roundData = { scores: { [state.uid]: 9 } };
+    state.localScoreReactions.set(round, { voiceSetId: "oneesan", band: "high", index: 0 });
   }
-  if (screen === "gameover") {
-    const won = variant !== "lose";
-    state.players[0].hp = won ? 24 : 0;
-    state.players[1].hp = won ? 0 : 9;
-    state.outcome = { winnerIndex: won ? 0 : 1, reason: "hp" };
-    state.history = [{ round: state.round, scorePlayerOne: won ? 9 : 4, scorePlayerTwo: won ? 4 : 9, winnerIndex: won ? 0 : 1, loserIndex: won ? 1 : 0, damage: 9, previousHp: 9, lethal: true, finish: null }];
-    state.screen = "gameover";
+  if (screen === "result" || screen === "finish" || screen === "gameover") {
+    const lethal = screen !== "result";
+    const localWins = lethal ? variant === "win" : variant === "local";
+    if (lethal) state.players[localWins ? 1 : 0].hp = localWins ? 8 : 6;
+    const [scorePlayerOne, scorePlayerTwo] = variant === "draw"
+      ? [7, 7]
+      : localWins ? [10, 6] : [6, 10];
+    const result = previewRoundResult(round, scorePlayerOne, scorePlayerTwo, state.selectedCardId);
+    state.history.push(result);
+    state.deck[0].used = true;
+    state.localScoreReactions.set(round, { voiceSetId: "oneesan", band: scoreReactionBand(scorePlayerTwo), index: 0 });
+    state.remoteScoreReactions.set(round, { voiceSetId: "koakuma", band: scoreReactionBand(scorePlayerOne), index: 1 });
+    if (result.lethal) result.finish = createFinishCutInPayload(result.winnerIndex, result.damage);
+    if (screen === "gameover") {
+      state.outcome = { winnerIndex: result.winnerIndex, reason: "hp" };
+      state.screen = "gameover";
+      render();
+      return;
+    }
+    state.screen = "result";
     render();
+    if (result.lethal) triggerFinishCutIn(result.finish);
     return;
   }
   state.screen = screen;
@@ -4623,8 +4676,10 @@ function setOnlineChrome(label) {
 function render() {
   if (!active) return;
   syncSoloSafetyContact();
-  if (state.screen === "gameover") captureOnlineChatDraft();
+  if (isDmScene() || state.screen === "gameover") captureOnlineChatDraft();
   const screenChanged = lastRenderedScreen !== state.screen;
+  const chatFocus = captureDmChatFocus();
+  const threadNodes = collectDmThreadNodes(appRoot);
   const renderers = {
     setup: renderSetup,
     familiarBook: renderSoloFamiliarBook,
@@ -4648,18 +4703,84 @@ function render() {
     error: renderError,
   };
   if (screenChanged && state.screen === "connecting") {
-    battleChatOpen = false;
-    battleChatSeenCount = 0;
+    dmThreadFollow = true;
+    dmToolsOpen = false;
   }
   window.HariaiBattleFx?.cancel?.();
   appRoot.innerHTML = renderContactControls("solo") + (renderers[state.screen] || renderSetup)();
+  reuseDmThreadNodes(threadNodes, appRoot);
   lastRenderedScreen = state.screen;
   bindScreenEvents();
   if (screenChanged) {
     window.scrollTo(0, 0);
-    appRoot.focus({ preventScroll: true });
+    if (!chatFocus) appRoot.focus({ preventScroll: true });
   }
+  restoreDmChatFocus(chatFocus);
+  settleDmLayout({ follow: screenChanged });
   playBattleSceneFx();
+}
+
+// 入力中に画面が進んでも、チャットの入力欄のフォーカスと選択位置を戻す（スマホでキーボードを閉じない）。
+function captureDmChatFocus() {
+  const input = document.activeElement;
+  if (input?.id !== "onlineChatInput" || !isDmScene()) return null;
+  return { start: input.selectionStart, end: input.selectionEnd, direction: input.selectionDirection };
+}
+
+function restoreDmChatFocus(focus) {
+  if (!focus) return;
+  const input = document.querySelector("[data-dm-thread] ~ .vb-dm-composer #onlineChatInput");
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  if (Number.isInteger(focus.start) && Number.isInteger(focus.end)) {
+    input.setSelectionRange(focus.start, focus.end, focus.direction || "none");
+  }
+}
+
+// DMは画面の高さに収め、スレッドだけを内側でスクロールさせる。
+function settleDmLayout({ follow = false } = {}) {
+  const screen = appRoot.querySelector(".vb-dm");
+  const thread = screen?.querySelector("[data-dm-thread]");
+  if (!screen || !thread) return;
+  const top = Math.max(0, Math.round(screen.getBoundingClientRect().top + window.scrollY));
+  screen.style.setProperty("--vb-dm-top", `${top}px`);
+  if (follow) dmThreadFollow = true;
+  if (dmThreadFollow) thread.scrollTop = thread.scrollHeight;
+  else thread.scrollTop = dmThreadScrollTop;
+}
+
+function stickDmThreadIfFollowing() {
+  const thread = document.querySelector("[data-dm-thread]");
+  if (!thread) return;
+  if (dmThreadFollow) {
+    thread.scrollTop = thread.scrollHeight;
+    return;
+  }
+  const jump = document.querySelector("[data-dm-jump]");
+  if (jump) jump.hidden = false;
+}
+
+function bindDmThreadEvents() {
+  const thread = document.querySelector("[data-dm-thread]");
+  if (!thread) return;
+  const jump = document.querySelector("[data-dm-jump]");
+  thread.addEventListener("scroll", () => {
+    dmThreadScrollTop = thread.scrollTop;
+    dmThreadFollow = thread.scrollHeight - thread.scrollTop - thread.clientHeight <= DM_THREAD_FOLLOW_SLACK_PX;
+    if (dmThreadFollow && jump) jump.hidden = true;
+  }, { passive: true });
+  // 画像の読み込みで高さが変わっても、追従中なら一番下を保つ。
+  thread.addEventListener("load", () => {
+    if (dmThreadFollow) thread.scrollTop = thread.scrollHeight;
+  }, true);
+  jump?.addEventListener("click", () => {
+    dmThreadFollow = true;
+    thread.scrollTop = thread.scrollHeight;
+    jump.hidden = true;
+  });
+  document.querySelector("[data-dm-tools]")?.addEventListener("toggle", (event) => {
+    dmToolsOpen = event.currentTarget.open;
+  });
 }
 
 // 画面ごとの演出。演出はこの端末の表示だけで、状態の遷移や送信は待たない。
@@ -4677,35 +4798,24 @@ function playBattleSceneFx() {
     return;
   }
   if (state.screen === "reveal") {
+    // 相手の1枚が、DMのメッセージとしてスレッドに届く。画像の読み込みを待ってから見せる。
     const key = battleFxKey("reveal");
     const start = () => {
       if (!root.isConnected || state.screen !== "reveal") return;
-      const local = root.querySelector('[data-reveal-side="local"]');
-      const remote = root.querySelector('[data-reveal-side="remote"]');
       fx.play(root, key, [
-        [0, () => root.classList.add("is-dimmed")],
-        [300, (ctx) => {
-          local?.classList.add("is-lit");
-          local?.querySelector(".vb-flip")?.classList.add("is-open");
-          ctx.sound(() => audio()?.playFlip?.());
-        }],
-        [700, () => remote?.querySelector(".vb-flip")?.classList.add("is-tremble")],
-        [1000, (ctx) => {
-          const flip = remote?.querySelector(".vb-flip");
-          flip?.classList.remove("is-tremble");
-          flip?.classList.add("is-open", "is-burst");
-          remote?.classList.add("is-lit");
-          root.classList.remove("is-dimmed");
+        [0, (ctx) => {
+          root.querySelector(".vb-dm-item.is-arriving")?.classList.add("is-in");
+          stickDmThreadIfFollowing();
           ctx.sound(() => audio()?.playReveal?.(), { essential: true });
         }],
-        [1500, () => {}],
+        [700, () => {}],
       ]);
     };
     if (fx.hasPlayed(key)) {
       start();
       return;
     }
-    const images = Array.from(root.querySelectorAll(".vb-card-image")).map((image) => image.src);
+    const images = Array.from(root.querySelectorAll(".vb-dm-item.is-arriving img")).map((image) => image.src);
     Promise.race([fx.decode(images), new Promise((resolve) => window.setTimeout(resolve, 1500))]).then(start);
     return;
   }
@@ -4714,24 +4824,13 @@ function playBattleSceneFx() {
     if (!result || result.lethal) return;
     const scores = [result.scorePlayerOne, result.scorePlayerTwo];
     const topScore = Math.max(...scores);
-    const numbers = Array.from(root.querySelectorAll("[data-result-score]"));
-    let roll = 0;
     fx.play(root, battleFxKey("result"), [
-      [0, (ctx) => {
-        roll = ctx.every(50, () => {
-          numbers.forEach((number) => { number.textContent = String(1 + Math.floor(Math.random() * 10)); });
-        });
-        ctx.sound(() => audio()?.playRoll?.());
-      }],
-      [600, (ctx) => {
-        ctx.stop(roll);
-        numbers.forEach((number) => { number.textContent = number.dataset.resultScore; });
-        root.classList.add("is-landed");
+      [0, () => {
+        root.querySelector(`[data-result-round="${result.round}"]`)?.classList.add("is-in");
+        stickDmThreadIfFollowing();
       }],
       [650, (ctx) => {
         if (result.winnerIndex === null) return;
-        root.classList.add(topScore >= 10 ? "is-perfect-hit" : topScore >= 8 ? "is-critical-hit" : "is-hit");
-        if (topScore >= 10 && !ctx.fast) fx.burst(root.querySelector("[data-result-sparks]"), { count: 26, x: result.winnerIndex === 0 ? "25%" : "75%", y: "40%" });
         ctx.sound(() => (topScore >= 8 ? audio()?.playResult?.(topScore) : audio()?.playLand?.()), { essential: true });
       }],
       [800, (ctx) => {
@@ -4873,13 +4972,9 @@ function renderSetup() {
         <span>${reserve ? "OPTIONAL RESERVE" : "REQUIRED"}</span><b>${String(slotNumber).padStart(2, "0")}</b>
       </div>`;
     }
-    const isSignature = item.id === state.signatureCardId;
-    return `<div class="deck-slot ${reserve ? "reserve-slot" : ""} ${item.isSample ? "sample-card" : ""} ${isSignature ? "signature-card" : ""}">
+    return `<div class="deck-slot ${reserve ? "reserve-slot" : ""} ${item.isSample ? "sample-card" : ""}">
       <img src="${item.url}" alt="選択画像 ${index + 1}" draggable="false" />
-      ${item.isSample ? '<span class="sample-card-badge">SAMPLE / HP−5</span>' : ""}
-      <button class="signature-card-toggle ${isSignature ? "is-selected" : ""}" type="button"
-        data-online-signature-card="${escapeHtml(item.id)}" aria-pressed="${isSignature}"
-        aria-label="画像${index + 1}をシグネチャーカード${isSignature ? "から外す" : "に指定"}"><span aria-hidden="true">✦</span>${isSignature ? "SIGNATURE" : "切り札に指定"}</button>
+      ${item.isSample ? '<span class="sample-card-badge">SAMPLE / 理性−5</span>' : ""}
       <div class="deck-label"><span>${item.isSample ? "SAMPLE / " : ""}${reserve ? "RESERVE" : "ENTRY"} ${String(slotNumber).padStart(2, "0")}</span>
         <button class="remove-card" data-online-remove="${escapeHtml(item.id)}" aria-label="画像${index + 1}を削除">×</button>
       </div>
@@ -4926,7 +5021,7 @@ function renderSetup() {
           <li><b>2</b><span>画像はWebRTCで対戦相手へ直接送信し、Firebaseには保存しません。</span></li>
           <li><b>3</b><span>同じモード内の再戦ではデッキを保持し、タイトル復帰・ページ終了時に画像参照を解放します。</span></li>
         </ol>
-        <div class="privacy-note sample-handicap-note">サンプル画像1枚につき、通常型1on1の最大HPが5減少します。</div>
+        <div class="privacy-note sample-handicap-note">サンプル画像1枚につき、通常型1on1の最大の理性が5減ります。</div>
         <div class="privacy-note">スクリーンショットなど、相手側での保存を完全に防ぐことはできません。</div>
       </aside>
       <div class="setup-panel">
@@ -4961,8 +5056,8 @@ function renderSetup() {
           <p class="pursuit-line-note">9〜10点を受けたラウンド結果で表示します。空白時は定型文へ戻り、HTMLは実行されません。</p>
         </div>
         <div class="finish-line-settings">
-          <div class="finish-line-heading"><span>SIGNATURE FINISH</span><strong>決着時のセリフ</strong></div>
-          <label class="field-label">HPを0にした時のセリフ
+          <div class="finish-line-heading"><span>FINISH LINE</span><strong>決着時のセリフ</strong></div>
+          <label class="field-label">相手の理性を0にした時のセリフ
             <select class="text-input" id="onlineFinishLineChoice">
               ${FINISH_LINES.map((line) => `<option value="${escapeHtml(line)}" ${state.finishLineChoice === line ? "selected" : ""}>${escapeHtml(line)}</option>`).join("")}
               <option value="${CUSTOM_FINISH_VALUE}" ${state.finishLineChoice === CUSTOM_FINISH_VALUE ? "selected" : ""}>自由記述</option>
@@ -4977,7 +5072,7 @@ function renderSetup() {
           </div>
           <div class="finish-reply-divider" aria-hidden="true"></div>
           <div class="finish-line-heading"><span>FINISH REPLY</span><strong>敗北時の決着返礼</strong></div>
-          <label class="field-label">HPが0になった時に返すセリフ
+          <label class="field-label">自分の理性が0になった時に返すセリフ
             <select class="text-input" id="onlineFinishReplyChoice">
               ${FINISH_REPLY_LINES.map((line) => `<option value="${escapeHtml(line)}" ${state.finishReplyChoice === line ? "selected" : ""}>${escapeHtml(line)}</option>`).join("")}
               <option value="${CUSTOM_FINISH_REPLY_VALUE}" ${state.finishReplyChoice === CUSTOM_FINISH_REPLY_VALUE ? "selected" : ""}>自由記述</option>
@@ -5013,19 +5108,14 @@ function renderSetup() {
               aria-disabled="${state.deck.length >= ONLINE_MAX_IMAGE_COUNT}">${state.deck.length >= ONLINE_MAX_IMAGE_COUNT ? `最大${ONLINE_MAX_IMAGE_COUNT}枚登録済み` : `画像を追加（最大${ONLINE_MAX_IMAGE_COUNT}枚）`}
               <input id="onlineImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple ${state.deck.length >= ONLINE_MAX_IMAGE_COUNT ? "disabled" : ""} />
             </label>
-            <button class="button button-ghost button-small" id="onlineFillSample" ${state.deck.length >= ONLINE_REQUIRED_IMAGE_COUNT ? "disabled" : ""}>5枚になるまでサンプルで補う（HP減少）</button>
+            <button class="button button-ghost button-small" id="onlineFillSample" ${state.deck.length >= ONLINE_REQUIRED_IMAGE_COUNT ? "disabled" : ""}>5枚になるまでサンプルで補う（理性が減る）</button>
           </div>
         </div>
         <div class="deck-handicap-summary ${sampleCount ? "has-handicap" : ""}" aria-live="polite">
           <span>実画像 <strong>${realImageCount}</strong>枚</span><span>サンプル <strong>${sampleCount}</strong>枚</span>
-          <span>開始HP <strong>${startingHp}</strong> / ${startingHp}</span>${sampleCount ? `<small>HP−${sampleCount * SAMPLE_HP_PENALTY}</small>` : ""}
+          <span>開始の理性 <strong>${startingHp}</strong> / ${startingHp}</span>${sampleCount ? `<small>理性−${sampleCount * SAMPLE_HP_PENALTY}</small>` : ""}
         </div>
-        <div class="signature-card-guide ${state.signatureCardId ? "is-selected" : ""}">
-          <span aria-hidden="true">✦</span>
-          <p><strong>${state.signatureCardId ? "シグネチャーカード指定済み" : "シグネチャーカードは未指定"}</strong>
-            <small>任意の1枚を指定できます。その画像でHPを0にすると、専用の強化演出になります。</small></p>
-        </div>
-        <p class="deck-caption-guide">各画像に<strong>ひとこと</strong>（${MAX_CARD_CAPTION_LENGTH}文字まで・任意）を付けると、公開した時に画像と一緒に相手へ届きます。候補から選ぶことも、自由に書くこともできます。</p>
+        <p class="deck-caption-guide">各画像に<strong>ひとこと</strong>（${MAX_CARD_CAPTION_LENGTH}文字まで・任意）を付けると、貼った時に画像と一緒に相手へ届きます。候補から選ぶことも、自由に書くこともできます。対戦中は、登録したひとことと自分の口調の定型から選び直せます。</p>
         <datalist id="onlineCardCaptionTemplates">${CARD_CAPTION_TEMPLATES.map((line) => `<option value="${escapeHtml(line)}"></option>`).join("")}</datalist>
         <section class="deck-group" aria-labelledby="onlineRequiredDeckTitle">
           <div class="deck-group-heading"><div><span>REQUIRED 5</span><h2 id="onlineRequiredDeckTitle">対戦画像</h2></div>
@@ -5590,13 +5680,9 @@ function renderMatching() {
     eyebrow: "PREFERENCE MATCHING",
     title: "対戦相手を探しています",
     body: scopeBody,
-    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${reunionDetail}${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 開始HP ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 開始HP ${MAX_HP}</span>`}${scopeHint}${renderBattlePresenceCheck({ mode: "solo", phase: "matching" })}`,
+    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${reunionDetail}${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 理性 ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 理性 ${MAX_HP}</span>`}${scopeHint}${renderBattlePresenceCheck({ mode: "solo", phase: "matching" })}`,
     actions: `${expandAction}<button class="button button-ghost" id="cancelMatching">マッチングをやめる</button>`,
   });
-}
-
-function scoreLabel(score) {
-  return score === 10 ? "PERFECT!!" : score >= 8 ? "CRITICAL!" : score >= 6 ? "GREAT" : score >= 4 ? "GOOD" : "HIT";
 }
 
 // 演出はラウンドごとに一度だけ。再描画では完成状態で表示する。
@@ -5609,61 +5695,259 @@ function battleFxPending(scene, round = state.round) {
   return Boolean(fx && !fx.hasPlayed(battleFxKey(scene, round)));
 }
 
+// マッチ成立（VS）の画面だけが使う、DMの前の舞台。
 function renderBattleScreen(scene, content, { fxScene = "" } = {}) {
   const pending = fxScene && battleFxPending(fxScene);
   return `<section class="screen vb-screen vb-layout vb-${scene}" data-battle-scene="${scene}"${pending ? ' data-fx="pending"' : ""}>
     <div class="vb-main">${content}</div>
-    ${renderBattleChatDock()}
   </section>`;
 }
 
-function renderStageCard(item, { signature = false, className = "", alt = "" } = {}) {
-  const url = item?.url || "";
-  if (!url) return `<div class="vb-card is-empty${className ? ` ${className}` : ""}"><i class="vb-card-frame" aria-hidden="true"></i></div>`;
-  window.HariaiBattleFx?.prepareFill?.(url);
-  const small = window.HariaiBattleFx?.fillSource?.(url) || "";
-  return `<div class="vb-card${signature ? " is-signature" : ""}${className ? ` ${className}` : ""}">
-    <img class="vb-card-fill${small ? " is-small" : ""}" src="${small || url}" data-fill-for="${url}" alt="" aria-hidden="true" draggable="false" />
-    <img class="vb-card-image" src="${url}" alt="${escapeHtml(alt)}" draggable="false" />
-    <i class="vb-card-frame" aria-hidden="true"></i>${signature ? '<i class="vb-card-ring" aria-hidden="true"></i><span class="vb-card-signature">✦ SIGNATURE</span>' : ""}
-  </div>`;
+function isDmScene(screen = state.screen) {
+  return DM_SCENES.includes(screen);
 }
 
-function renderCardBack() {
-  return '<div class="vs-card-back"><span class="vs-card-emblem">貼</span></div>';
-}
-
-function renderBattleChatPeek() {
+/*
+  マッチ成立の後は、相手とのDMスレッド1本で進める。
+  上から DMヘッダー → スレッド（全ラウンドの出来事とチャット）→ その時の操作枠 → チャットの入力欄。
+  主役は相手が貼ってきた画像と言葉。自分の画像は「貼った」印だけにする。
+*/
+function renderDmScreen(scene, { dock = "", tail = "", fxScene = "", hpOverride = null, menuItems = BATTLE_MENU_DESTROY } = {}) {
+  syncThreadLog();
+  const pending = fxScene && battleFxPending(fxScene);
   const typing = activeRemoteTyping();
-  if (typing) return `<b>${escapeHtml(getOpponent()?.name || "相手")}</b>${escapeHtml(personaTypingText(typing.voiceSetId, getOpponent()?.name).replace(/^.+?が、?/, ""))}`;
-  const message = state.chatMessages.at(-1);
-  if (!message) return '<span class="vb-chat-peek-empty">画像について話してみましょう</span>';
-  const body = message.stampId ? "スタンプを送りました" : String(message.text || "");
-  return `<b>${escapeHtml(message.name || "PLAYER")}</b>${escapeHtml(body)}`;
+  const opponentName = getOpponent()?.name || "相手";
+  return `<section class="screen vb-screen vb-dm vb-${scene}" data-battle-scene="${scene}"${pending ? ' data-fx="pending"' : ""}>
+    ${renderOnlineHud({ hpOverride, menuItems })}
+    <div class="vb-dm-thread" data-dm-thread>
+      <div class="vb-dm-items" id="onlineChatMessages" role="log" aria-live="polite" aria-label="${escapeHtml(opponentName)}とのやりとり">${renderThreadItems()}</div>
+      ${tail}
+      <p class="chat-typing vb-dm-typing" id="onlineChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderChatTypingContent(typing) : ""}</p>
+      <button type="button" class="vb-dm-jump" data-dm-jump hidden>新しいメッセージ ↓</button>
+    </div>
+    ${dock ? `<div class="vb-dm-dock">${dock}</div>` : ""}
+    ${renderDmComposer()}
+  </section>`;
 }
 
-function renderBattleChatDock() {
-  const unread = !battleChatOpen && state.chatMessages.length > battleChatSeenCount;
-  return `<div class="vb-chat${battleChatOpen ? " is-open" : ""}" data-battle-chat>
-    <button type="button" class="vb-chat-peek${unread ? " has-new" : ""}" data-battle-chat-toggle aria-expanded="${battleChatOpen}" aria-controls="battleChatSheet">
-      <span class="vb-chat-peek-text" id="battleChatPeek">${renderBattleChatPeek()}</span><span class="vb-chat-peek-label">チャット</span>
-    </button>
-    <div class="vb-chat-sheet" id="battleChatSheet">
-      <button type="button" class="vb-chat-close" data-battle-chat-toggle aria-label="チャットを閉じる">閉じる</button>
-      ${renderOnlineChat()}
-    </div>
+// 状態から分かる出来事のうち、まだスレッドに積んでいないものを末尾へ足す。
+function syncThreadLog(targetState = state) {
+  targetState.threadLog = appendThreadEntries(targetState.threadLog, collectThreadEventKeys({
+    round: targetState.round,
+    screen: targetState.screen,
+    resolvedRounds: targetState.history.map((result) => result.round),
+    remoteRounds: [...targetState.remoteImages.keys()],
+    chatIds: targetState.chatMessages.map((message) => String(message.id || "")),
+  }));
+}
+
+function renderThreadItems() {
+  const chats = new Map(state.chatMessages.map((message) => [String(message.id || ""), message]));
+  return orderedThreadEntries(state.threadLog, { chatIds: [...chats.keys()] }).map((entry) => {
+    if (entry.kind === "chat") return renderOnlineChatMessage(chats.get(entry.chatId), { threadKey: entry.key });
+    if (entry.kind === "local") return renderThreadLocalPost(entry.round, entry.key);
+    if (entry.kind === "remote") return renderThreadRemotePost(entry.round, entry.key);
+    return renderThreadScores(entry.round, entry.key);
+  }).join("");
+}
+
+// 画像を含む吹き出しは作り直さずに使い回す。表示に関わる設定が変わった時だけ作り直す。
+function dmThreadVersion() {
+  return `${state.hideOpponentAvatar ? 1 : 0}:${state.showOpponentCustomFinish ? 1 : 0}:${state.remoteAvatar?.url || ""}`;
+}
+
+function dmThreadItemAttributes(key, { arriving = false } = {}) {
+  return `data-thread-key="${escapeHtml(key)}" data-thread-static data-thread-version="${escapeHtml(dmThreadVersion())}"${arriving ? ' data-thread-arriving' : ""}`;
+}
+
+function collectDmThreadNodes(root = document) {
+  return new Map(Array.from(root.querySelectorAll("[data-thread-static][data-thread-key]"))
+    .map((node) => [node.dataset.threadKey, node]));
+}
+
+function reuseDmThreadNodes(nodes, root) {
+  if (!nodes.size) return;
+  root.querySelectorAll("[data-thread-static][data-thread-key]").forEach((node) => {
+    const previous = nodes.get(node.dataset.threadKey);
+    if (!previous || previous === node || node.hasAttribute("data-thread-arriving")
+        || previous.dataset.threadVersion !== node.dataset.threadVersion) return;
+    previous.removeAttribute("data-thread-arriving");
+    node.replaceWith(previous);
+  });
+}
+
+// 自分の口調・相手の口調の吹き出し。購入した枠・背景はチャットにだけ使う。
+function dmBubbleClass(personaId) {
+  const persona = normalizeChatPersonaId(personaId);
+  return persona ? `vb-dm-bubble chat-persona-${persona}` : "vb-dm-bubble";
+}
+
+function opponentPersonaId(targetState = state) {
+  return latestOpponentPersona({
+    remoteItems: [...targetState.remoteImages.entries()],
+    chatMessages: targetState.chatMessages,
+    opponentUid: targetState.opponentUid,
+    typingVoiceSetId: activeRemoteTyping(targetState)?.voiceSetId || "",
+    knownIds: ROLEPLAY_VOICE_SETS.map(({ id }) => id),
+  });
+}
+
+function localItemForRound(round, targetState = state) {
+  const result = targetState.history.find((entry) => entry.round === round);
+  const id = result ? result.localCardId : round === targetState.round ? targetState.selectedCardId : "";
+  return targetState.deck.find((item) => item.id === id) || null;
+}
+
+// このラウンドに選べるひとこと：登録したひとこと、自分の口調の定型、言葉なし。
+function roundCaptionOptions(item, targetState = state) {
+  const registered = normalizeCardCaption(item?.caption);
+  const personaLine = normalizeCardCaption(getRoleplayVoiceSet(localRoleplayVoiceSetId(targetState))?.cardLine);
+  const options = [];
+  if (registered) options.push({ id: "registered", text: registered });
+  if (personaLine && personaLine !== registered) options.push({ id: "persona", text: personaLine });
+  options.push({ id: "none", text: "" });
+  return options;
+}
+
+function selectedRoundCaptionOption(item, targetState = state) {
+  const options = roundCaptionOptions(item, targetState);
+  return options.find((option) => option.id === targetState.roundCaptionChoice)
+    || options.find((option) => option.id === "registered")
+    || options.at(-1);
+}
+
+function roundCaptionFor(item, targetState = state) {
+  return selectedRoundCaptionOption(item, targetState).text;
+}
+
+function sentCaptionForRound(round, targetState = state) {
+  if (targetState.sentCaptions.has(round)) return targetState.sentCaptions.get(round);
+  const item = localItemForRound(round, targetState);
+  return round === targetState.round ? roundCaptionFor(item, targetState) : normalizeCardCaption(item?.caption);
+}
+
+const DM_ICON_IMAGE = '<svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="3"></rect><circle cx="9" cy="10" r="2"></circle><path d="M21 16l-5-5-9 9"></path></svg>';
+const DM_ICON_CHECK = '<svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>';
+
+function renderThreadLocalPost(round, key) {
+  const item = localItemForRound(round);
+  const caption = sentCaptionForRound(round);
+  const peek = item?.url
+    ? ` data-zoom-src="${escapeHtml(item.url)}" data-zoom-alt="${escapeHtml(`ROUND ${round}にあなたが貼った画像`)}"`
+    : " disabled";
+  return `<div class="vb-dm-item is-local-post" ${dmThreadItemAttributes(key)}>
+    <p class="ha-divider">ROUND ${round}</p>
+    <div class="ha-msg is-mine"><div class="ha-msg-body">
+      <button type="button" class="vb-dm-sent ${dmBubbleClass(localRoleplayVoiceSetId())}"${peek} aria-label="${escapeHtml(`ROUND ${round}にあなたが貼った画像を確認する（相手には見えません）`)}">
+        <span class="vb-dm-sent-mark">${DM_ICON_IMAGE}画像を1枚貼った${DM_ICON_CHECK}</span>
+        ${caption ? `<span class="vb-dm-sent-caption">${escapeHtml(caption)}</span>` : ""}
+      </button>
+    </div></div>
   </div>`;
 }
 
-function setBattleChatOpen(open) {
-  battleChatOpen = Boolean(open);
-  if (battleChatOpen) battleChatSeenCount = state.chatMessages.length;
-  const dock = document.querySelector("[data-battle-chat]");
-  if (!dock) return;
-  dock.classList.toggle("is-open", battleChatOpen);
-  dock.querySelector(".vb-chat-peek")?.classList.remove("has-new");
-  dock.querySelectorAll("[data-battle-chat-toggle]").forEach((button) => button.setAttribute("aria-expanded", String(battleChatOpen)));
-  if (battleChatOpen) scrollChat();
+function renderThreadRemotePost(round, key) {
+  const item = state.remoteImages.get(round);
+  const name = getOpponent()?.name || "相手";
+  const persona = normalizeChatPersonaId(item?.voiceSetId) || opponentPersonaId();
+  const arriving = round === state.round && state.screen === "reveal" && battleFxPending("reveal");
+  const image = item?.url
+    ? `<button type="button" class="vb-dm-photo" data-zoom-src="${escapeHtml(item.url)}" data-zoom-alt="${escapeHtml(`${name}が貼った画像`)}" aria-label="${escapeHtml(`${name}が貼った画像を拡大`)}"><img src="${escapeHtml(item.url)}" alt="${escapeHtml(`ROUND ${round}に${name}が貼った画像`)}" draggable="false" /></button>`
+    : '<p class="vb-dm-photo is-gone">画像は閉じました</p>';
+  return `<div class="vb-dm-item is-remote-post${arriving ? " is-arriving" : ""}" ${dmThreadItemAttributes(key, { arriving })}>
+    <p class="ha-divider">ROUND ${round} · ふたりとも貼りました</p>
+    <div class="ha-msg is-theirs">${renderThreadAvatar()}<div class="ha-msg-body">
+      <small class="vb-dm-from">${renderChatPersonaMark(persona)}${escapeHtml(name)}が貼ってきた</small>
+      ${image}
+      ${renderCardCaption(item, { personaId: persona })}
+    </div></div>
+  </div>`;
+}
+
+function remoteScorePersona(round) {
+  return state.remoteScoreReactions.get(round)?.voiceSetId || opponentPersonaId();
+}
+
+// 点数の吹き出し。columnIndex はその点数を受けた画像の持ち主（採点したのはもう一方）。
+function renderThreadScoreBubble(result, columnIndex) {
+  const scores = [result.scorePlayerOne, result.scorePlayerTwo];
+  const score = scores[columnIndex];
+  const local = columnIndex !== state.playerIndex;
+  const name = escapeHtml(getOpponent()?.name || "相手");
+  const band = scoreReactionBand(score);
+  const persona = local ? localRoleplayVoiceSetId() : remoteScorePersona(result.round);
+  return `<div class="ha-msg ${local ? "is-mine" : "is-theirs"} vb-dm-score">${local ? "" : renderThreadAvatar()}<div class="ha-msg-body">
+    <small class="vb-dm-from">${local ? `あなた → ${name}の1枚` : `${name} → あなたの1枚`}</small>
+    <div class="${dmBubbleClass(persona)} vb-dm-score-bubble is-${band}">
+      <span class="vb-dm-score-head"><b class="ha-score-number is-${band}">${score}<small>点</small></b><span class="vb-dm-score-word">${scoreWord(score)}</span></span>
+      ${renderScoreReactionSlot(result, columnIndex)}
+    </div>
+    ${renderScoreMeter(score)}
+  </div></div>`;
+}
+
+function renderThreadScores(round, key) {
+  const result = state.history.find((entry) => entry.round === round);
+  if (!result) return "";
+  const remoteIndex = state.playerIndex === 0 ? 1 : 0;
+  const outcome = localRoundOutcome(result, state.playerIndex);
+  const name = escapeHtml(getOpponent()?.name || "相手");
+  const arriving = round === state.round && state.screen === "result" && !result.lethal && battleFxPending("result");
+  const summary = outcome === "draw"
+    ? "同点。どちらの理性もそのまま"
+    : `${outcome === "remote" ? name : "あなた"}の1枚のほうが効いた`;
+  const damage = outcome === "draw"
+    ? ""
+    : `<b>${result.loserIndex === state.playerIndex ? "あなた" : name}の理性 −${result.damage}</b>${result.lethal ? "<em>陥落</em>" : ""}`;
+  return `<div class="vb-dm-item is-scores${arriving ? " is-arriving" : ""}" ${dmThreadItemAttributes(key, { arriving })} data-result-round="${round}">
+    <p class="ha-divider">ROUND ${round} · 点数が届きました</p>
+    ${renderThreadScoreBubble(result, remoteIndex)}
+    ${renderThreadScoreBubble(result, state.playerIndex)}
+    <p class="vb-dm-outcome is-${outcome}"><span>${summary}</span>${damage}</p>
+    ${renderOnlinePursuitLines(result)}
+  </div>`;
+}
+
+// 相手の今の様子。入力中の表示と同じ場所に、口調のしるし付きで出す。
+function renderDmOpponentStatus() {
+  const name = getOpponent()?.name || "相手";
+  const picks = state.roundData?.picks || {};
+  let text = "";
+  let detail = "";
+  if (state.screen === "waitingPick") {
+    text = picks[state.opponentUid]?.ready ? `${name}も貼りました。画像を届けています…` : `${name}が、次の1枚を選んでいます…`;
+  } else if (state.screen === "waitingImage") {
+    const ratio = Math.max(0, Math.min(100, Number(state.transferProgress) || 0)) / 100;
+    text = state.imageTransferError ? "画像を届けられませんでした" : "画像をやりとりしています";
+    detail = state.imageTransferError
+      ? ""
+      : `<span class="vb-dm-transfer" aria-hidden="true"><i data-transfer-bar style="--transfer:${ratio.toFixed(3)}"></i></span><small data-transfer-text>転送状況 ${state.transferProgress}%</small>`;
+  } else if (state.screen === "waitingScore") {
+    text = `${name}が、何点にするか考えています…`;
+  } else if (state.screen === "waitingContinue") {
+    text = `${name}の準備を待っています…`;
+  }
+  if (!text) return "";
+  return `<p class="vb-dm-status" role="status">${renderChatPersonaMark(opponentPersonaId())}<span>${escapeHtml(text)}</span>${detail}</p>`;
+}
+
+function renderDmComposer() {
+  const effect = normalizeChatEffect(state.chatEffect);
+  const reactions = [
+    ...DEFAULT_REACTIONS,
+    ...getEquippedReactionProducts().map((product) => product.reaction),
+  ];
+  return `<div class="vb-dm-composer" data-online-chat>
+    <details class="vb-dm-tools" data-dm-tools${dmToolsOpen ? " open" : ""}>
+      <summary aria-label="言い方・ことば・スタンプ"><svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></summary>
+      <div class="vb-dm-tools-panel">
+        ${renderChatEffectPicker(effect, { disabled: state.playerSafetyStopped })}
+        ${renderChatTools({ id: "online", textReactions: reactions, stamps: getAvailableStamps(state.economy), textAttribute: "data-online-reaction", stampAttribute: "data-online-stamp" })}
+      </div>
+    </details>
+    <form class="chat-form${effect ? " has-effect" : ""}" id="onlineChatForm"><input class="chat-input" id="onlineChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="ひとこと送る…" autocomplete="off" aria-label="チャットメッセージ" />
+      <button class="button button-primary button-small" type="submit"${state.chatSendInFlight ? " disabled" : ""}>送信</button></form>
+  </div>`;
 }
 
 function renderConnecting() {
@@ -5680,7 +5964,7 @@ function renderConnecting() {
     const name = player?.name || (local ? "あなた" : "対戦相手");
     const avatarUrl = local ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
     const avatar = shared()?.profileAvatar?.renderBattle?.(name, avatarUrl, { hidden: !local && state.hideOpponentAvatar, className: "vb-vs-avatar" }) || "";
-    return `<div class="vb-vs-half ${local ? "is-local" : "is-remote"}"><div class="vb-vs-plate">${avatar}<div class="vb-vs-name"><small>${local ? "YOU" : "OPPONENT"}</small><b>${escapeHtml(name)}</b><span>開始HP <em>${startingHp}</em>${sampleCount ? ` · SAMPLE ${sampleCount}` : ""}</span></div></div></div>`;
+    return `<div class="vb-vs-half ${local ? "is-local" : "is-remote"}"><div class="vb-vs-plate">${avatar}<div class="vb-vs-name"><small>${local ? "YOU" : "OPPONENT"}</small><b>${escapeHtml(name)}</b><span>理性 <em>${startingHp}</em>${sampleCount ? ` · SAMPLE ${sampleCount}` : ""}</span></div></div></div>`;
   };
   return renderBattleScreen("connecting", `
     <div class="vb-vs-stage">
@@ -5707,36 +5991,43 @@ function renderStatusCard({ icon, eyebrow, title, body, details = "", actions = 
 
 const BATTLE_MENU_DESTROY = '<button class="button button-danger" type="button" data-online-destroy>ルーム破棄</button>';
 
+// DMヘッダー：相手の名前と口調、ROUND、ふたりの理性。理性ゲージの data-hud-* は結果の演出が使う。
 function renderOnlineHud({ hpOverride = null, menuItems = BATTLE_MENU_DESTROY } = {}) {
-  const playerHtml = (player, index) => {
+  const opponent = getOpponent();
+  const remoteIndex = state.playerIndex === 0 ? 1 : 0;
+  const persona = opponentPersonaId();
+  const personaLabel = persona ? getRoleplayVoiceSet(persona)?.label : "";
+  const gauge = (player, index) => {
     const maxHp = Number(player.maxHp || player.startingHp || MAX_HP);
     const sampleCount = normalizeSampleCount(player.sampleCount);
     const localPlayer = index === state.playerIndex;
     const hp = Math.max(0, Number(hpOverride?.[index] ?? player.hp));
     const ratio = Math.max(0, Math.min(1, hp / maxHp)).toFixed(3);
-    const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
-    const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "vb-hud-avatar" }) || "";
+    const label = localPlayer ? "あなたの理性" : `${player.name}の理性`;
     const achievements = renderOnlineMatchAchievementShowcase(player.uid, {
       className: `is-hud ${localPlayer ? "is-local" : "is-opponent"}`,
     });
-    return `<div class="vb-hud-player ${localPlayer ? "is-local" : "is-remote"} ${index === 0 ? "is-left" : "is-right"}" data-hud-player="${index}">
-      ${avatar}<div class="vb-hud-info">
-        <div class="vb-hud-name"><b>${escapeHtml(player.name)}</b>${localPlayer ? "<em>YOU</em>" : ""}${sampleCount ? `<em class="is-sample">SAMPLE ${sampleCount}</em>` : ""}${player.streak > 0 ? `<em class="is-streak">${player.streak}連勝中</em>` : ""}</div>
-        ${achievements}
-        <div class="vb-hp${hp / maxHp <= 0.3 ? " is-low" : ""}" role="img" aria-label="${escapeHtml(player.name)} HP ${hp}/${maxHp}" style="--hp:${ratio};--hp-ghost:${ratio}"><i class="vb-hp-ghost"></i><i class="vb-hp-fill"></i></div>
-        <div class="vb-hp-value">HP <b data-hud-hp>${hp}</b>/${maxHp}</div>
-        <span class="vb-damage-pop" aria-hidden="true"></span>
-      </div>
+    return `<div class="vb-dm-gauge ${localPlayer ? "is-local" : "is-remote"}" data-hud-player="${index}">
+      <div class="vb-dm-gauge-label"><span>${escapeHtml(label)}${sampleCount ? `<em class="is-sample">SAMPLE ${sampleCount}</em>` : ""}</span><span class="vb-hp-value"><b data-hud-hp>${hp}</b>/${maxHp}</span><span class="vb-damage-pop" aria-hidden="true"></span></div>
+      <div class="vb-hp${hp / maxHp <= 0.3 ? " is-low" : ""}" role="img" aria-label="${escapeHtml(label)} ${hp}/${maxHp}" style="--hp:${ratio};--hp-ghost:${ratio}"><i class="vb-hp-ghost"></i><i class="vb-hp-fill"></i></div>
+      ${achievements}
     </div>`;
   };
-  return `<div class="vb-hud">${playerHtml(state.players[0], 0)}
-    <div class="vb-round"><small>ROUND</small><strong>${state.round}<span>/${MAX_ROUNDS}</span></strong></div>
-    ${playerHtml(state.players[1], 1)}</div>
-    <div class="online-room-strip vb-room-strip"><span class="vb-room-id">ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span>
-      <span class="connection-pill ${state.channelReady ? "connected" : ""}">${state.channelReady ? "● P2P接続中" : "○ 再接続待ち"}</span>
-      <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}" data-online-opponent-presence>${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span>
-      ${state.reunionMatch ? '<span class="connection-pill connected">顔なじみと再会</span>' : ""}
-      ${renderBattleMenu(menuItems)}</div>`;
+  const avatar = shared()?.profileAvatar?.renderBattle?.(opponent?.name || "相手", state.remoteAvatar?.url, {
+    hidden: state.hideOpponentAvatar,
+    className: "vb-dm-avatar",
+  }) || "";
+  return `<header class="vb-dm-head">
+    <div class="vb-dm-who">
+      <span class="vb-dm-avatar-wrap">${avatar}${persona ? `<span class="vb-dm-avatar-mark">${renderChatPersonaMark(persona)}</span>` : ""}</span>
+      <div class="vb-dm-name"><b>${escapeHtml(opponent?.name || "相手")}</b>
+        <small>${personaLabel ? `${escapeHtml(personaLabel)}で貼り合い中` : "貼り合い中"}${state.reunionMatch ? " · 顔なじみと再会" : ""}<span class="connection-pill vb-dm-presence ${state.opponentOnline ? "connected" : "warning"}" data-online-opponent-presence>${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span></small>
+      </div>
+      <span class="vb-dm-round" aria-label="ROUND ${state.round}/${MAX_ROUNDS}">R<b>${state.round}</b>/${MAX_ROUNDS}</span>
+      ${renderBattleMenu(menuItems)}
+    </div>
+    <div class="vb-dm-gauges">${gauge(state.players[remoteIndex], remoteIndex)}${gauge(state.players[state.playerIndex], state.playerIndex)}</div>
+  </header>`;
 }
 
 function renderBattleMenu(extraItems = "") {
@@ -5746,6 +6037,7 @@ function renderBattleMenu(extraItems = "") {
       <button class="avatar-visibility-toggle" type="button" data-online-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
       ${window.HariaiBattleFx ? `<button type="button" data-battle-fx-speed>演出の速さ<span>${fxSpeed}</span></button>` : ""}
       ${extraItems}
+      <p class="vb-menu-room">ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())} · ${state.channelReady ? "P2P接続中" : "再接続待ち"}</p>
     </div></details>`;
 }
 
@@ -5755,123 +6047,71 @@ function renderRoundSelect() {
   const progress = Math.max(0, Math.min(100, (state.selectionRemainingMs / SELECTION_TIME_LIMIT_MS) * 100));
   const warning = timerStarted && remainingSeconds <= SELECTION_WARNING_SECONDS;
   const selectedItem = state.deck.find((item) => item.id === state.selectedCardId && !item.used) || null;
-  const cards = state.deck.map((item, index) => `<button type="button" class="vb-hand-card${item.isSample ? " is-sample" : ""}${item.id === state.signatureCardId ? " is-signature" : ""}${item.used ? " is-used" : ""}${state.selectedCardId === item.id ? " is-selected" : ""}"
-    data-online-card="${escapeHtml(item.id)}" ${item.used || !timerStarted ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
-    <img src="${item.url}" alt="候補画像 ${index + 1}" draggable="false" />
-    ${item.id === state.signatureCardId ? '<i class="vb-hand-signature" aria-label="シグネチャーカード">✦</i>' : ""}
-    <span>${item.used ? "USED" : item.isSample ? "SAMPLE" : `CARD ${String(index + 1).padStart(2, "0")}`}</span>
-  </button>`).join("");
-  const preview = selectedItem
-    ? renderStageCard(selectedItem, { signature: selectedItem.id === state.signatureCardId, alt: "選択中の画像" })
-    : renderCardBack();
-  return renderBattleScreen("select", `${renderOnlineHud()}
-    <div class="vb-select-head${timerStarted ? " running" : " pending"}${warning ? " warning" : ""}" data-selection-timer role="timer" aria-live="polite"
-      aria-label="${timerStarted ? `画像選択 残り${remainingSeconds}秒` : "画像選択の開始待ち"}" style="--selection-progress:${progress}%">
-      <div class="vb-heading"><span class="eyebrow">ROUND ${state.round} · ひみつの1枚</span><h1 class="vb-title">勝負の一枚を選ぶ</h1></div>
-      <div class="vb-timer"><strong data-selection-seconds>${timerStarted ? remainingSeconds : "--"}</strong><span data-selection-unit>${timerStarted ? "SEC" : "SYNC"}</span></div>
-      <div class="vb-timer-bar" aria-hidden="true"><i></i></div>
-    </div>
-    <div class="vb-select-stage"><div class="vb-select-preview">${preview}</div></div>
-    <div class="vb-hand" role="group" aria-label="登録した画像">${cards}</div>
-    ${renderScoreLog()}
-    <p class="vb-hint">${timerStarted ? "10秒以内に選択してください。時間切れ時は、選択中の画像を自動ロックします。控え画像も選べます。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
-    <div class="vb-actions"><button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この一枚でロック</button></div>`);
+  const cards = state.deck.map((item, index) => {
+    const selected = state.selectedCardId === item.id;
+    const tag = item.used ? "貼った" : item.isSample ? "SAMPLE" : "";
+    return `<button type="button" class="vb-hand-card${item.isSample ? " is-sample" : ""}${item.used ? " is-used" : ""}${selected ? " is-selected" : ""}"
+      data-online-card="${escapeHtml(item.id)}" ${item.used || !timerStarted ? "disabled" : ""} aria-pressed="${selected}" aria-label="手札 ${index + 1}${item.used ? "（貼った）" : ""}">
+      <img src="${item.url}" alt="" draggable="false" />${tag ? `<span>${tag}</span>` : ""}
+    </button>`;
+  }).join("");
+  const captionOption = selectedRoundCaptionOption(selectedItem);
+  const captions = roundCaptionOptions(selectedItem).map((option) => (
+    `<button type="button" class="vb-reaction-chip" data-online-round-caption="${option.id}" aria-pressed="${option.id === captionOption.id}">${option.text ? escapeHtml(option.text) : "言葉なし"}</button>`
+  )).join("");
+  const zoom = selectedItem?.url
+    ? `<button type="button" class="vb-hand-zoom" data-zoom-src="${escapeHtml(selectedItem.url)}" data-zoom-alt="選んでいる画像">選んでいる1枚を見る</button>`
+    : "";
+  return renderDmScreen("select", {
+    dock: `<section class="vb-dm-pick" aria-labelledby="onlinePickTitle">
+      <div class="vb-select-head${timerStarted ? " running" : " pending"}${warning ? " warning" : ""}" data-selection-timer role="timer" aria-live="polite"
+        aria-label="${timerStarted ? `画像選択 残り${remainingSeconds}秒` : "画像選択の開始待ち"}" style="--selection-progress:${progress}%">
+        <div class="vb-heading"><span class="eyebrow">ROUND ${state.round} · せーので貼る</span><h1 class="vb-title" id="onlinePickTitle">次に貼る1枚</h1></div>
+        <div class="vb-timer"><strong data-selection-seconds>${timerStarted ? remainingSeconds : "--"}</strong><span data-selection-unit>${timerStarted ? "秒" : "準備中"}</span></div>
+        <div class="vb-timer-bar" aria-hidden="true"><i></i></div>
+      </div>
+      <div class="vb-hand" role="group" aria-label="手札">${cards}</div>
+      <div class="vb-dm-caption-row"><div class="vb-dm-caption-choices" role="group" aria-label="いっしょに送るひとこと">${captions}</div>${zoom}</div>
+      <div class="vb-actions"><button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>せーので貼る</button></div>
+      <p class="vb-hint">${timerStarted ? "時間切れのときは、選んでいる1枚がそのまま貼られます。" : "ふたりの通信がそろうと、10秒の選択時間が始まります。"}</p>
+    </section>`,
+  });
 }
 
 function renderWaitingPick() {
-  return renderBattleWait("SECRET PICK", "相手の画像選択を待っています", "選んだ画像はまだ相手へ送信していません。", "", "", true, "pick");
+  return renderDmScreen("waitingPick", { tail: renderDmOpponentStatus() });
 }
 
 function renderWaitingImage() {
-  const retryAction = state.imageTransferError
-    ? '<button class="button button-primary button-small" id="onlineRetryImageTransfer">画像を再送する</button>'
+  const retry = state.imageTransferError
+    ? `<div class="vb-dm-alert" role="alert"><p>転送を完了できませんでした：${escapeHtml(state.imageTransferError)}</p><button class="button button-primary button-small" id="onlineRetryImageTransfer">画像を再送する</button></div>`
     : "";
-  const body = state.imageTransferError
-    ? `転送を完了できませんでした：${escapeHtml(state.imageTransferError)}`
-    : `転送状況 ${state.transferProgress}%`;
-  return renderBattleWait("P2P IMAGE TRANSFER", state.imageTransferError ? "画像を再送できます" : "画像を安全に転送しています", body, retryAction, "", true, "transfer");
+  return renderDmScreen("waitingImage", { tail: renderDmOpponentStatus(), dock: retry });
 }
 
 function renderWaitingScore() {
-  return renderBattleWait("PRIVATE SCORE", "相手の採点を待っています", "あなたの点数は相手の確定まで非公開です。", "", "", true, "score");
+  const score = Number(state.roundData?.scores?.[state.uid]);
+  const reaction = state.localScoreReactions.get(state.round);
+  const text = Number.isInteger(score) && reaction ? resolveScoreReaction({ ...reaction, score }) : "";
+  const draft = Number.isInteger(score)
+    ? `<div class="ha-msg is-mine vb-dm-score is-draft"><div class="ha-msg-body">
+        <div class="${dmBubbleClass(localRoleplayVoiceSetId())} vb-dm-score-bubble is-${scoreReactionBand(score)}"><span class="vb-dm-score-head"><b class="ha-score-number is-${scoreReactionBand(score)}">${score}<small>点</small></b><span class="vb-dm-score-word">${scoreWord(score)}</span></span>${text ? `<p class="vb-result-reaction">${escapeHtml(text)}</p>` : ""}</div>
+        <small class="vb-msg-note">送りました · ${escapeHtml(getOpponent()?.name || "相手")}が点数を返すまで、相手には見えません</small>
+      </div></div>`
+    : "";
+  return renderDmScreen("waitingScore", { tail: `${draft}${renderDmOpponentStatus()}` });
 }
 
 function renderWaitingContinue() {
-  return renderBattleWait(
-    "ROUND READY",
-    "相手の準備を待っています",
-    "両者が準備すると次の画面へ進みます。",
-    "",
-    renderFinishReplySlot(state.history.at(-1), { terminal: true }),
-    !isMatchOver(),
-  );
+  return renderDmScreen("waitingContinue", {
+    tail: `${renderFinishReplySlot(state.history.at(-1), { terminal: true })}${renderDmOpponentStatus()}`,
+    menuItems: isMatchOver() ? "" : BATTLE_MENU_DESTROY,
+  });
 }
 
-function renderBattleWait(
-  eyebrow,
-  title,
-  body,
-  extraActions = "",
-  extraContent = "",
-  allowDestroy = true,
-  visual = "continue",
-) {
-  const localItem = getSelectedItem();
-  const remoteItem = state.remoteImages.get(state.round);
-  let stage = "";
-  if (visual === "pick" || visual === "transfer") {
-    const locked = localItem
-      ? `<div class="vb-wait-mine">${renderStageCard(localItem, { signature: localItem.id === state.signatureCardId, alt: "ロックした画像" })}<span class="vb-seal is-small" aria-hidden="true">LOCKED</span></div>`
-      : "";
-    stage = `<div class="vb-wait-stage"><div class="vb-wait-back">${renderCardBack()}</div>${locked}</div>`;
-  } else if (visual === "score") {
-    const pair = [0, 1].map((index) => {
-      const item = index === state.playerIndex ? localItem : remoteItem;
-      return `<div class="vb-wait-pair-card">${renderStageCard(item, { alt: `${state.players[index]?.name || "PLAYER"}の画像` })}<span class="vb-wait-pair-badge" aria-hidden="true">?</span></div>`;
-    }).join("");
-    stage = `<div class="vb-wait-stage is-pair">${pair}</div>`;
-  }
-  const transferRatio = Math.max(0, Math.min(100, Number(state.transferProgress) || 0)) / 100;
-  const transfer = visual === "transfer" && !state.imageTransferError
-    ? `<div class="vb-transfer" aria-hidden="true"><i data-transfer-bar style="--transfer:${transferRatio.toFixed(3)}"></i></div>`
-    : "";
-  return renderBattleScreen("wait", `${renderOnlineHud({ menuItems: allowDestroy ? BATTLE_MENU_DESTROY : "" })}
-    <div class="vb-wait-head"><span class="eyebrow">${escapeHtml(eyebrow)}</span><h1 class="vb-title">${title}</h1><p class="vb-lead" data-transfer-text>${body}</p></div>
-    ${stage}${transfer}
-    ${extraActions ? `<div class="vb-actions">${extraActions}</div>` : ""}
-    ${extraContent}`);
-}
-
+// 両者の受信がそろうと、相手の1枚がスレッドに届き、そのまま下で採点する。
 function renderReveal() {
-  const localItem = getSelectedItem();
-  const remoteItem = state.remoteImages.get(state.round);
-  const opponent = getOpponent();
-  const remoteIndex = state.playerIndex === 0 ? 1 : 0;
-  return renderBattleScreen("reveal", `${renderOnlineHud()}
-    <div class="vb-heading is-center"><span class="eyebrow">ROUND ${state.round} · ふたりとも貼りました</span><h1 class="vb-title">画像、オープン。</h1></div>
-    <div class="vb-reveal-stage"><i class="vb-reveal-dim" aria-hidden="true"></i>
-      ${renderArenaCard(remoteIndex, remoteItem)}${renderArenaCard(state.playerIndex, localItem)}
-    </div>
-    <p class="vb-hint vb-after">画像をタップすると拡大できます。チャットで感想も送れます。</p>
-    <div class="vb-actions vb-after"><button class="button button-primary" id="onlineBeginScoring">${escapeHtml(opponent?.name || "相手")}の画像を採点する</button></div>`, { fxScene: "reveal" });
-}
-
-function renderArenaCard(index, item) {
-  const player = state.players[index];
-  const local = index === state.playerIndex;
-  const signature = local ? Boolean(item?.id) && item.id === state.signatureCardId : item?.signature === true;
-  const alt = `${player.name}が出した画像`;
-  return `<article class="vb-reveal-col ${local ? "is-local" : "is-remote"}" data-reveal-side="${local ? "local" : "remote"}">
-    <div class="vb-plate"><b>${escapeHtml(player.name)}</b><small>${local ? "あなた" : "相手"}</small></div>
-    <div class="vb-flip">
-      <div class="vb-flip-inner">
-        <div class="vb-flip-face is-back">${renderCardBack()}</div>
-        <button type="button" class="vb-flip-face is-front" data-zoom-src="${item?.url || ""}" data-zoom-alt="${escapeHtml(alt)}" aria-label="${escapeHtml(player.name)}の画像を拡大">${renderStageCard(item, { signature, alt })}</button>
-      </div>
-      <i class="vb-burst" aria-hidden="true"></i>
-    </div>
-    <div class="vb-after">${renderCardCaption(item, { local })}</div>
-  </article>`;
+  return renderScore();
 }
 
 // 1〜10点のメーター。点数までを、ひとことリアクションと同じ帯（1〜6／7〜8／9〜10）の色で塗る。
@@ -5894,42 +6134,33 @@ function renderThreadAvatar() {
 
 function renderScore() {
   const opponent = getOpponent();
-  const item = state.remoteImages.get(state.round);
-  const localItem = getSelectedItem();
   const selected = state.selectedScore;
   const band = selected ? scoreReactionBand(selected) : "";
   const buttons = Array.from({ length: MAX_SCORE_STEPS }, (_, index) => index + 1).map((score) => {
     const lit = selected && score <= selected;
     return `<button type="button" class="vb-score-button is-${scoreReactionBand(score)}${lit ? " is-lit" : ""}" data-online-score="${score}" aria-pressed="${selected === score}" aria-label="${score}点">${score}</button>`;
   }).join("");
-  const alt = `${opponent?.name || "相手"}の採点対象画像`;
   const reaction = selected && Number.isInteger(state.selectedScoreReaction)
     ? scoreReactionOptions(localRoleplayVoiceSetId(), selected).find((option) => option.index === state.selectedScoreReaction)?.text || ""
     : "";
   const draft = selected
-    ? `<div class="ha-msg is-mine vb-score-draft"><div class="ha-msg-body">
-        <p class="ha-bubble ha-score-bubble is-draft"><b class="ha-score-number is-${band}">${selected}<small>点</small></b>${reaction ? `<span>${escapeHtml(reaction)}</span>` : ""}</p>
+    ? `<div class="ha-msg is-mine vb-score-draft vb-dm-score is-draft"><div class="ha-msg-body">
+        <div class="${dmBubbleClass(localRoleplayVoiceSetId())} vb-dm-score-bubble is-${band}"><span class="vb-dm-score-head"><b class="ha-score-number is-${band}">${selected}<small>点</small></b><span class="vb-dm-score-word">${scoreWord(selected)}</span></span>${reaction ? `<p class="vb-result-reaction">${escapeHtml(reaction)}</p>` : ""}</div>
         <small class="vb-msg-note">送信前 · 点数は、ふたりとも決めてから同時に開きます</small>
       </div></div>`
     : "";
-  return renderBattleScreen("score", `${renderOnlineHud()}
-    <div class="vb-thread" role="group" aria-label="ROUND ${state.round}のやりとり">
-      <p class="ha-divider">ROUND ${state.round} · ふたりとも貼りました</p>
-      <div class="ha-msg is-theirs">${renderThreadAvatar()}<div class="ha-msg-body">
-        <button type="button" class="vb-score-card" data-zoom-src="${item?.url || ""}" data-zoom-alt="${escapeHtml(alt)}" aria-label="採点する画像を拡大">${renderStageCard(item, { alt })}</button>
-        ${renderCardCaption(item)}
-      </div></div>
-      ${localItem ? `<div class="ha-msg is-mine vb-own-post"><div class="ha-msg-body">${renderStageCard(localItem, { alt: "あなたが出した画像" })}${renderCardCaption(localItem, { local: true })}</div></div>` : ""}
-      ${draft}
-    </div>
-    <section class="vb-composer" aria-labelledby="onlineScoreTitle">
-      <div class="vb-composer-head"><h1 class="vb-composer-title" id="onlineScoreTitle">${escapeHtml(opponent?.name || "相手")}の1枚を採点</h1>${band ? `<span class="vb-band-chip is-${band}">${SCORE_BAND_LABELS[band]}</span>` : ""}</div>
+  const scene = state.screen === "reveal" ? "reveal" : "score";
+  return renderDmScreen(scene, {
+    fxScene: scene === "reveal" ? "reveal" : "",
+    tail: draft,
+    dock: `<section class="vb-composer" aria-labelledby="onlineScoreTitle">
+      <div class="vb-composer-head"><h1 class="vb-composer-title" id="onlineScoreTitle">${escapeHtml(opponent?.name || "相手")}の1枚、何点刺さった？</h1>${band ? `<span class="vb-band-chip is-${band}">${SCORE_BAND_LABELS[band]}</span>` : '<span class="vb-dm-hint">ふたりが返すまで見えない</span>'}</div>
       <div class="vb-score-pad" role="group" aria-label="点数を選ぶ（1〜10点）">${buttons}</div>
-      <div class="vb-score-legend" aria-hidden="true"><span class="is-low">1〜6 まだ平気</span><span class="is-mid">7〜8<br />効いた</span><span class="is-high">9〜10<br />刺さった</span></div>
+      <div class="vb-score-legend" aria-hidden="true"><span class="is-low">1〜6 まだ平気</span><span class="is-mid">7〜8 効いた</span><span class="is-high">9〜10 刺さった</span></div>
       ${renderScoreReactionPicker(selected)}
       <div class="vb-actions"><button class="button button-primary" id="onlineLockScore" ${selected ? "" : "disabled"}>${selected ? `${selected}点で返す` : "点数を選んでください"}</button></div>
-      <p class="vb-hint">確定後の変更はできません。点数とひとことリアクションは、結果の発表まで相手に伏せられます。</p>
-    </section>`);
+    </section>`,
+  });
 }
 
 function localRoleplayVoiceSetId(targetState = state) {
@@ -5937,19 +6168,18 @@ function localRoleplayVoiceSetId(targetState = state) {
     || ROLEPLAY_VOICE_SETS[0].id;
 }
 
-function renderCardCaption(item, { local = false } = {}) {
+// 相手のひとことは相手の口調の吹き出しで出す。自由記述を隠す設定の時は、相手の口調の定型へ置き換える。
+function renderCardCaption(item, { personaId = "" } = {}) {
   if (!item) return "";
-  const visible = local
-    ? { caption: normalizeCardCaption(item.caption), replaced: false }
-    : resolveVisibleCardCaption(item.caption, { showCustom: state.showOpponentCustomFinish, voiceSetId: item.voiceSetId });
+  const visible = resolveVisibleCardCaption(item.caption, { showCustom: state.showOpponentCustomFinish, voiceSetId: item.voiceSetId });
   if (!visible.caption) return "";
-  return `<p class="vb-card-caption${local ? " is-local" : ""}">${escapeHtml(visible.caption)}${visible.replaced ? "<small>自由記述のひとことは、表示設定により定型文へ置き換えています。</small>" : ""}</p>`;
+  return `<p class="vb-card-caption ${dmBubbleClass(personaId || item.voiceSetId)}">${escapeHtml(visible.caption)}${visible.replaced ? "<small>自由記述のひとことは、表示設定により定型文へ置き換えています。</small>" : ""}</p>`;
 }
 
 function renderScoreReactionPicker(score) {
   const options = score ? scoreReactionOptions(localRoleplayVoiceSetId(), score) : [];
   if (!options.length) return "";
-  return `<div class="vb-reaction-picker" role="group" aria-label="ひとことリアクション（任意）"><small>ひとことリアクション（任意） · ${escapeHtml(getRoleplayVoiceSet(localRoleplayVoiceSetId()).label)}の口調</small>
+  return `<div class="vb-reaction-picker" role="group" aria-label="ひとことリアクション（任意）"><small>ひとことを添える（任意） · ${escapeHtml(getRoleplayVoiceSet(localRoleplayVoiceSetId()).label)}の口調</small>
     <div>${options.map((option) => `<button type="button" class="vb-reaction-chip" data-online-score-reaction="${option.index}" aria-pressed="${state.selectedScoreReaction === option.index}">${escapeHtml(option.text)}</button>`).join("")}</div></div>`;
 }
 
@@ -6008,31 +6238,10 @@ function handleRemoteScoreReaction(message, targetState = state) {
   syncScoreReactionSlots(round, targetState);
 }
 
-function renderScoreLog() {
-  if (!state.history.length) return "";
-  const own = state.playerIndex;
-  const rows = state.history.map((result) => {
-    const scores = [result.scorePlayerOne, result.scorePlayerTwo];
-    // 相手の画像はラウンドごとに解放しているので、ログには自分のカードだけを小さく出す。
-    const localItem = state.deck.find((item) => item.id === result.localCardId);
-    const thumb = localItem?.url
-      ? `<img src="${localItem.url}" alt="${escapeHtml(`ROUND ${result.round}に出した画像`)}" loading="lazy" />`
-      : '<span class="vb-log-empty" aria-hidden="true"></span>';
-    const received = scores[own];
-    const given = scores[own === 0 ? 1 : 0];
-    const outcome = received > given ? "is-win" : received < given ? "is-lose" : "is-draw";
-    return `<li class="${outcome}"><small>R${result.round}</small>${thumb}
-      <span class="vb-log-score"><b class="is-local">${received}</b><i aria-hidden="true">–</i><b>${given}</b></span>
-      <span class="ha-sr">相手の採点${received}点、あなたの採点${given}点</span></li>`;
-  }).join("");
-  return `<section class="vb-score-log" aria-label="これまでの採点"><h2>これまで</h2><ol>${rows}</ol></section>`;
-}
-
 function renderFinishReplySummary(result) {
   const finish = result?.finish;
   if (!finish?.replyAcknowledged) return "";
   const name = escapeHtml(finish.replyName || state.players[result.loserIndex]?.name || "PLAYER");
-  const signatureClass = finish.signature ? " is-signature" : "";
   let label = "決着返礼";
   let body = finish.replyLine
     ? `<blockquote>${escapeHtml(finish.replyLine)}</blockquote>`
@@ -6053,7 +6262,7 @@ function renderFinishReplySummary(result) {
   } else if (finish.replyLineReplaced) {
     note = '<small class="finish-result-reply-disclosure">自由記述は表示設定により、送信者の口調セットに対応する定型文へ置き換えています。</small>';
   }
-  return `<article class="finish-result-reply${signatureClass}"><span>${label}</span><strong>${name}</strong>${body}${note}</article>`;
+  return `<article class="finish-result-reply"><span>${label}</span><strong>${name}</strong>${body}${note}</article>`;
 }
 
 function renderFinishReplySlot(result, { terminal = false } = {}) {
@@ -6071,89 +6280,95 @@ function syncFinishReplySlot(result) {
 
 function renderRoundResult() {
   const result = state.history.at(-1);
-  const scores = [result.scorePlayerOne, result.scorePlayerTwo];
-  const topScore = Math.max(...scores);
-  const tier = result.winnerIndex === null ? "draw" : topScore >= 10 ? "perfect" : topScore >= 8 ? "critical" : "great";
-  // 決着ラウンドはFINISHのカットインが見せ場なので、結果画面は完成状態で出す。
+  // 決着ラウンドはFINISHのカットインが見せ場なので、スレッドは完成状態で出す。
   const animate = !result.lethal && battleFxPending("result");
   const hpOverride = animate && result.loserIndex !== null ? { [result.loserIndex]: result.previousHp } : null;
-  const damageText = result.winnerIndex === null
-    ? "同点。両者ノーダメージです。"
-    : `${state.players[result.loserIndex].name}に ${result.damage} DAMAGE。${result.lethal ? " HP 0、決着！" : ""}`;
-  const pursuitLines = renderOnlinePursuitLines(result);
-  const finishBadge = result.lethal
-    ? `<div class="finish-result-badge ${result.finish?.signature ? "is-signature" : ""}"><span>${result.finish?.signature ? "SIGNATURE FINISH" : "FINISH"}</span><strong>${escapeHtml(result.finish?.winnerName || state.players[result.winnerIndex].name)}の決着演出</strong></div>`
-    : "";
-  const localItem = getSelectedItem();
-  const remoteItem = state.remoteImages.get(result.round);
-  const remoteIndex = state.playerIndex === 0 ? 1 : 0;
-  // 1組＝その人が貼った画像と、相手から返ってきた点数。点数の吹き出しは採点した側に置く。
-  const exchange = (index) => {
-    const local = index === state.playerIndex;
-    const rater = state.players[local ? remoteIndex : state.playerIndex];
-    const outcome = result.winnerIndex === null ? "is-draw" : result.winnerIndex === index ? "is-winner" : "is-loser";
-    const stamp = result.winnerIndex === index
-      ? `<span class="vb-stamp is-${tier}" aria-hidden="true">${escapeHtml(scoreLabel(scores[index]))}</span>`
-      : "";
-    return `<div class="vb-result-col ${local ? "is-local" : "is-remote"} ${outcome}" data-result-col="${index}">
-      <div class="ha-msg ${local ? "is-mine" : "is-theirs"}">${local ? "" : renderThreadAvatar()}<div class="ha-msg-body">
-        <div class="vb-result-card">${renderStageCard(local ? localItem : remoteItem, { alt: `${state.players[index].name}の画像` })}${stamp}</div>
-        ${renderCardCaption(local ? localItem : remoteItem, { local })}
-      </div></div>
-      <div class="ha-msg ${local ? "is-theirs" : "is-mine"} vb-result-reply">${local ? renderThreadAvatar() : ""}<div class="ha-msg-body">
-        <div class="ha-bubble vb-result-score is-${scoreReactionBand(scores[index])}"><span class="ha-sr">${escapeHtml(rater?.name || "")}の採点</span><b data-result-score="${scores[index]}">${animate ? "–" : scores[index]}</b><small>点</small>${renderScoreReactionSlot(result, index)}</div>
-        ${renderScoreMeter(scores[index])}
-      </div></div>
-    </div>`;
-  };
   const menuItems = `${isMatchOver() ? "" : '<button class="button button-danger" data-online-destroy>ルーム破棄</button>'}`;
-  return renderBattleScreen("result", `${renderOnlineHud({ hpOverride, menuItems })}
-    <div class="vb-heading is-center"><span class="eyebrow">ROUND ${state.round} の結果</span><h1 class="vb-title vb-result-title">${result.winnerIndex === null ? "引き分け" : `${escapeHtml(state.players[result.winnerIndex].name)}の勝ち`}</h1></div>
-    <div class="vb-result-stage" data-result-tier="${tier}">${exchange(remoteIndex)}${exchange(state.playerIndex)}
-      <i class="vb-rays" aria-hidden="true"></i><div class="vb-sparks" data-result-sparks aria-hidden="true"></div></div>
-    <div class="vb-after">
-      <div class="damage-callout vb-damage">${escapeHtml(damageText)}</div>${finishBadge}${renderFinishReplySlot(result)}${pursuitLines}
-    </div>
-    <div class="vb-actions vb-after"><button class="button button-primary" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
-    <i class="vb-flash" aria-hidden="true"></i>`, { fxScene: animate ? "result" : "" });
+  return renderDmScreen("result", {
+    hpOverride,
+    menuItems,
+    fxScene: animate ? "result" : "",
+    tail: result.lethal ? renderFinishReplySlot(result) : "",
+    dock: `<div class="vb-actions"><button class="button button-primary" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1} · 次の1枚を選ぶ`}</button></div>`,
+  });
 }
 
+// 9点以上を受けた画像の持ち主の追撃セリフ。スレッドでは、その人の吹き出しとして流す。
 function renderOnlinePursuitLines(result) {
   if (result.lethal) return "";
   const scores = [result.scorePlayerOne, result.scorePlayerTwo];
-  const calls = state.players.map((player, index) => ({ player, score: scores[index] }))
+  return state.players.map((player, index) => ({ player, index, score: scores[index] }))
     .filter(({ score }) => score >= 9)
-    .map(({ player, score }) => `<article class="online-pursuit-call"><span>追撃セリフ / SCORE ${score}</span><strong>${escapeHtml(player.name)}</strong><blockquote>${escapeHtml(normalizePursuitLine(player.pursuitLine))}</blockquote></article>`)
-    .join("");
-  return calls ? `<section class="online-pursuit-lines" aria-label="追撃セリフ">${calls}</section>` : "";
+    .map(({ player, index, score }) => {
+      const local = index === state.playerIndex;
+      return `<div class="ha-msg ${local ? "is-mine" : "is-theirs"} vb-dm-pursuit">${local ? "" : renderThreadAvatar()}<div class="ha-msg-body">
+        <small class="vb-dm-from">${local ? "あなたの追撃" : `${escapeHtml(player.name)}の追撃`} · ${score}点</small>
+        <p class="${dmBubbleClass(local ? localRoleplayVoiceSetId() : opponentPersonaId())}">${escapeHtml(normalizePursuitLine(player.pursuitLine))}</p>
+      </div></div>`;
+    }).join("");
+}
+
+// 試合結果：数字の勝ち負けより、効かされた1枚と、相手に効いた自分の言葉を残す。
+function renderFinalMostEffective() {
+  const result = mostEffectiveRemoteResult(state.history, state.playerIndex);
+  const item = result ? state.remoteImages.get(result.round) : null;
+  if (!result || !item?.url) return "";
+  const name = getOpponent()?.name || "相手";
+  const { given } = localRoundScores(result, state.playerIndex);
+  const band = scoreReactionBand(given);
+  const reply = scoreReactionText(result, state.playerIndex === 0 ? 1 : 0);
+  return `<section class="vb-final-hit" aria-labelledby="onlineFinalHitTitle">
+    <h2 id="onlineFinalHitTitle">いちばん効かされた1枚</h2>
+    <div class="vb-final-hit-card">
+      <button type="button" class="vb-dm-photo" data-zoom-src="${escapeHtml(item.url)}" data-zoom-alt="${escapeHtml(`${name}が貼った画像`)}" aria-label="${escapeHtml(`${name}が貼った画像を拡大`)}"><img src="${escapeHtml(item.url)}" alt="${escapeHtml(`ROUND ${result.round}に${name}が貼った画像`)}" draggable="false" /></button>
+      <div class="vb-final-hit-body">
+        <p class="vb-final-hit-score"><small>ROUND ${result.round}</small><b class="ha-score-number is-${band}">${given}<small>点</small></b><span>${scoreWord(given)}</span></p>
+        ${renderCardCaption(item, { personaId: item.voiceSetId })}
+        ${reply ? `<p class="vb-final-hit-reply">あなた「${escapeHtml(reply)}」</p>` : ""}
+      </div>
+    </div>
+  </section>`;
+}
+
+function renderFinalLandedWords() {
+  const landed = landedLocalCaptions(state.history, state.playerIndex, (result) => sentCaptionForRound(result.round));
+  if (!landed.length) return "";
+  const name = getOpponent()?.name || "相手";
+  const rows = landed.map((entry) => {
+    const result = state.history.find((item) => item.round === entry.round);
+    const reply = scoreReactionText(result, state.playerIndex);
+    return `<li><b class="ha-score-number is-${scoreReactionBand(entry.score)}">${entry.score}</b><div><span>「${escapeHtml(entry.caption)}」</span><small>ROUND ${entry.round}${reply ? ` · ${escapeHtml(name)}「${escapeHtml(reply)}」` : ""}</small></div></li>`;
+  }).join("");
+  return `<section class="vb-final-words" aria-labelledby="onlineFinalWordsTitle"><h2 id="onlineFinalWordsTitle">${escapeHtml(name)}に効いた、あなたの言葉</h2><ol>${rows}</ol></section>`;
 }
 
 function renderGameOver() {
   const outcome = state.outcome;
-  const title = outcome.winnerIndex === null ? "引き分け" : `${escapeHtml(state.players[outcome.winnerIndex].name)} WIN`;
-  const subtitle = outcome.reason === "hp" ? "HPが0になり、決着しました。" : outcome.reason === "draw" ? "すべての判定項目が同点でした。" : "5ラウンド終了。残りHPと獲得点で判定しました。";
-  const localPlayer = state.players[state.playerIndex];
+  const opponentName = escapeHtml(getOpponent()?.name || "相手");
   const localResult = outcome.winnerIndex === null ? "DRAW" : outcome.winnerIndex === state.playerIndex ? "WIN" : "LOSE";
+  const title = localResult === "WIN" ? `${opponentName}を、落とした。` : localResult === "LOSE" ? `${opponentName}に、落とされちゃった。` : "引き分け";
+  const subtitle = outcome.reason === "hp" ? "理性が0になって、決着しました。" : outcome.reason === "draw" ? "残りの理性も受けた点数も、すべて同じでした。" : "5ラウンドが終わり、残りの理性と受けた点数で決まりました。";
+  const localPlayer = state.players[state.playerIndex];
   const shareButton = window.HariaiApp?.shared?.renderResultShareButton?.({
     mode: "通常型1on1",
     result: localResult,
-    details: [`残りHP ${Number(localPlayer?.hp || 0)}`, `全${state.round}ラウンド / 合計獲得点 ${Number(localPlayer?.totalReceived || 0)}`],
+    details: [`残りの理性 ${Number(localPlayer?.hp || 0)}`, `全${state.round}ラウンド / 合計獲得点 ${Number(localPlayer?.totalReceived || 0)}`],
   }) || "";
   const outcomeClass = localResult === "WIN" ? "is-win" : localResult === "LOSE" ? "is-lose" : "is-draw";
   return `<section class="screen gameover-wrap vb-screen vb-gameover ${outcomeClass}" data-battle-scene="gameover"><div class="gameover-card vb-gameover-card">
     <div class="vb-confetti-layer" data-battle-confetti aria-hidden="true"></div>
-    <div class="winner-emblem vb-emblem" aria-hidden="true"><i></i><span>${outcome.winnerIndex === null ? "=" : "✦"}</span></div>
-    <span class="eyebrow">ONLINE MATCH COMPLETE</span><p class="vb-outcome" aria-hidden="true">${localResult}</p><h1>${title}</h1><p>${escapeHtml(subtitle)}</p>
+    <span class="eyebrow">${opponentName}との貼り合い · ROUND ${state.round}で決着</span><p class="vb-outcome" aria-hidden="true">${localResult}</p><h1>${title}</h1><p>${escapeHtml(subtitle)}</p>
     ${state.reunionMatch ? '<div class="solo-reunion-result-note"><strong>また会えました</strong><span>顔なじみとの通常型1on1でした。</span></div>' : ""}
-    <div class="final-stats">${state.players.map((player, index) => `<div class="final-player ${outcome.winnerIndex === index ? "winner" : ""}">
-      <h2>${escapeHtml(player.name)} ${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</h2>
+    <div class="final-stats vb-final-players">${state.players.map((player, index) => `<div class="final-player ${outcome.winnerIndex === index ? "winner" : ""}">
+      <h2>${index === state.playerIndex ? "あなた" : escapeHtml(player.name)} ${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</h2>
       ${renderOnlineMatchAchievementShowcase(player.uid, {
         className: `is-result ${index === state.playerIndex ? "is-local" : "is-opponent"}`,
         compact: false,
       })}
-      <div class="stats-row"><div class="stat-box"><strong>${player.hp}</strong><span>残りHP</span></div>
-      <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
+      <p class="vb-final-reason">理性 <b>${Math.max(0, Number(player.hp) || 0)}</b><small>/${Number(player.maxHp || player.startingHp || MAX_HP)}</small></p>
     </div>`).join("")}</div>
+    ${renderFinalMostEffective()}
+    ${renderFinalLandedWords()}
     ${renderFinishReplySlot(state.history.at(-1), { terminal: true })}
     ${state.playerSafetyStopped ? "" : renderEngawaInvitation()}
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>AnjuPay ◆ ${formatAnjuPay(state.economy.points)}</strong></div>
@@ -6364,8 +6579,11 @@ function renderError() {
 }
 
 // なりきり吹き出し：口調の吹き出し（購入した枠・背景が優先）、言い方の演出、相手の吹き出しへのリアクション。
-function renderOnlineChatMessage(message) {
+// threadKey がある時はDMスレッドの吹き出しとして、自分を右・相手を左に置く。
+function renderOnlineChatMessage(message, { threadKey = "" } = {}) {
   const authorIndex = state.players.findIndex((player) => player.uid === message.authorUid);
+  const local = message.authorUid === state.uid;
+  const side = threadKey ? (local ? "player-two" : "player-one") : authorIndex === 1 ? "player-two" : "player-one";
   const messageId = String(message.id || "");
   const cosmetic = chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId);
   const personaId = normalizeChatPersonaId(message.voiceSetId);
@@ -6384,7 +6602,12 @@ function renderOnlineChatMessage(message) {
   const toggle = canReact
     ? `<button type="button" class="chat-react-toggle" data-chat-react-toggle="${escapeHtml(messageId)}" aria-expanded="${pickerOpen}" aria-label="${escapeHtml(message.name)}の吹き出しにリアクション"></button>`
     : "";
-  return `<div class="chat-message ${authorIndex === 1 ? "player-two" : "player-one"}${reactionId ? " has-reaction" : ""}" data-chat-message-id="${escapeHtml(messageId)}"><small>${renderChatPersonaMark(personaId)}${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small><span class="chat-bubble-row"><span class="chat-bubble-anchor">${content}${sticker}</span>${toggle}</span>${pickerOpen ? renderChatReactionPicker(messageId, reactionId) : ""}</div>`;
+  const heading = threadKey
+    ? `${renderChatPersonaMark(personaId)}${escapeHtml(local ? "あなた" : message.name)}`
+    : `${renderChatPersonaMark(personaId)}${escapeHtml(message.name)} / R${message.round}`;
+  const threadClasses = threadKey ? ` vb-dm-item vb-dm-chat ${local ? "is-mine" : "is-theirs"}` : "";
+  const threadAttribute = threadKey ? ` data-thread-key="${escapeHtml(threadKey)}"` : "";
+  return `<div class="chat-message ${side}${reactionId ? " has-reaction" : ""}${threadClasses}"${threadAttribute} data-chat-message-id="${escapeHtml(messageId)}"><small>${heading}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small><span class="chat-bubble-row"><span class="chat-bubble-anchor">${content}${sticker}</span>${toggle}</span>${pickerOpen ? renderChatReactionPicker(messageId, reactionId) : ""}</div>`;
 }
 
 function canReactToChatMessage(message) {
@@ -6405,7 +6628,7 @@ function renderChatTypingContent(typing) {
 
 function renderOnlineChat() {
   const messages = state.chatMessages.length
-    ? state.chatMessages.map(renderOnlineChatMessage).join("")
+    ? state.chatMessages.map((message) => renderOnlineChatMessage(message)).join("")
     : `<div class="chat-empty">画像について話してみましょう。<br />チャットはルーム内の2人だけに表示されます。</div>`;
   const reactions = [
     ...DEFAULT_REACTIONS,
@@ -6413,7 +6636,7 @@ function renderOnlineChat() {
   ];
   const typing = activeRemoteTyping();
   const effect = normalizeChatEffect(state.chatEffect);
-  return `<aside class="chat-panel"><div class="chat-head"><strong>ONLINE CHAT</strong><span>ルーム終了後に非表示</span></div>
+  return `<aside class="chat-panel" data-online-chat><div class="chat-head"><strong>ONLINE CHAT</strong><span>ルーム終了後に非表示</span></div>
     <div class="chat-messages" id="onlineChatMessages">${messages}</div>
     <p class="chat-typing" id="onlineChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderChatTypingContent(typing) : ""}</p>
     ${renderChatTools({ id: "online", textReactions: reactions, stamps: getAvailableStamps(state.economy), textAttribute: "data-online-reaction", stampAttribute: "data-online-stamp" })}
@@ -6429,10 +6652,7 @@ function bindScreenEvents() {
   });
   document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", openDestroyDialog));
   document.querySelector("[data-online-avatar-visibility]")?.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); });
-  document.querySelectorAll("[data-battle-chat-toggle]").forEach((button) => button.addEventListener("click", () => setBattleChatOpen(!battleChatOpen)));
-  document.querySelector("[data-battle-chat]")?.addEventListener("click", (event) => {
-    if (event.target === event.currentTarget && battleChatOpen) setBattleChatOpen(false);
-  });
+  bindDmThreadEvents();
   document.querySelector("[data-battle-fx-speed]")?.addEventListener("click", (event) => {
     const fx = window.HariaiBattleFx;
     if (!fx) return;
@@ -6476,8 +6696,7 @@ function bindScreenEvents() {
       sendSelectedImage().catch(handleRecoverableError);
     });
   }
-  if (state.screen === "reveal") document.querySelector("#onlineBeginScoring")?.addEventListener("click", () => { state.screen = "score"; render(); });
-  if (state.screen === "score") bindScoreEvents();
+  if (state.screen === "reveal" || state.screen === "score") bindScoreEvents();
   if (state.screen === "result") {
     document.querySelector("#onlineContinue")?.addEventListener("click", () => {
       continueRound().catch(handleRecoverableError);
@@ -7118,9 +7337,6 @@ function bindSetupEvents() {
   document.querySelector("#onlineImageInput")?.addEventListener("change", handleImageInput);
   document.querySelector("#onlineFillSample")?.addEventListener("click", fillSampleDeck);
   document.querySelectorAll("[data-online-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.onlineRemove)));
-  document.querySelectorAll("[data-online-signature-card]").forEach((button) => button.addEventListener("click", () => {
-    toggleSignatureCard(button.dataset.onlineSignatureCard);
-  }));
   document.querySelectorAll("[data-online-card-caption]").forEach((input) => input.addEventListener("input", () => {
     const item = state.deck.find((card) => card.id === input.dataset.onlineCardCaption);
     if (item) item.caption = input.value;
@@ -7274,16 +7490,16 @@ function requestMatchmaking({ intent = "regular" } = {}) {
   }
   const startingHp = getStartingHp(sampleCount);
   if (!sampleHandicapDialog || !sampleHandicapMessage || !confirmSampleMatch) {
-    if (window.confirm(`サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦を探しますか？`)) {
+    if (window.confirm(`サンプル画像${sampleCount}枚を含むため、理性${startingHp}で開始します。対戦を探しますか？`)) {
       continueRequestedMatchmaking(context);
     } else finishCrownMatchmakingLaunch(context);
     return;
   }
   pendingSampleMatchmakingLaunch = context;
-  sampleHandicapMessage.textContent = `サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦相手にもサンプル枚数と開始HPが表示されます。`;
+  sampleHandicapMessage.textContent = `サンプル画像${sampleCount}枚を含むため、理性${startingHp}で開始します。対戦相手にもサンプル枚数と開始の理性が表示されます。`;
   confirmSampleMatch.textContent = context.intent === "crown"
-    ? `HP ${startingHp}で三戦証明を始める`
-    : `HP ${startingHp}で対戦を探す`;
+    ? `理性${startingHp}で三戦証明を始める`
+    : `理性${startingHp}で対戦を探す`;
   sampleHandicapDialog.returnValue = "";
   sampleHandicapDialog.showModal();
 }
@@ -7399,31 +7615,15 @@ function bindOnlineFinishReplyFields() {
   syncCustomVisibility();
 }
 
-function toggleSignatureCard(id) {
-  if (!state.deck.some((item) => item.id === id)) return;
-  state.signatureCardId = state.signatureCardId === id ? "" : id;
-  document.querySelectorAll("[data-online-signature-card]").forEach((button) => {
-    const selected = button.dataset.onlineSignatureCard === state.signatureCardId;
-    const index = state.deck.findIndex((item) => item.id === button.dataset.onlineSignatureCard);
-    button.classList.toggle("is-selected", selected);
-    button.setAttribute("aria-pressed", String(selected));
-    button.setAttribute("aria-label", `画像${index + 1}をシグネチャーカード${selected ? "から外す" : "に指定"}`);
-    const icon = document.createElement("span");
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = "✦";
-    button.replaceChildren(icon, document.createTextNode(selected ? "SIGNATURE" : "切り札に指定"));
-    button.closest(".deck-slot")?.classList.toggle("signature-card", selected);
-  });
-  const guide = document.querySelector(".signature-card-guide");
-  guide?.classList.toggle("is-selected", Boolean(state.signatureCardId));
-  const guideTitle = guide?.querySelector("strong");
-  if (guideTitle) guideTitle.textContent = state.signatureCardId ? "シグネチャーカード指定済み" : "シグネチャーカードは未指定";
-}
-
 function bindSelectEvents() {
   document.querySelectorAll("[data-online-card]").forEach((button) => button.addEventListener("click", () => {
     state.selectedCardId = button.dataset.onlineCard;
     render();
+  }));
+  document.querySelectorAll("[data-online-round-caption]").forEach((button) => button.addEventListener("click", () => {
+    state.roundCaptionChoice = button.dataset.onlineRoundCaption;
+    render();
+    document.querySelector(`[data-online-round-caption="${button.dataset.onlineRoundCaption}"]`)?.focus({ preventScroll: true });
   }));
   document.querySelector("#onlineLockSelection")?.addEventListener("click", lockSelection);
 }
@@ -7455,7 +7655,7 @@ function bindChatEvents() {
   const chatForm = document.querySelector("#onlineChatForm");
   chatForm?.addEventListener("input", () => notifyLocalTyping(Boolean(state.chatDraft.trim())));
   chatForm?.addEventListener("focusout", () => notifyLocalTyping(false));
-  const effectPicker = document.querySelector(".chat-panel .chat-effect-picker");
+  const effectPicker = document.querySelector("[data-online-chat] .chat-effect-picker");
   // キーボードを開いたまま言い方を切り替えられるよう、チップを押してもフォーカスを奪わない。
   effectPicker?.addEventListener("pointerdown", (event) => {
     if (document.activeElement === input && event.target.closest("[data-chat-effect]")) event.preventDefault();
@@ -7523,7 +7723,7 @@ function captureOnlineChatDraft(input = document.querySelector("#onlineChatInput
 
 function setChatEffect(value) {
   state.chatEffect = normalizeChatEffect(value);
-  document.querySelectorAll(".chat-panel [data-chat-effect]").forEach((chip) => {
+  document.querySelectorAll("[data-online-chat] [data-chat-effect]").forEach((chip) => {
     chip.setAttribute("aria-pressed", String(normalizeChatEffect(chip.dataset.chatEffect) === state.chatEffect));
   });
   document.querySelector("#onlineChatForm")?.classList.toggle("has-effect", Boolean(state.chatEffect));
@@ -7562,11 +7762,7 @@ function syncChatTyping(targetState = state) {
     line.innerHTML = typing ? renderChatTypingContent(typing) : "";
     line.hidden = !typing;
   }
-  const peek = document.querySelector("#battleChatPeek");
-  if (peek) {
-    peek.innerHTML = renderBattleChatPeek();
-    peek.classList.toggle("is-typing", Boolean(typing));
-  }
+  if (typing) stickDmThreadIfFollowing();
 }
 
 function clearRemoteTyping(targetState = state) {
@@ -7743,7 +7939,7 @@ function openOnlineShareCard() {
     messages: targetState.chatMessages.slice(-50),
     localUid: targetState.uid,
     players: targetState.players,
-    result: localResult ? { result: localResult, details: [`残りHP ${Number(localPlayer?.hp || 0)}`, `全${targetState.round}ラウンド`] } : null,
+    result: localResult ? { result: localResult, details: [`残りの理性 ${Number(localPlayer?.hp || 0)}`, `全${targetState.round}ラウンド`] } : null,
     modeLabel: "通常型1on1",
     reactions: targetState.chatReactions,
     cosmeticClasses: chatCosmeticClassNames,
@@ -8734,7 +8930,6 @@ function removeDeckItem(id) {
   const item = state.deck.find((candidate) => candidate.id === id);
   if (item?.url) URL.revokeObjectURL(item.url);
   state.deck = state.deck.filter((candidate) => candidate.id !== id);
-  if (state.signatureCardId === id) state.signatureCardId = "";
   state.deck.forEach((candidate, index) => { candidate.position = index; });
   render();
 }
@@ -11225,7 +11420,6 @@ async function handleChannelMessage(data, expectedState = state, expectedChannel
           expectedRound: state.round,
           maxBytes: MAX_IMAGE_TRANSFER_BYTES,
         }),
-        signature: message.signature === true,
         finishLine: normalizeReceivedFinishLine(message.finishLine),
         caption: typeof message.caption === "string" ? normalizeCardCaption(message.caption) : "",
         voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
@@ -11399,13 +11593,11 @@ async function finishIncomingImage(round) {
     throw error;
   }
   state.incomingTransfer = null;
-  const previous = state.remoteImages.get(round);
-  if (previous?.url) URL.revokeObjectURL(previous.url);
+  releaseRemoteImage(round);
   const blob = new Blob(transfer.chunks, { type: mime });
   state.remoteImages.set(round, {
     blob,
     url: URL.createObjectURL(blob),
-    signature: transfer.signature === true,
     finishLine: normalizeReceivedFinishLine(transfer.finishLine),
     caption: transfer.caption || "",
     voiceSetId: transfer.voiceSetId || "",
@@ -11825,7 +12017,7 @@ function updateSelectionTimerDisplay(remainingSeconds) {
       seconds.classList.add("is-beat");
     }
   }
-  if (unit) unit.textContent = "SEC";
+  if (unit) unit.textContent = "秒";
 }
 
 async function handleSelectionTimeout() {
@@ -11928,12 +12120,12 @@ async function sendSelectedImage() {
   const expectedState = state;
   const channel = state.channel;
   const round = state.round;
-  const signature = item.id === state.signatureCardId;
   const finishLine = state.finishLine;
-  const caption = normalizeCardCaption(item.caption);
+  const caption = normalizeCardCaption(roundCaptionFor(item));
   const voiceSetId = normalizeRoleplayVoiceSetId(state.roleplayVoiceFallbackId || state.roleplayVoiceSetId);
   clearImageAckWatchdog(expectedState);
   state.sentImageRounds.add(round);
+  state.sentCaptions.set(round, caption);
   state.screen = "waitingImage";
   state.transferProgress = 0;
   state.imageTransferError = "";
@@ -11955,7 +12147,8 @@ async function sendSelectedImage() {
           round,
           size: buffer.byteLength,
           mime,
-          signature,
+          // シグネチャーカードは廃止。古い画面の相手が読む項目なので、常に false で送る。
+          signature: false,
           finishLine,
           caption,
           voiceSetId,
@@ -12093,7 +12286,7 @@ function resolveRound(scores) {
   const previousHp = loserIndex === null ? null : state.players[loserIndex].hp;
   if (loserIndex !== null) state.players[loserIndex].hp = Math.max(0, previousHp - damage);
   const lethal = loserIndex !== null && previousHp > 0 && state.players[loserIndex].hp === 0;
-  const finish = lethal ? createFinishCutInPayload(winnerIndex) : null;
+  const finish = lethal ? createFinishCutInPayload(winnerIndex, damage) : null;
   state.history.push({
     round: state.round,
     scorePlayerOne,
@@ -12110,7 +12303,7 @@ function resolveRound(scores) {
   const pendingFinishReply = state.pendingFinishReplies.get(state.round) || null;
   state.pendingFinishReplies.delete(state.round);
   state.screen = "result";
-  // CRITICAL・PERFECTの光と音は、結果画面の演出で点数が止まった瞬間に出す。
+  // 点数の吹き出しと理性の減りは、結果画面の演出でスレッドに届ける。
   render();
   // 両者の点数が確定した後にだけ送るので、相手の採点前に点数帯が漏れない。
   sendLocalScoreReaction(state.round);
@@ -12170,9 +12363,10 @@ function advanceAfterRound(roundContext) {
   }
   clearImageAckWatchdog(state);
   resetSelectionTimerState();
-  releaseRemoteImage(state.round);
+  // 相手の画像はスレッドと試合結果で見返すので、試合が終わるまで端末内に残す（releaseMatchMedia で解放）。
   state.round += 1;
   state.selectedCardId = "";
+  state.roundCaptionChoice = "";
   state.selectedScore = null;
   state.roundData = {};
   state.transferProgress = 0;
@@ -12416,6 +12610,7 @@ async function sendChat(value, stampId = "") {
 }
 
 function refreshChat({ preserveScroll = false } = {}) {
+  if (refreshDmThread({ preserveScroll })) return;
   const list = document.querySelector("#onlineChatMessages");
   if (!list) return;
   const scrollTop = list.scrollTop;
@@ -12432,18 +12627,39 @@ function refreshChat({ preserveScroll = false } = {}) {
   } else {
     scrollChat();
   }
-  const peek = document.querySelector("#battleChatPeek");
-  if (peek) {
-    peek.innerHTML = renderBattleChatPeek();
-    peek.classList.toggle("is-typing", Boolean(activeRemoteTyping()));
-    if (battleChatOpen) battleChatSeenCount = state.chatMessages.length;
-    peek.closest(".vb-chat-peek")?.classList.toggle("has-new", !battleChatOpen && state.chatMessages.length > battleChatSeenCount);
-  }
 }
 
 function scrollChat() {
+  if (document.querySelector("[data-dm-thread]")) {
+    stickDmThreadIfFollowing();
+    return;
+  }
   const list = document.querySelector("#onlineChatMessages");
   if (list) list.scrollTop = list.scrollHeight;
+}
+
+// DMでは、チャットが届いてもスレッドの画像を作り直さず、変わった吹き出しだけを入れ替える。
+function refreshDmThread({ preserveScroll = false } = {}) {
+  const thread = document.querySelector("[data-dm-thread]");
+  const list = thread?.querySelector("#onlineChatMessages");
+  if (!list) return false;
+  syncThreadLog();
+  const nodes = collectDmThreadNodes(list);
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderThreadItems();
+  reuseDmThreadNodes(nodes, wrapper);
+  list.replaceChildren(...wrapper.childNodes);
+  if (!preserveScroll) {
+    stickDmThreadIfFollowing();
+    return true;
+  }
+  thread.scrollTop = dmThreadScrollTop;
+  const picker = list.querySelector("[data-chat-react-picker]");
+  if (picker) {
+    const overflow = picker.getBoundingClientRect().bottom - thread.getBoundingClientRect().bottom;
+    if (overflow > 0) thread.scrollTop += overflow + 8;
+  }
+  return true;
 }
 
 function getSelectedItem() {
@@ -12454,7 +12670,8 @@ function getOpponent() {
   return state.players[state.playerIndex === 0 ? 1 : 0];
 }
 
-function createFinishCutInPayload(winnerIndex) {
+// 決着の1枚。負けた側には相手の画像とひとことを、勝った側には自分のひとことと受けた点数だけを見せる。
+function createFinishCutInPayload(winnerIndex, finishScore = 0) {
   const winnerIsLocal = winnerIndex === state.playerIndex;
   const loserIndex = winnerIndex === 0 ? 1 : 0;
   const media = winnerIsLocal ? getSelectedItem() : state.remoteImages.get(state.round);
@@ -12463,6 +12680,9 @@ function createFinishCutInPayload(winnerIndex) {
     : normalizeReceivedFinishLine(media?.finishLine);
   const customOpponentLine = !winnerIsLocal && receivedLine && !FINISH_TEMPLATE_LINES.includes(receivedLine);
   const finishLineReplaced = Boolean(customOpponentLine && !state.showOpponentCustomFinish);
+  const winnerCaption = winnerIsLocal
+    ? sentCaptionForRound(state.round)
+    : resolveVisibleCardCaption(media?.caption, { showCustom: state.showOpponentCustomFinish, voiceSetId: media?.voiceSetId }).caption;
   return {
     round: state.round,
     winnerIndex,
@@ -12470,7 +12690,9 @@ function createFinishCutInPayload(winnerIndex) {
     winnerName: String(state.players[winnerIndex]?.name || "PLAYER").slice(0, 16),
     loserName: String(state.players[loserIndex]?.name || "PLAYER").slice(0, 16),
     imageUrl: String(media?.url || ""),
-    signature: winnerIsLocal ? media?.id === state.signatureCardId : media?.signature === true,
+    winnerCaption: String(winnerCaption || ""),
+    winnerVoiceSetId: winnerIsLocal ? localRoleplayVoiceSetId() : normalizeRoleplayVoiceSetId(media?.voiceSetId),
+    finishScore: Number(finishScore) || 0,
     finishLine: finishLineReplaced ? (getRoleplayVoiceSet(media?.voiceSetId)?.finishLine || FINISH_LINES[0]) : receivedLine,
     finishLineReplaced,
     replyAcknowledged: false,
@@ -12678,7 +12900,7 @@ function completeFinishReplyPresentation(payload) {
         ? "未送信"
         : payload.replySkipped
       ? "終了"
-      : payload.signature ? "返礼" : "勝負あり";
+      : "勝負あり";
   const disclosure = payload.replyLineReplaced
     ? document.createElement("small")
     : null;
@@ -12943,11 +13165,14 @@ function triggerFinishCutIn(payload) {
   if (!finishCutInDialog || !finishCutInContent || !payload) return;
   clearFinishCutIn({ restoreFocus: false });
   const generation = finishCutInGeneration;
+  const localIsWinner = payload.winnerIndex === state.playerIndex;
+  // 負けた側には、とどめになった相手の1枚。勝った側には自分の画像を出さず、落とした相手と自分の言葉を見せる。
+  const showImage = Boolean(payload.imageUrl) && !localIsWinner;
   const cutIn = document.createElement("article");
-  cutIn.className = `finish-cutin ${payload.signature ? "is-signature" : "is-standard"}`;
-  cutIn.setAttribute("aria-label", `${payload.winnerName}の${payload.signature ? "シグネチャー" : ""}フィニッシュ`);
+  cutIn.className = `finish-cutin is-standard ${localIsWinner ? "is-winner-view" : "is-loser-view"}`;
+  cutIn.setAttribute("aria-label", localIsWinner ? `${payload.loserName}を落とした決着` : `${payload.winnerName}の決着`);
 
-  if (payload.imageUrl) {
+  if (showImage) {
     const backdrop = document.createElement("img");
     backdrop.className = "finish-cutin-backdrop";
     backdrop.src = payload.imageUrl;
@@ -12962,7 +13187,6 @@ function triggerFinishCutIn(payload) {
   cutIn.append(shade);
 
   const decorations = ["finish-cutin-slash is-wide", "finish-cutin-slash is-thin"];
-  if (payload.signature) decorations.unshift("finish-cutin-rays");
   decorations.forEach((className) => {
     const decoration = document.createElement("i");
     decoration.className = className;
@@ -12974,13 +13198,32 @@ function triggerFinishCutIn(payload) {
   stage.className = "finish-cutin-stage";
   const imageFrame = document.createElement("div");
   imageFrame.className = "finish-cutin-image-frame";
-  if (payload.imageUrl) {
+  if (showImage) {
     const image = document.createElement("img");
     image.className = "finish-cutin-image";
     image.src = payload.imageUrl;
-    image.alt = `${payload.winnerName}の決着カード`;
+    image.alt = `${payload.winnerName}が貼った、とどめの画像`;
     image.draggable = false;
     imageFrame.append(image);
+    if (payload.winnerCaption) {
+      const caption = document.createElement("p");
+      caption.className = `finish-cutin-caption ${dmBubbleClass(payload.winnerVoiceSetId)}`;
+      caption.textContent = payload.winnerCaption;
+      imageFrame.append(caption);
+    }
+  } else if (localIsWinner) {
+    const fallen = state.players[payload.loserIndex];
+    imageFrame.classList.add("is-fallen");
+    imageFrame.insertAdjacentHTML("beforeend", shared()?.profileAvatar?.renderBattle?.(fallen?.name || payload.loserName, state.remoteAvatar?.url, {
+      hidden: state.hideOpponentAvatar,
+      className: "finish-cutin-avatar",
+    }) || "");
+    const fallenName = document.createElement("strong");
+    fallenName.className = "finish-cutin-fallen-name";
+    fallenName.textContent = payload.loserName;
+    const fallenState = document.createElement("small");
+    fallenState.textContent = "理性 0";
+    imageFrame.append(fallenName, fallenState);
   } else {
     const fallback = document.createElement("div");
     fallback.className = "finish-cutin-image-fallback";
@@ -12992,7 +13235,7 @@ function triggerFinishCutIn(payload) {
   copy.className = "finish-cutin-copy";
   const label = document.createElement("span");
   label.className = "finish-cutin-label";
-  label.textContent = payload.signature ? "SIGNATURE FINISH" : "FINISH";
+  label.textContent = localIsWinner ? "FINISH · あなたの勝ち" : `FINISH · ${payload.winnerName}の勝ち`;
   const word = document.createElement("div");
   word.className = "finish-cutin-word";
   word.setAttribute("aria-hidden", "true");
@@ -13004,8 +13247,20 @@ function triggerFinishCutIn(payload) {
   });
   const winnerName = document.createElement("strong");
   winnerName.className = "finish-cutin-winner";
-  winnerName.textContent = payload.winnerName;
+  winnerName.textContent = localIsWinner ? `${payload.loserName}を、落とした。` : `${payload.winnerName}に、落とされた。`;
   copy.append(label, word, winnerName);
+  if (localIsWinner) {
+    const blow = document.createElement("p");
+    blow.className = "finish-cutin-blow";
+    const blowLabel = document.createElement("small");
+    blowLabel.textContent = "とどめになった、あなたの言葉";
+    const blowText = document.createElement("span");
+    blowText.textContent = payload.winnerCaption ? `「${payload.winnerCaption}」` : "言葉なしの1枚";
+    const blowScore = document.createElement("b");
+    blowScore.textContent = `${payload.finishScore}点 · ${scoreWord(payload.finishScore)}`;
+    blow.append(blowLabel, blowText, blowScore);
+    copy.append(blow);
+  }
   if (payload.finishLine) {
     const quote = document.createElement("blockquote");
     quote.className = "finish-cutin-line";
@@ -13060,7 +13315,7 @@ function triggerFinishCutIn(payload) {
   finishCutInContent.replaceChildren(cutIn);
   finishCutInContent.dataset.round = String(payload.round);
   finishCutInDialog.showModal();
-  window.HariaiAudio?.playFinish?.(payload.signature === true);
+  window.HariaiAudio?.playFinish?.(false);
   (replyAction || skip).focus({ preventScroll: true });
   scheduleFinishCutInClose(generation, FINISH_CUT_IN_DURATION_MS);
 }
@@ -13254,7 +13509,6 @@ async function resetOnlineState(screen) {
     soloBlockedDetailsOpen: expectedState.soloBlockedDetailsOpen,
     soloReunionPreference: expectedState.soloReunionPreference,
     soloHiddenWaitStopped: expectedState.soloHiddenWaitStopped,
-    signatureCardId: expectedState.signatureCardId,
     economy: expectedState.economy,
     economyReady: expectedState.economyReady,
     dailyPlay: expectedState.dailyPlay,
@@ -13618,10 +13872,16 @@ finishCutInDialog?.addEventListener("cancel", (event) => {
   dismissFinishCutIn(result?.finish);
 });
 
+// 言い方・ことばのトレイは Escape で閉じて、入力欄へ戻る。
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || !battleChatOpen || !document.querySelector("[data-battle-chat]")) return;
-  setBattleChatOpen(false);
-  document.querySelector(".vb-chat-peek")?.focus({ preventScroll: true });
+  const tools = document.querySelector("[data-dm-tools][open]");
+  if (event.key !== "Escape" || !tools) return;
+  tools.open = false;
+  document.querySelector("#onlineChatInput")?.focus({ preventScroll: true });
+});
+
+window.addEventListener("resize", () => {
+  if (active && isDmScene()) settleDmLayout();
 });
 
 if (!useOfflineMarketPreview) watchLobbyStats();

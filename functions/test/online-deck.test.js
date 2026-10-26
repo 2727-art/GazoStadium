@@ -107,7 +107,7 @@ test("the visible default choice is locked on timeout instead of choosing a hidd
 test("setup, battle selection, and post-match engawa lay out eight cards without the old fifth-card stretch", () => {
   const battleStyles = read("velvet-battle.css");
   const roundSelect = sourceBetween(online, "function renderRoundSelect()", "function renderWaitingPick()");
-  // 対戦中は大きなプレビューの下に、登録した5〜8枚を横に並べた手札を置く。
+  // 対戦中は、貼る時だけ出る手札シートに、登録した5〜8枚を横に並べる。
   assert.match(roundSelect, /<div class="vb-hand" role="group"/);
   assert.match(battleStyles, /\.vb-hand \{[^}]*overflow-x: auto;/s);
   assert.match(battleStyles, /\.vb-hand-card \{[^}]*flex: none;/s);

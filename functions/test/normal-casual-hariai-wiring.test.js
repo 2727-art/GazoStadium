@@ -36,8 +36,15 @@ test("normal 1on1 offers only the girl persona lines and migrates retired templa
 
 test("card captions travel with the image over P2P and never reach Firebase writes", () => {
   const send = extractFunction("sendSelectedImage");
-  assert.match(send, /const caption = normalizeCardCaption\(item\.caption\);/);
+  assert.match(send, /const caption = normalizeCardCaption\(roundCaptionFor\(item\)\);/);
+  assert.match(send, /state\.sentCaptions\.set\(round, caption\);/);
   assert.match(send, /type: "image-start"[\s\S]*?caption,\s*voiceSetId,/);
+  // 選ぶ時のひとことは、登録したひとこと・自分の口調の定型・言葉なしから選ぶだけ。
+  const options = extractFunction("roundCaptionOptions");
+  assert.match(options, /normalizeCardCaption\(item\?\.caption\)/);
+  assert.match(options, /getRoleplayVoiceSet\(localRoleplayVoiceSetId\(targetState\)\)\?\.cardLine/);
+  assert.match(options, /options\.push\(\{ id: "none", text: "" \}\);/);
+  assert.match(extractFunction("advanceAfterRound"), /state\.roundCaptionChoice = "";/);
   assert.match(online, /caption: typeof message\.caption === "string" \? normalizeCardCaption\(message\.caption\) : "",/);
   assert.match(extractFunction("finishIncomingImage"), /caption: transfer\.caption \|\| "",/);
   const caption = extractFunction("renderCardCaption");
@@ -62,17 +69,26 @@ test("score reactions are chosen with the score but sent only after both scores 
   assert.match(online, /message\.type === "score-reaction"/);
 });
 
-test("the pick screen shows a score log built from each round's own card", () => {
+test("the DM thread keeps every round's own post as a sent mark and the opponent's images until the match ends", () => {
   assert.match(extractFunction("resolveRound"), /localCardId: selectedItem\?\.id \|\| "",/);
-  const log = extractFunction("renderScoreLog");
-  assert.match(log, /state\.deck\.find\(\(item\) => item\.id === result\.localCardId\)/);
-  assert.doesNotMatch(log, /remoteImages/, "opponent images stay released after each round");
-  assert.match(extractFunction("renderRoundSelect"), /\$\{renderScoreLog\(\)\}/);
+  const local = extractFunction("renderThreadLocalPost");
+  assert.match(local, /画像を1枚貼った/);
+  assert.doesNotMatch(local, /<img/, "the local image is never drawn in the thread");
+  assert.match(local, /data-zoom-src=/, "only the local player can peek at their own image");
+  const advance = extractFunction("advanceAfterRound");
+  assert.doesNotMatch(advance, /releaseRemoteImage/, "opponent images stay for the thread and the result");
+  assert.match(extractFunction("releaseMatchMedia"), /state\.remoteImages\.forEach\(\(item\) => item\.url && URL\.revokeObjectURL\(item\.url\)\);/);
+  assert.match(extractFunction("finishIncomingImage"), /releaseRemoteImage\(round\);/);
+  assert.doesNotMatch(online, /function renderScoreLog\(/);
 });
 
 test("changed normal 1on1 assets carry a new cache token", () => {
   for (const asset of ["online\\.js", "velvet-battle\\.css", "styles\\.css"]) {
     assert.match(index, new RegExp(`${asset}\\?v=[^"]*girl-voice-casual-v1`));
   }
+  for (const asset of ["online\\.js", "velvet-battle\\.css"]) {
+    assert.match(index, new RegExp(`${asset}\\?v=[^"]*normal-dm-thread-v1`));
+  }
   assert.match(online, /finish-roleplay\.mjs\?v=finish-reply-v2-girl-voice-v1/);
+  assert.match(online, /from "\.\/normal-dm-thread\.mjs\?v=normal-dm-thread-v1";/);
 });
