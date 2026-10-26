@@ -192,6 +192,10 @@ function readProfile(snapshot) {
     },
     receiptCount: integer(data.receiptCount, 0, Number.MAX_SAFE_INTEGER, 0),
     refundPending: integer(data.refundPending, 0, Number.MAX_SAFE_INTEGER, 0),
+    // 運営からの返金（2026-10-26: 請求の二重払いの不具合で、同じ請求に重ねて払われた分）。
+    // 運営のスクリプト（grant-tribute-double-payment-refunds.cjs）が積み、本人が「財布へ受け取る」で受け取る。
+    operatorRefundPending: integer(data.operatorRefundPending, 0, Number.MAX_SAFE_INTEGER, 0),
+    operatorRefundClaimCount: integer(data.operatorRefundClaimCount, 0, Number.MAX_SAFE_INTEGER, 0),
     refundClaimCount: integer(data.refundClaimCount, 0, Number.MAX_SAFE_INTEGER, 0),
     collarCount: integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0),
     word: {
@@ -299,6 +303,7 @@ function ownProfileView(profile, monthKey, now) {
     counts: profile.counts,
     receiptCount: profile.receiptCount,
     refundPending: profile.refundPending,
+    operatorRefundPending: profile.operatorRefundPending,
     wordsToday: profile.word?.dayKey === jstDateKey(now) ? profile.word.dayCount : 0,
     // 掲示板に出ていられる期限（受付中でカードがある時だけ）。過ぎると、動くまで掲示板に並ばない。
     boardUntil: profile.accepting && profile.card ? profile.lastActiveAt + LIMITS.boardActiveWindowMs : 0,
@@ -2615,8 +2620,10 @@ function createTributeService(deps) {
       requireAge(profile);
       const wallet = walletData(walletSnapshot);
       const amount = Math.min(profile.refundPending, walletCreditCapacity(wallet));
+      // 運営からの返金は、管理口座の返金を受け取ったあとの残高上限の空きの分だけ。
+      const operatorAmount = Math.min(profile.operatorRefundPending, Math.max(0, walletCreditCapacity(wallet) - amount));
+      if (amount > 0 || operatorAmount > 0) stageAnjuPayOpening(transaction, walletRef(uid), wallet, ledgerConfig, now);
       if (amount > 0) {
-        stageAnjuPayOpening(transaction, walletRef(uid), wallet, ledgerConfig, now);
         const before = wallet.balance;
         creditPoints(wallet, amount);
         const claimCount = profile.refundClaimCount + 1;
@@ -2630,10 +2637,34 @@ function createTributeService(deps) {
         });
         profile.refundPending -= amount;
         profile.refundClaimCount = claimCount;
-        transaction.set(walletRef(uid), { ...wallet, ...anjuPayWalletMetadataPatch(wallet), updatedAt: now }, { merge: true });
-        transaction.set(profileRef(uid), { refundPending: profile.refundPending, refundClaimCount: claimCount, updatedAt: now }, { merge: true });
       }
-      result = { ok: true, amount, walletBalance: wallet.balance, profile: ownProfileView(profile, jstMonthKey(now), now) };
+      // 運営からの返金は、利用履歴に別の種類（運営からの返金）で残す。
+      if (operatorAmount > 0) {
+        const before = wallet.balance;
+        creditPoints(wallet, operatorAmount);
+        const claimCount = profile.operatorRefundClaimCount + 1;
+        const groupId = anjuPayEntryId(`tribute-operator-refund-claim:${uid}:${claimCount}`);
+        appendAnjuPayEntry(transaction, walletRef(uid), wallet, ledgerConfig, {
+          entryId: groupId, groupId, kind: "tribute_operator_refund", category: "tribute",
+          labelKey: "anju_pay_tribute_operator_refund", status: "settled", delta: operatorAmount, nominalAmount: operatorAmount,
+          balanceBefore: before, balanceAfter: wallet.balance,
+          components: [{ kind: "operator_refund", labelKey: "anju_pay_tribute_operator_refund", status: "settled", delta: operatorAmount, nominalAmount: operatorAmount }],
+          details: { mode: "tribute", role: "payer", reason: "double_payment" }, occurredAt: now,
+        });
+        profile.operatorRefundPending -= operatorAmount;
+        profile.operatorRefundClaimCount = claimCount;
+      }
+      if (amount > 0 || operatorAmount > 0) {
+        transaction.set(walletRef(uid), { ...wallet, ...anjuPayWalletMetadataPatch(wallet), updatedAt: now }, { merge: true });
+        transaction.set(profileRef(uid), {
+          refundPending: profile.refundPending,
+          refundClaimCount: profile.refundClaimCount,
+          operatorRefundPending: profile.operatorRefundPending,
+          operatorRefundClaimCount: profile.operatorRefundClaimCount,
+          updatedAt: now,
+        }, { merge: true });
+      }
+      result = { ok: true, amount: amount + operatorAmount, escrowAmount: amount, operatorAmount, walletBalance: wallet.balance, profile: ownProfileView(profile, jstMonthKey(now), now) };
     });
     if (result.amount > 0) await mirrorTouched([{ uid, balance: result.walletBalance }]);
     return result;

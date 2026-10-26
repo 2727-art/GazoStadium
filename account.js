@@ -79,6 +79,8 @@ const ANJU_PAY_LABELS = Object.freeze({
   anju_pay_tribute_escrow_hold: "お貢ぎ牧場の管理口座へ預け入れ",
   tribute_escrow_return: "お貢ぎ牧場の管理口座から返還",
   anju_pay_tribute_escrow_return: "お貢ぎ牧場の管理口座から返還",
+  tribute_operator_refund: "お貢ぎ牧場：運営からの返金（請求の二重払い）",
+  anju_pay_tribute_operator_refund: "お貢ぎ牧場：運営からの返金（請求の二重払い）",
   tribute_offering: "お貢ぎ牧場で牧場基金へ上納",
   anju_pay_tribute_offering: "お貢ぎ牧場で牧場基金へ上納",
   tribute_vault_deposit: "お貢ぎ牧場の金庫へ入れた",
@@ -379,6 +381,7 @@ function historyLabel(entry) {
   if (key.includes("tribute_escrow_take")) return ANJU_PAY_LABELS.anju_pay_tribute_escrow_take;
   if (key.includes("tribute_escrow_hold")) return ANJU_PAY_LABELS.tribute_escrow_hold;
   if (key.includes("tribute_escrow_return")) return ANJU_PAY_LABELS.tribute_escrow_return;
+  if (key.includes("tribute_operator_refund")) return ANJU_PAY_LABELS.tribute_operator_refund;
   if (key.includes("tribute_offering")) return ANJU_PAY_LABELS.tribute_offering;
   if (key.includes("tribute_vault_deposit")) return ANJU_PAY_LABELS.tribute_vault_deposit;
   if (key.includes("tribute_vault_withdraw")) return ANJU_PAY_LABELS.tribute_vault_withdraw;

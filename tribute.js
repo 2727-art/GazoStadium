@@ -405,7 +405,14 @@ function renderHub() {
   const open = state.contracts.filter((contract) => contract.status !== "ended");
   const ended = state.contracts.filter((contract) => contract.status === "ended").slice(0, 10);
   const hasContracts = state.contracts.length > 0;
-  const refund = profile.refundPending > 0 ? `<section class="tribute-panel"><h2>返金待ち ${escapeHtml(formatPay(profile.refundPending))}</h2><p>財布の残高上限で戻せなかったPayを保管しています。財布に空きができた分だけ受け取れます。</p><button class="button button-primary button-small" type="button" data-t="claim-refund" ${state.busy ? "disabled" : ""}>財布へ受け取る</button></section>` : "";
+  // 返金待ち: 管理口座の返金（残高上限で戻せなかった分）と、運営からの返金（請求の二重払いの不具合の分）。
+  const escrowRefund = Number(profile.refundPending || 0);
+  const operatorRefund = Number(profile.operatorRefundPending || 0);
+  const refund = escrowRefund + operatorRefund > 0 ? `<section class="tribute-panel tribute-refund"><h2>返金待ち ${escapeHtml(formatPay(escrowRefund + operatorRefund))}</h2>
+    ${operatorRefund > 0 ? `<p><b>運営からの返金 ${escapeHtml(formatPay(operatorRefund))}</b>：請求を二重に払えてしまう不具合があり、同じ請求に重ねて払われた分をお返しします。ご迷惑をおかけしました。</p>` : ""}
+    ${escrowRefund > 0 ? `<p><b>管理口座の返金 ${escapeHtml(formatPay(escrowRefund))}</b>：財布の残高上限で戻せなかったPayを保管しています。</p>` : ""}
+    <p class="tribute-note">財布の残高上限に空きがある分だけ受け取れます。</p>
+    <button class="button button-primary button-small" type="button" data-t="claim-refund" ${state.busy ? "disabled" : ""}>財布へ受け取る</button></section>` : "";
   const lists = renderContractLists(open, profile);
   const me = renderMyPanel(profile, { boardNotice: !hasContracts });
   const endedPanel = ended.length ? `<details class="tribute-panel tribute-ended"><summary>終わった契約（${ended.length}）</summary>${ended.map(renderContractRow).join("")}</details>` : "";
@@ -3083,7 +3090,7 @@ async function handleClick(target) {
       state.profile = result.profile;
       state.walletBalance = result.walletBalance;
       paintWallet();
-      showToast(result.amount ? `${formatPay(result.amount)}を財布へ戻しました。` : result.profile.refundPending ? "財布の残高上限に空きができたら、もう一度受け取ってください。" : "返金はすべて受け取り済みです。");
+      showToast(result.amount ? `${formatPay(result.amount)}を財布へ戻しました。` : result.profile.refundPending || result.profile.operatorRefundPending ? "財布の残高上限に空きができたら、もう一度受け取ってください。" : "返金はすべて受け取り済みです。");
       if (state.screen === "hub") render();
       return;
     }
@@ -3955,6 +3962,8 @@ function previewCall(action, payload) {
           vault: { ...previewVault },
           counts: { payerOpen: 1, managerActive: 1, managerPending: 1 },
           receiptCount: 3,
+          // hub-refund: 返金待ち（運営からの返金と管理口座の返金）の見え方を確かめる。
+          ...(previewScreen === "hub-refund" ? { operatorRefundPending: 90, refundPending: 20 } : {}),
           wordsToday: 1,
           boardUntil: previewBoardUntil(),
         },
@@ -4205,6 +4214,7 @@ function startPreview(screen) {
     hub: () => navigate("hub"),
     "hub-board-ending": () => navigate("hub"),
     "hub-board-off": () => navigate("hub"),
+    "hub-refund": () => navigate("hub"),
     newcomer: () => navigate("hub"),
     board: () => navigate("board"),
     manager: () => openManager(PREVIEW_MANAGER_CARD.publicManagerId),
