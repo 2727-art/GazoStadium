@@ -56,6 +56,7 @@ import {
   avatarId,
   avatarUrl,
   contractTodos,
+  forbiddenReason,
   formatPay,
   ignoreLabel,
   inviteFromUrl,
@@ -1665,6 +1666,17 @@ function renderRequestMark(event, view) {
   return `<li class="tribute-event is-request-mark ${mine ? "is-mine" : "is-theirs"}"><span class="tribute-request-mark"><i aria-hidden="true">請</i><span>請求 <b>${escapeHtml(formatPay(event.amount))}</b></span>${purposeTag(purpose, view)}<span class="tribute-chip is-pending">未払い</span></span>${event.note ? `<span class="tribute-request-mark-note">${escapeHtml(event.note)}</span>` : ""}<time>${escapeHtml(formatDateTime(event.createdAt))}</time></li>`;
 }
 
+// 画面を描き直しても、打ちかけのメッセージを残す（呼び名の保存・スクショ表示の切り替えなど）。
+function renderKeepingDraft() {
+  const draft = document.querySelector('[data-form="message"] textarea')?.value || "";
+  render();
+  const box = document.querySelector('[data-form="message"] textarea');
+  if (draft && box) {
+    box.value = draft;
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
 // スクショ表示。会話だけを画面いっぱいに出す（見出し・財布の額・操作・入力欄を隠す）。見た目だけで、掲載の許可の代わりにはならない。
 // 管理人には、財布が「スクショ掲載 可」にしている契約でだけ出す。財布には常に出す。
 function canShowShot(view) {
@@ -1704,6 +1716,13 @@ function renderThread() {
 
 function updateThreadParts() {
   const view = state.thread.view;
+  // 財布がスクショ掲載の許可を外したら、管理人のスクショ表示もその場で終える。
+  if (state.thread.shot && view && !canShowShot(view)) {
+    state.thread.shot = false;
+    renderKeepingDraft();
+    scrollThreadToEnd();
+    return;
+  }
   const head = document.querySelector("#tributeThreadHead");
   const list = document.querySelector("#tributeThreadEvents");
   const actions = document.querySelector("#tributeThreadActions");
@@ -2044,7 +2063,8 @@ function shareExcerptData(sheet) {
         type: "request",
         purposeLabel: purposeLabel(request.purpose, { allowSexual }),
         amount: request.amount,
-        note: info.consent ? String(request.note || "") : "",
+        // 契約後の一言は連絡先なども書けるので、外に出る画像にはカードと同じ判定を通った一言だけを入れる。
+        note: info.consent && !forbiddenReason(String(request.note || "")) ? String(request.note || "") : "",
         at: request.createdAt,
       });
     }
@@ -3121,7 +3141,7 @@ async function handleSubmit(form) {
         if (row) row.nickname = saved;
         showToast(saved ? "呼び名を付けました。財布には見えません。" : "呼び名を外しました。");
         closeSheet();
-        render();
+        renderKeepingDraft();
       }
       return;
     }
@@ -3270,7 +3290,18 @@ async function handleClick(target) {
     case "open-apply": {
       const card = state.manager.data?.card;
       if (!card) return;
-      state.applyTarget = { publicManagerId: card.publicManagerId, entryFee: card.entryFee, personaName: card.personaName, disclosure: card.disclosure, sigil: card.sigil, avatar: card.avatar };
+      // 申し込み画面にも、管理人の宣言（未払いは既読無視・スクショを載せる）と「高額請求」の札を出す。
+      state.applyTarget = {
+        publicManagerId: card.publicManagerId,
+        entryFee: card.entryFee,
+        personaName: card.personaName,
+        disclosure: card.disclosure,
+        sigil: card.sigil,
+        avatar: card.avatar,
+        ignoreUnpaid: card.ignoreUnpaid === true,
+        postsScreenshots: card.postsScreenshots === true,
+        highRequest: card.highRequest === true,
+      };
       state.screen = "apply";
       render();
       return;
@@ -3448,12 +3479,12 @@ async function handleClick(target) {
     case "shot-on":
       if (state.screen !== "thread" || !state.thread.view || !canShowShot(state.thread.view)) return;
       state.thread.shot = true;
-      render();
+      renderKeepingDraft();
       window.scrollTo?.({ top: document.documentElement.scrollHeight });
       return;
     case "shot-off":
       state.thread.shot = false;
-      render();
+      renderKeepingDraft();
       scrollThreadToEnd();
       return;
     case "set-screenshots": {

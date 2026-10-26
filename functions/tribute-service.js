@@ -764,12 +764,16 @@ function createTributeService(deps) {
       Object.assign(ctx.patch, { caps: null, pendingCaps: null, pendingCapsEffectiveDateKey: "" });
     }
     if (ctx.events.length || Object.keys(ctx.patch).length) {
-      transaction.set(ctx.contractRef, {
+      const contractWrite = {
         ...ctx.patch,
         eventSeq: ctx.seq,
         ...(ctx.events.length ? { lastEventAt: ctx.now } : {}),
         ...(ctx.quiet && !ctx.events.length ? {} : { updatedAt: ctx.now }),
-      }, { merge: true });
+      };
+      // 書いた欄は丸ごと置き換える（mergeFields）。merge: true だと入れ子の地図が深く混ざり、
+      // 払った・取り消した請求の鍵を pendingRequests から消しても残ってしまう（2026-10-26、二重払いの原因）。
+      // 地図の欄は、どの操作も今の値を広げた丸ごとの地図を渡している。
+      transaction.set(ctx.contractRef, contractWrite, { mergeFields: Object.keys(contractWrite) });
     }
   }
 

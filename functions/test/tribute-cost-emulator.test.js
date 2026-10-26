@@ -220,6 +220,24 @@ test("tribute cost guards preserve real Firestore transaction and lifecycle cont
     });
   }
 
+  // 本物の Firestore では merge: true が入れ子の地図を深く混ぜる。払った・取り消した請求の鍵が
+  // pendingRequests に残り、同じ請求を二度払えた（2026-10-26）。契約は mergeFields で欄ごと置き換える。
+  await t.test("a paid or cancelled request leaves pendingRequests in real Firestore, so it cannot be paid twice", async () => {
+    const paid = "a".repeat(16);
+    const cancelled = "b".repeat(16);
+    const kept = "c".repeat(16);
+    const f = await fixture({ contractPatch: { pendingRequests: {
+      [paid]: { amount: 20, note: "", purpose: "", createdAt: START - 3000 },
+      [cancelled]: { amount: 10, note: "", purpose: "", createdAt: START - 2000 },
+      [kept]: { amount: 5, note: "", purpose: "", createdAt: START - 1000 },
+    } } });
+    await f.act(f.payerUid, "tribute", { kind: "request", requestId: paid, amount: 20, clientRequestId: "req_90000001" });
+    await f.act(f.managerUid, "cancel_request", { requestId: cancelled });
+    assert.deepEqual(Object.keys((await f.read()).pendingRequests).sort(), [kept]);
+    await assert.rejects(f.act(f.payerUid, "tribute", { kind: "request", requestId: paid, amount: 20, clientRequestId: "req_90000002" }), { code: "not-found" });
+    assert.equal((await f.walletRef(f.payerUid).get()).get("balance"), 43, "paid exactly once");
+  });
+
   await t.test("effective pending caps settle privately without publishing a limit-change event", async () => {
     const caps = { perTribute: 300, perDay: 1000, total: 3000 };
     const f = await fixture({ contractPatch: { pendingCaps: caps, pendingCapsEffectiveDateKey: jstDateKey(START) } });

@@ -294,6 +294,8 @@ Status: 第1段を実装（2026-10-26、ブランチ `feature/ranch-work-orders`
 
 すべて Cloud Firestore。クライアントの直接書き込みは全面禁止。読み取りは契約の参加者による `tributeContracts/{contractId}` と、その `events`、預ける側だけによる `private/limits` を許可する（スレッドの即時表示のため）。それ以外は Callable `tributeAction`（App Check 必須）が本人の権限を確かめて返す。
 
+契約の記録は、書いた欄を丸ごと置き換える（`set` の `mergeFields`）。`merge: true` は入れ子の地図を深く混ぜるため、`pendingRequests` から払った・取り消した請求の鍵を消しても残り、同じ請求を二度払えた（2026-10-26 に見つけて直した。残った鍵は `functions/scripts/repair-tribute-pending-requests.cjs` で消し、二重払いも数える）。テストの Firestore の偽物も本物と同じ混ぜ方にした（`functions/test/helpers/firestore-merge.cjs`）。地図の欄を書く時は、今の値を広げた丸ごとの地図を渡す。
+
 - `tributeProfiles/{uid}`: 年齢確認、財布名、管理人カード、管理人が財布ごとに付けた呼び名（`payerNicknames`、管理人にだけ返す）、受付中・活動時刻、契約数の計数、金庫（`vaultAmount`・`vaultTier`・`vaultTierAt`・`vaultBestTier`・`vaultQualifiedAt`・`vaultRecentOps`）、限定称号の確認済み（`honorRecordsChecked`）
 - `tributeContracts/{contractId}`（参加者のみ読取）と `events/{eventId}`。既読無視の `ignoredSince`・`lastPayerMessageSeq`・`lastManagerReplySeq`、宣言の写し `managerIgnoreUnpaid` を持つ。
   - 出稼ぎ命令（7節）: 設定 `allowWorkOrders`、いまの命令 `workOrder`（`orderSeq`・`target`・`note`・`issuedAt`・`reportedCount`・`reportedAt`・`doneAt`。確かめると消える）、命令の通し番号 `workOrderSeq`、果たした数 `workOrdersDone`。出来事は `work_order`・`work_report`（`count`・`done`）・`work_confirm`（`seal`・`sealShape`・`sealInk`・ご褒美）・`work_withdrawn`（`reason` が `withdrawn` 取り下げ／`setting` 設定での取り消し）・`work_orders_changed`（設定の切り替え）。次の命令で閉じた確認待ちの命令には、出来事を残さない。

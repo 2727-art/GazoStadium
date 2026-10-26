@@ -6,6 +6,7 @@ const test = require("node:test");
 const { createUgcPlayerSafetyStub } = require("./helpers/ugc-player-safety-stub");
 const { createTributeService } = require("../tribute-service");
 const { TRIBUTE_AGE_VERSION, jstDateKey } = require("../tribute-rules");
+const { applyFirestoreSet } = require("./helpers/firestore-merge.cjs");
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -51,8 +52,7 @@ class FakeDocumentReference {
   }
 
   async set(value, options = {}) {
-    const current = options.merge ? this.firestore.read(this.path) || {} : {};
-    this.firestore.write(this.path, { ...current, ...clone(value) });
+    this.firestore.write(this.path, applyFirestoreSet(clone(this.firestore.read(this.path)), clone(value), options));
   }
 }
 
@@ -151,10 +151,7 @@ class FakeTransaction {
 
   set(reference, value, options = {}) {
     this.wrote = true;
-    const next = options?.merge && this.documents.has(reference.path)
-      ? { ...clone(this.documents.get(reference.path)), ...clone(value) }
-      : clone(value);
-    this.documents.set(reference.path, next);
+    this.documents.set(reference.path, applyFirestoreSet(clone(this.documents.get(reference.path)), clone(value), options));
   }
 
   update(reference, value) {
@@ -1522,4 +1519,33 @@ test("managers give each wallet a private nickname that only they see, kept for 
   await harness.act("manager", "set_nickname", { contractId: nextId, nickname: "" });
   assert.equal((await managerRow(nextId)).nickname, "");
   assert.equal((await managerRow(contractId)).nickname, "", "an ended contract with the same wallet follows too");
+});
+
+test("a paid or cancelled request leaves pendingRequests for good, so it cannot be paid twice (real Firestore merge)", async () => {
+  // テストの偽物は本物の Firestore と同じく、merge: true で入れ子の地図を深く混ぜる（helpers/firestore-merge.cjs）。
+  const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId);
+  const requestIds = async () => Object.keys(harness.contract(contractId).pendingRequests || {}).sort();
+  harness.advance(2_100);
+  await harness.act("manager", "request", { contractId, amount: 20, note: "払え" });
+  harness.advance(2_100);
+  await harness.act("manager", "request", { contractId, amount: 10, note: "これも" });
+  const [first, second] = (await harness.act("payer", "state")).contracts.find((row) => row.contractId === contractId).pendingRequests.map((request) => request.requestId);
+  assert.equal((await requestIds()).length, 2);
+
+  const before = harness.balance("payer");
+  await harness.act("payer", "tribute", { contractId, kind: "request", requestId: first, amount: 20, clientRequestId: nextRequestId() });
+  assert.deepEqual(await requestIds(), [second], "the paid request is gone from the stored contract");
+  await rejects(harness.act("payer", "tribute", { contractId, kind: "request", requestId: first, amount: 20, clientRequestId: nextRequestId() }), /その請求は残っていません/);
+  assert.equal(harness.balance("payer"), before - 20, "paid once");
+
+  await harness.act("manager", "cancel_request", { contractId, requestId: second });
+  assert.deepEqual(await requestIds(), [], "a cancelled request is gone too");
+  // 3件の上限は、残っている請求だけで数える。
+  for (let index = 0; index < 3; index += 1) {
+    harness.advance(2_100);
+    await harness.act("manager", "request", { contractId, amount: 5 });
+  }
+  assert.equal((await requestIds()).length, 3);
 });
