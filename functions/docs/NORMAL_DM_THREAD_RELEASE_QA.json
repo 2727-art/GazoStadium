@@ -1,0 +1,298 @@
+{
+  "checkedAt": "2026-10-26T10:19:01.047Z",
+  "readOnly": true,
+  "marker": "normal-dm-thread-v1",
+  "since": "2026-10-26T10:18:27Z",
+  "commit": "e6570a5f1b259cea84df1a57e199236d81e48020",
+  "hashes": {
+    "index.html": "65a462d314f9a304349737acf6468fa69a2f752e3e16a0fe2ad37d558827c6a0",
+    "online.js": "69b27a7637384d069267ff11d400860eb86d7a8471f58cee612ce2d1a148e668",
+    "velvet-battle.css": "b25f14ba34f63088a99e9777326452891488190622cf9e1614b54910468dd1fc",
+    "app.js": "87670f745602ef41687d411cc7c6fc22f9488ceeb442b460eb0f0b586255719c",
+    "normal-dm-thread.mjs": "4b878c3e4dcd676e66cb936f8aa9fdad11c02a5c88fd359d0e40cfa9b18b2594",
+    "how-to-play/index.html": "8da6969d1f235cf6eeff627410db235edf3ff72f66a8bc37fec63db36e0a898f"
+  },
+  "routes": [
+    {
+      "origin": "https://gazostadium.web.app",
+      "index": {
+        "status": 200,
+        "ok": true
+      },
+      "markersKept": true,
+      "linked": [
+        {
+          "file": "online.js",
+          "url": "https://gazostadium.web.app/online.js?v=global-player-block-v1-copy-v2-auth-session-v1-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2-retire-free-table-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-vault-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "velvet-battle.css",
+          "url": "https://gazostadium.web.app/velvet-battle.css?v=velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "app.js",
+          "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-auth-session-v1-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1-my-stadium-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        }
+      ],
+      "direct": [
+        {
+          "file": "normal-dm-thread.mjs",
+          "url": "https://gazostadium.web.app/normal-dm-thread.mjs?v=normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "how-to-play/index.html",
+          "url": "https://gazostadium.web.app/how-to-play/",
+          "status": 200,
+          "ok": true
+        }
+      ],
+      "hidden": [
+        {
+          "file": "NORMAL_DM_THREAD_DESIGN.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "firebase.json",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "functions/test/normal-dm-thread.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "functions/scripts/verify-normal-dm-thread-release.cjs",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.firebaseapp.com",
+      "index": {
+        "status": 200,
+        "ok": true
+      },
+      "markersKept": true,
+      "linked": [
+        {
+          "file": "online.js",
+          "url": "https://gazostadium.firebaseapp.com/online.js?v=global-player-block-v1-copy-v2-auth-session-v1-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2-retire-free-table-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-vault-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "velvet-battle.css",
+          "url": "https://gazostadium.firebaseapp.com/velvet-battle.css?v=velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "app.js",
+          "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-auth-session-v1-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1-my-stadium-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        }
+      ],
+      "direct": [
+        {
+          "file": "normal-dm-thread.mjs",
+          "url": "https://gazostadium.firebaseapp.com/normal-dm-thread.mjs?v=normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "how-to-play/index.html",
+          "url": "https://gazostadium.firebaseapp.com/how-to-play/",
+          "status": 200,
+          "ok": true
+        }
+      ],
+      "hidden": [
+        {
+          "file": "NORMAL_DM_THREAD_DESIGN.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "firebase.json",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "functions/test/normal-dm-thread.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "functions/scripts/verify-normal-dm-thread-release.cjs",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.anjugames.workers.dev",
+      "index": {
+        "status": 200,
+        "ok": true
+      },
+      "markersKept": true,
+      "linked": [
+        {
+          "file": "online.js",
+          "url": "https://gazostadium.anjugames.workers.dev/online.js?v=global-player-block-v1-copy-v2-auth-session-v1-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2-retire-free-table-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-vault-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "velvet-battle.css",
+          "url": "https://gazostadium.anjugames.workers.dev/velvet-battle.css?v=velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "app.js",
+          "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-auth-session-v1-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1-my-stadium-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        }
+      ],
+      "direct": [
+        {
+          "file": "normal-dm-thread.mjs",
+          "url": "https://gazostadium.anjugames.workers.dev/normal-dm-thread.mjs?v=normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "how-to-play/index.html",
+          "url": "https://gazostadium.anjugames.workers.dev/how-to-play/",
+          "status": 200,
+          "ok": true
+        }
+      ],
+      "hidden": [
+        {
+          "file": "NORMAL_DM_THREAD_DESIGN.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "firebase.json",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "functions/test/normal-dm-thread.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "functions/scripts/verify-normal-dm-thread-release.cjs",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://hariaistadium.com",
+      "index": {
+        "status": 200,
+        "ok": true
+      },
+      "markersKept": true,
+      "linked": [
+        {
+          "file": "online.js",
+          "url": "https://hariaistadium.com/online.js?v=global-player-block-v1-copy-v2-auth-session-v1-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2-retire-free-table-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-vault-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "velvet-battle.css",
+          "url": "https://hariaistadium.com/velvet-battle.css?v=velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "app.js",
+          "url": "https://hariaistadium.com/app.js?v=global-player-block-v1-copy-v2-auth-session-v1-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1-my-stadium-v1-normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        }
+      ],
+      "direct": [
+        {
+          "file": "normal-dm-thread.mjs",
+          "url": "https://hariaistadium.com/normal-dm-thread.mjs?v=normal-dm-thread-v1",
+          "status": 200,
+          "ok": true
+        },
+        {
+          "file": "how-to-play/index.html",
+          "url": "https://hariaistadium.com/how-to-play/",
+          "status": 200,
+          "ok": true
+        }
+      ],
+      "hidden": [
+        {
+          "file": "NORMAL_DM_THREAD_DESIGN.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "firebase.json",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "functions/test/normal-dm-thread.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "functions/scripts/verify-normal-dm-thread-release.cjs",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "ok": true
+}
