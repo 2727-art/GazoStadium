@@ -89,7 +89,7 @@ async function harness(dispatch) {
   });
   vm.runInContext([
     "createState", "isCurrent", "ensureUser", "call", "applyState", "requestState", "refreshState", "navigate",
-    "stopThread", "openThread", "subscribeThreadEvents", "withThreadLimits", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "syncContractRow", "scheduleMarkRead",
+    "stopThread", "openThread", "subscribeThreadEvents", "withThreadLimits", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "syncContractRow", "scheduleMarkRead", "refreshWorkProgress",
     "mutate", "handleSubmit", "start", "isActive", "requestHome",
   ].map(fn).join("\n"), context);
   return {

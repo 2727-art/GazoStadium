@@ -18,6 +18,8 @@ export const PER_DAY_OPTIONS = Object.freeze([30, 100, 300, 500, 1_000, 3_000, 5
 export const TOTAL_OPTIONS = Object.freeze([100, 300, 1_000, 3_000, 5_000, 10_000, 30_000, 50_000, 100_000]);
 export const DURATION_DAYS_OPTIONS = Object.freeze([1, 3, 7]);
 export const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
+// 出稼ぎ命令の回数（命令の後の1on1の正式完走）。サーバーの WORK_ORDER_TARGETS と同じ。
+export const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
 
 export const LIMITS = Object.freeze({
   personaName: 16,
@@ -369,6 +371,25 @@ function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+// 出稼ぎ命令。サーバーの workOrderView と同じ。果たした後も、管理人が確認するか次の命令を出すまで残る。
+export function workOrderView(raw) {
+  const order = raw?.workOrder && typeof raw.workOrder === "object" ? raw.workOrder : null;
+  const target = integer(order?.target, 0, 1_000);
+  const orderSeq = integer(order?.orderSeq);
+  if (!order || !WORK_ORDER_TARGETS.includes(target) || orderSeq < 1) return null;
+  const doneAt = integer(order.doneAt);
+  return {
+    orderSeq,
+    target,
+    note: String(order.note || "").slice(0, LIMITS.requestNote),
+    issuedAt: integer(order.issuedAt),
+    reportedCount: integer(order.reportedCount, 0, target),
+    reportedAt: integer(order.reportedAt),
+    done: doneAt > 0,
+    doneAt,
+  };
+}
+
 function purposeCountsView(raw) {
   const counts = object(raw.purposeCounts);
   const allowSexual = raw.allowSexualPurposes === true;
@@ -430,6 +451,7 @@ export function viewContract(contract, uid, now = Date.now()) {
     rankOptIn: raw.rankOptIn === true,
     allowSexualPurposes: raw.allowSexualPurposes === true,
     allowScreenshots: raw.allowScreenshots === true,
+    allowWorkOrders: raw.allowWorkOrders === true,
     entryFee: integer(raw.entryFee, 0, 1_000),
     renewal: raw.renewal === true,
     createdAt: integer(raw.createdAt),
@@ -460,6 +482,8 @@ export function viewContract(contract, uid, now = Date.now()) {
       .filter((entry) => /^[a-f0-9]{16}$/.test(entry.requestId) && entry.amount > 0)
       .sort((left, right) => left.createdAt - right.createdAt),
     reportRequested: integer(raw.reportRequestedAt) > 0,
+    workOrder: status === "active" ? workOrderView(raw) : null,
+    workOrdersDone: integer(raw.workOrdersDone),
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
     peerReadSeq: Math.min(eventSeq, peerReadSeq),
@@ -634,6 +658,23 @@ export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords =
     .filter((situation) => situation.lines.length);
 }
 
+// 出稼ぎ命令の一言の候補。言葉の強さごとに用意し、定型文と同じ決まりに従う（限度額を上げさせる文・
+// 解約をためらわせる文に加え、期限で煽る文も入れない）。{no} は首輪番号に置き換え、番号がなければその文を出さない。
+export const WORK_ORDER_NOTES = Object.freeze({
+  harsh: Object.freeze(["財布が空なら稼いでこい。", "養分は働いて貢ぐもの。", "稼いでから顔を出せ。", "{no}号、出稼ぎの時間だ。"]),
+  normal: Object.freeze(["1on1を完走して稼いできなさい。", "稼いでから戻ってきて。", "{no}号、出稼ぎに行ってきて。"]),
+  sweet: Object.freeze(["1on1で少し稼いできてね♡", "がんばってきたら褒めてあげる。", "{no}号、いってらっしゃい♡"]),
+});
+
+export function workOrderNotesFor(tone, { collarNo = 0, ngWords = [] } = {}) {
+  const lines = WORK_ORDER_NOTES[tone] || WORK_ORDER_NOTES.normal;
+  const number = Number.isSafeInteger(Number(collarNo)) && Number(collarNo) > 0 ? String(Number(collarNo)) : "";
+  return lines
+    .filter((line) => !line.includes("{no}") || number)
+    .map((line) => line.replaceAll("{no}", number))
+    .filter((line) => !contractTextProblem(line, { role: "manager", ngWords }));
+}
+
 // お試しの申し込み。1日・1回30・1日30・合計100 Pay を基本に、入場料が1回に収まるよう一段ずつ上げる。
 export const TRIAL_DURATION_DAYS = 1;
 export function trialCaps(entryFee = 0) {
@@ -690,8 +731,10 @@ export const CONTRACT_TODOS = Object.freeze([
   Object.freeze({ kind: "applied", label: "申し込み", count: (contract) => (contract.role === "manager" && contract.status === "pending" ? 1 : 0) }),
   Object.freeze({ kind: "unpaid", label: "未払いの請求", count: (contract) => (contract.role === "payer" && contract.status === "active" ? (contract.pendingRequests || []).length : 0) }),
   Object.freeze({ kind: "awaiting", label: "受け取り待ち", count: (contract) => (contract.role === "manager" && contract.status === "active" ? integer(contract.awaitingReceipt) : 0) }),
+  Object.freeze({ kind: "work_done", label: "出稼ぎの報告", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.workOrder?.done ? 1 : 0) }),
   Object.freeze({ kind: "withdraw", label: "使用許可の申請", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.escrowWithdrawRequest ? 1 : 0) }),
   Object.freeze({ kind: "report", label: "残高報告の依頼", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reportRequested ? 1 : 0) }),
+  Object.freeze({ kind: "work", label: "出稼ぎ命令", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.workOrder && !contract.workOrder.done ? 1 : 0) }),
   Object.freeze({ kind: "unread", label: "未読", count: (contract) => (contract.status !== "ended" ? integer(contract.unread) : 0) }),
 ]);
 

@@ -16240,6 +16240,9 @@ const tributeService = createTributeService({
   mirrorWallet,
   bestEffort,
   syncAchievementPublicSurfaces,
+  // 出稼ぎ命令は、マイスタジアムの観客と同じ正本（検証済みの正式完走数）を数える。
+  economyProgressRef,
+  totalVerifiedMatches: (progress) => normalizeEconomyProgress(progress).achievementStats.totalMatches,
 });
 
 const TRIBUTE_GOOGLE_ACTIONS = new Set(["apply", "set_caps"]);

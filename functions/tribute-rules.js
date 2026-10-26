@@ -11,6 +11,8 @@ const PER_DAY_OPTIONS = Object.freeze([30, 100, 300, 500, 1_000, 3_000, 5_000, 1
 const TOTAL_OPTIONS = Object.freeze([100, 300, 1_000, 3_000, 5_000, 10_000, 30_000, 50_000, 100_000]);
 const DURATION_DAYS_OPTIONS = Object.freeze([1, 3, 7]);
 const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
+// 出稼ぎ命令の回数（命令の後の1on1の正式完走）。毎日のプレイ報酬の段と同じで、10回は本日の基本目標に当たる。
+const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
 const TONES = Object.freeze(["sweet", "normal", "harsh"]);
 const DISCLOSURES = Object.freeze(["nekama", "as_is", "undisclosed"]);
 const MANAGER_STYLES = Object.freeze(["harsh", "cold", "sweet"]);
@@ -499,6 +501,8 @@ function normalizeApplication(value, { entryFee = 0 } = {}) {
       allowSexualPurposes: value?.allowSexualPurposes === true,
       // 管理人のXに、自分が写る画面のスクショを載せられてもよいか。決めるのは財布だけ（既定は許さない）。
       allowScreenshots: value?.allowScreenshots === true,
+      // 管理人の出稼ぎ命令（1on1を○回完走してこい）を受けるか。古い画面から届いた申し込みは受けない。
+      allowWorkOrders: value?.allowWorkOrders === true,
       walletName: normalizeWalletName(value?.walletName),
     },
   };
@@ -634,6 +638,7 @@ module.exports = {
   TOTAL_OPTIONS,
   DURATION_DAYS_OPTIONS,
   ENTRY_FEE_OPTIONS,
+  WORK_ORDER_TARGETS,
   TONES,
   DISCLOSURES,
   MANAGER_STYLES,
