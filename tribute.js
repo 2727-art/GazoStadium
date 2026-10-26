@@ -79,7 +79,7 @@ import {
   viewContract,
   wordAgeLabel,
   wordRemainingLabel,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -701,7 +701,7 @@ function renderCardEditor() {
     <div class="tribute-editor-preview"><small>掲示板での見え方</small><div class="tribute-card-grid" data-card-preview>${renderCardPreview(card)}</div></div>
     <label class="tribute-field"><span>ペルソナ名（1〜${LIMITS.personaName}文字）</span><input name="personaName" maxlength="${LIMITS.personaName}" required value="${escapeHtml(card.personaName || "")}" /></label>
     <fieldset><legend>印のアイコン</legend><div class="tribute-avatar-picker" data-avatar-picker style="--sigil:${sigilColor(card)}">${renderAvatarChoices(card)}</div>
-      <small>用意した${AVATARS.length}種から選びます（画像のアップロードはできません）。イラストは上の段がゆるめ、下の段が大人びた絵です。</small></fieldset>
+      <small>用意した${AVATARS.length}種から選びます（画像のアップロードはできません）。イラストは、ゆるめと大人びた絵を用意しています。</small></fieldset>
     <fieldset><legend>印の色</legend><div class="tribute-swatches">${SIGIL_COLORS.map((color, index) => `<label style="--sigil:${color}"><input type="radio" name="sigil" value="${index}" ${Number(card.sigil || 0) === index ? "checked" : ""} /><span aria-label="色${index + 1}"></span></label>`).join("")}</div>
       <small>アイコンの縁と、掲示板のカードの色になります。</small></fieldset>
     ${renderSealSettings(card)}

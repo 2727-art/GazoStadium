@@ -49,8 +49,9 @@ export const DISCLOSURE_LABELS = Object.freeze({
 export const DISCLOSURE_SHORT = Object.freeze({ nekama: "ネカマ", as_is: "素", undisclosed: "非開示" });
 export const STYLE_LABELS = Object.freeze({ harsh: "罵倒", cold: "事務的", sweet: "甘やかし" });
 export const SIGIL_COLORS = Object.freeze(["#ff4fa3", "#b48cff", "#5fd4ff", "#ffd166", "#7ee08a", "#ff7a59"]);
-// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある23種から選ぶ。
+// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある35種から選ぶ。
 // 1〜6 はゆるめの絵、7〜12 は同じ6人の大人びた絵。13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（無料）。
+// 24〜29 はパステル調のミニイラスト、30〜35 は同じ6人の等身イラスト。既存の番号は変えない。
 export const AVATAR_GROUPS = Object.freeze([
   Object.freeze({ id: "illust", label: "イラスト" }),
   Object.freeze({ id: "jirai", label: "写真・地雷系" }),
@@ -80,6 +81,18 @@ export const AVATARS = Object.freeze([
   Object.freeze({ id: 21, group: "gal", label: "夜ギャル（赤）" }),
   Object.freeze({ id: 22, group: "gal", label: "夜ギャル（頬杖）" }),
   Object.freeze({ id: 23, group: "gal", label: "夜ギャル（ファー）" }),
+  Object.freeze({ id: 24, group: "illust", label: "パステル・黒髪リボン（ミニ）" }),
+  Object.freeze({ id: 25, group: "illust", label: "パステル・桃髪ボブ（ミニ）" }),
+  Object.freeze({ id: 26, group: "illust", label: "パステル・金髪カチューシャ（ミニ）" }),
+  Object.freeze({ id: 27, group: "illust", label: "パステル・青髪ショート（ミニ）" }),
+  Object.freeze({ id: 28, group: "illust", label: "パステル・茶髪ツイン（ミニ）" }),
+  Object.freeze({ id: 29, group: "illust", label: "パステル・紫髪リボン（ミニ）" }),
+  Object.freeze({ id: 30, group: "illust", label: "パステル・黒髪リボン（等身）" }),
+  Object.freeze({ id: 31, group: "illust", label: "パステル・桃髪ボブ（等身）" }),
+  Object.freeze({ id: 32, group: "illust", label: "パステル・金髪カチューシャ（等身）" }),
+  Object.freeze({ id: 33, group: "illust", label: "パステル・青髪ショート（等身）" }),
+  Object.freeze({ id: 34, group: "illust", label: "パステル・茶髪ツイン（等身）" }),
+  Object.freeze({ id: 35, group: "illust", label: "パステル・紫髪リボン（等身）" }),
 ]);
 export const AVATAR_MAX = AVATARS.length;
 

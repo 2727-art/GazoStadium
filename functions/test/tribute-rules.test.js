@@ -89,13 +89,13 @@ test("manager cards need a persona, a disclosure tag and a style but never a gen
   assert.match(rules.normalizeManagerCard({ personaName: "ミオ", disclosure: "female", style: "harsh", entryFee: 0 }).error, /中の人の札/);
 });
 
-test("manager cards take one of the 23 prepared icons or fall back to the letter sigil", () => {
+test("manager cards take one of the 35 prepared icons or fall back to the letter sigil", () => {
   const base = { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 };
-  assert.deepEqual([...rules.AVATAR_IDS], Array.from({ length: 24 }, (_, id) => id));
-  assert.equal(rules.AVATAR_MAX, 23);
+  assert.deepEqual([...rules.AVATAR_IDS], Array.from({ length: 36 }, (_, id) => id));
+  assert.equal(rules.AVATAR_MAX, 35);
   assert.equal(rules.normalizeManagerCard(base).card.avatar, 0, "no icon keeps the letter sigil");
-  for (const avatar of [1, 7, 12, 13, 17, 23, "5"]) assert.equal(rules.normalizeManagerCard({ ...base, avatar }).card.avatar, Number(avatar));
-  for (const avatar of [24, -1, 2.5, "https://example.com/a.png", "../avatar-01.webp", null, { id: 3 }]) {
+  for (const avatar of [1, 7, 12, 13, 17, 23, 24, 29, 30, 35, "5"]) assert.equal(rules.normalizeManagerCard({ ...base, avatar }).card.avatar, Number(avatar));
+  for (const avatar of [36, -1, 2.5, "https://example.com/a.png", "../avatar-01.webp", null, { id: 3 }]) {
     assert.equal(rules.normalizeManagerCard({ ...base, avatar }).card.avatar, 0, String(avatar));
     assert.equal(rules.normalizeAvatar(avatar), 0, `stored ${String(avatar)}`);
   }

@@ -32,8 +32,8 @@ function sourceBlock(source, startText, endText) {
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
   assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1"/);
   assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
@@ -160,25 +160,26 @@ test("client filters and contract views mirror the server", async () => {
   assert.equal(core.viewContract(contract, "p", now).collarNo, 3);
   assert.equal(core.viewContract(contract, "p", now).peerReadSeq, 4, "the payer sees how far the manager has read");
   assert.equal(core.viewContract(contract, "m", now).peerReadSeq, 9);
-  for (const avatar of [undefined, 24, -2, "x"]) {
+  for (const avatar of [undefined, 36, -2, "x"]) {
     const odd = { ...contract, managerCard: { ...contract.managerCard, avatar } };
     assert.equal(core.viewContract(odd, "p", now).manager.avatar, serverView(odd, "p", now).manager.avatar, String(avatar));
     assert.equal(core.viewContract(odd, "p", now).manager.avatar, 0, String(avatar));
   }
 });
 
-test("manager icons are 23 prepared WebP files (12 drawings, 11 photos) chosen in the card editor, never uploads", async () => {
+test("manager icons are 35 prepared WebP files (24 drawings, 11 photos) chosen in the card editor, never uploads", async () => {
   const core = await loadCore();
   assert.deepEqual(core.AVATARS.map((avatar) => avatar.id), rules.AVATAR_IDS.filter((id) => id > 0));
   assert.equal(core.AVATAR_MAX, rules.AVATAR_MAX);
-  assert.equal(core.AVATAR_MAX, 23);
-  // イラスト12・写真の地雷系4・写真の夜ギャル7。ブランドやキャラクターが写った3枚は入れていない。
+  assert.equal(core.AVATAR_MAX, 35);
+  // イラスト24・写真の地雷系4・写真の夜ギャル7。ブランドやキャラクターが写った3枚は入れていない。
   const groupOf = (id) => core.AVATARS.find((avatar) => avatar.id === id).group;
   assert.deepEqual(core.AVATAR_GROUPS.map((group) => group.id), ["illust", "jirai", "gal"]);
-  assert.deepEqual(core.AVATAR_GROUPS.map((group) => core.AVATARS.filter((avatar) => avatar.group === group.id).length), [12, 4, 7]);
+  assert.deepEqual(core.AVATAR_GROUPS.map((group) => core.AVATARS.filter((avatar) => avatar.group === group.id).length), [24, 4, 7]);
   assert.equal(groupOf(12), "illust");
   assert.equal(groupOf(13), "jirai");
   assert.equal(groupOf(17), "gal");
+  for (let id = 24; id <= 35; id += 1) assert.equal(groupOf(id), "illust");
   assert.equal(new Set(core.AVATARS.map((avatar) => avatar.label)).size, core.AVATARS.length, "labels are distinct for screen readers");
   for (const { id } of core.AVATARS) {
     const name = `avatar-${String(id).padStart(2, "0")}.webp`;
@@ -188,7 +189,7 @@ test("manager icons are 23 prepared WebP files (12 drawings, 11 photos) chosen i
     assert.equal(file.subarray(8, 12).toString("latin1"), "WEBP", `avatar ${id}`);
     assert.ok(file.length < 20_000, `avatar ${id} stays small`);
   }
-  for (const value of [0, 24, -1, "1; background:url(x)", null]) {
+  for (const value of [0, 36, -1, "1; background:url(x)", null]) {
     assert.equal(core.avatarId(value), 0, String(value));
     assert.equal(core.avatarUrl(value), "", String(value));
   }
@@ -214,7 +215,7 @@ test("manager icons are 23 prepared WebP files (12 drawings, 11 photos) chosen i
   assert.match(styles, /\.tribute-avatar-group \{/);
   assert.match(styles, /\.tribute-sigil\.has-avatar img \{/);
   assert.match(styles, /\.tribute-avatar-grid \{ display: grid; grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
-  assert.match(design, /管理人の印は、用意した23種のアイコン/);
+  assert.match(design, /管理人の印は、用意した35種のアイコン/);
 });
 
 test("templates are harsh but never cross the stated lines, and lowering or leaving is never blamed", async () => {

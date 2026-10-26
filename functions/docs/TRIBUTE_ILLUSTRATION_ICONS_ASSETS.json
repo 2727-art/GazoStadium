@@ -1,0 +1,209 @@
+{
+  "method": "Source extraction, circular alpha mask, resize, WebP encoding. No generative redraw.",
+  "icons": [
+    {
+      "id": 24,
+      "file": "assets/tribute-avatars/avatar-24.webp",
+      "sourceFile": "パステル虹彩のアニメアイコンシート (1).png",
+      "sourceSha256": "5dc12f6fc5a9355390d1e09df131247b1867ea90a2929431740092f1f93807b1",
+      "crop": {
+        "left": 22,
+        "top": 2,
+        "width": 484,
+        "height": 484
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 66,
+      "bytes": 19988,
+      "sha256": "251bad38ccc025bcdafa8313841c82dca8dab3ea5f603dfbf82e8c057b19a552"
+    },
+    {
+      "id": 25,
+      "file": "assets/tribute-avatars/avatar-25.webp",
+      "sourceFile": "パステル虹彩のアニメアイコンシート (1).png",
+      "sourceSha256": "5dc12f6fc5a9355390d1e09df131247b1867ea90a2929431740092f1f93807b1",
+      "crop": {
+        "left": 527,
+        "top": 4,
+        "width": 482,
+        "height": 482
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 76,
+      "bytes": 19314,
+      "sha256": "2fb34060f936063fc6ac8004b5ba04afa2e829718d5350f9314f3a5c18d3023a"
+    },
+    {
+      "id": 26,
+      "file": "assets/tribute-avatars/avatar-26.webp",
+      "sourceFile": "パステル虹彩のアニメアイコンシート (1).png",
+      "sourceSha256": "5dc12f6fc5a9355390d1e09df131247b1867ea90a2929431740092f1f93807b1",
+      "crop": {
+        "left": 1031,
+        "top": 4,
+        "width": 482,
+        "height": 482
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 76,
+      "bytes": 19418,
+      "sha256": "fd9891f21609b84e110175b0b5269c78f68d253aca3f73d416f8f6c6375b274e"
+    },
+    {
+      "id": 27,
+      "file": "assets/tribute-avatars/avatar-27.webp",
+      "sourceFile": "パステル虹彩のアニメアイコンシート (1).png",
+      "sourceSha256": "5dc12f6fc5a9355390d1e09df131247b1867ea90a2929431740092f1f93807b1",
+      "crop": {
+        "left": 20,
+        "top": 500,
+        "width": 488,
+        "height": 488
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 78,
+      "bytes": 19458,
+      "sha256": "33929ef3f455fbb5d8c8c6aeb733473c13c21dbe92d4db6163fdd351f9c349bc"
+    },
+    {
+      "id": 28,
+      "file": "assets/tribute-avatars/avatar-28.webp",
+      "sourceFile": "パステル虹彩のアニメアイコンシート (1).png",
+      "sourceSha256": "5dc12f6fc5a9355390d1e09df131247b1867ea90a2929431740092f1f93807b1",
+      "crop": {
+        "left": 524,
+        "top": 503,
+        "width": 488,
+        "height": 488
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 80,
+      "bytes": 19416,
+      "sha256": "5121612827964a930681080ce06b97a3f99c4835ad08ef5db8d79141dab19479"
+    },
+    {
+      "id": 29,
+      "file": "assets/tribute-avatars/avatar-29.webp",
+      "sourceFile": "パステル虹彩のアニメアイコンシート (1).png",
+      "sourceSha256": "5dc12f6fc5a9355390d1e09df131247b1867ea90a2929431740092f1f93807b1",
+      "crop": {
+        "left": 1034,
+        "top": 500,
+        "width": 488,
+        "height": 488
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 78,
+      "bytes": 19132,
+      "sha256": "5767ade8649a6f5496afec9806de06aab24e5877243de299f2fd2e46f19298ac"
+    },
+    {
+      "id": 30,
+      "file": "assets/tribute-avatars/avatar-30.webp",
+      "sourceFile": "ChatGPT 画像 2026年10月26日 17_09_45 (1).png",
+      "sourceSha256": "7096a8d6293a73ea3afed5e9b40ead149e20edfd0a5c013ef99155690c3a82a8",
+      "crop": {
+        "left": 19,
+        "top": 5,
+        "width": 478,
+        "height": 478
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 84,
+      "bytes": 19158,
+      "sha256": "5549d73dadb5d4912b07f1c521d633cdaaeabfd2d74397c378cab656e8632c16"
+    },
+    {
+      "id": 31,
+      "file": "assets/tribute-avatars/avatar-31.webp",
+      "sourceFile": "ChatGPT 画像 2026年10月26日 17_09_45 (1).png",
+      "sourceSha256": "7096a8d6293a73ea3afed5e9b40ead149e20edfd0a5c013ef99155690c3a82a8",
+      "crop": {
+        "left": 529,
+        "top": 5,
+        "width": 478,
+        "height": 478
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 88,
+      "bytes": 19686,
+      "sha256": "e69acebf7b2701ccdc0aeb4140e25b8423ee6d1e8274087c1ea23c3d3ddf905b"
+    },
+    {
+      "id": 32,
+      "file": "assets/tribute-avatars/avatar-32.webp",
+      "sourceFile": "ChatGPT 画像 2026年10月26日 17_09_45 (1).png",
+      "sourceSha256": "7096a8d6293a73ea3afed5e9b40ead149e20edfd0a5c013ef99155690c3a82a8",
+      "crop": {
+        "left": 1036,
+        "top": 4,
+        "width": 480,
+        "height": 480
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 86,
+      "bytes": 19494,
+      "sha256": "035cdb02dfeb18b329d7ec56c2eb43a22b2c88d2ca17e8c35d41a980a5137b5b"
+    },
+    {
+      "id": 33,
+      "file": "assets/tribute-avatars/avatar-33.webp",
+      "sourceFile": "ChatGPT 画像 2026年10月26日 17_09_45 (1).png",
+      "sourceSha256": "7096a8d6293a73ea3afed5e9b40ead149e20edfd0a5c013ef99155690c3a82a8",
+      "crop": {
+        "left": 19,
+        "top": 507,
+        "width": 478,
+        "height": 478
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 88,
+      "bytes": 19358,
+      "sha256": "b19d303b5de76274bf1dd1f175f3c395281b751853dbea67455144f1da2390bd"
+    },
+    {
+      "id": 34,
+      "file": "assets/tribute-avatars/avatar-34.webp",
+      "sourceFile": "ChatGPT 画像 2026年10月26日 17_09_45 (1).png",
+      "sourceSha256": "7096a8d6293a73ea3afed5e9b40ead149e20edfd0a5c013ef99155690c3a82a8",
+      "crop": {
+        "left": 529,
+        "top": 508,
+        "width": 478,
+        "height": 478
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 88,
+      "bytes": 19094,
+      "sha256": "583c3e3089339c4a7e99b9cb9f5f688bbd30863b23c094299ec33ea82a6a6f60"
+    },
+    {
+      "id": 35,
+      "file": "assets/tribute-avatars/avatar-35.webp",
+      "sourceFile": "ChatGPT 画像 2026年10月26日 17_09_45 (1).png",
+      "sourceSha256": "7096a8d6293a73ea3afed5e9b40ead149e20edfd0a5c013ef99155690c3a82a8",
+      "crop": {
+        "left": 1038,
+        "top": 507,
+        "width": 480,
+        "height": 480
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 86,
+      "bytes": 18736,
+      "sha256": "f555a213cb751b3d3245909f3b8050f84be1a32031b6ce5f843583ba3a494e1c"
+    }
+  ]
+}

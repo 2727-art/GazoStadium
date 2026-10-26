@@ -1051,21 +1051,21 @@ test("a manager can add, show and remove an optional X profile; payers see it on
   assert.equal((await harness.act("viewer", "board")).managers[0].xHandle, "", "a malformed stored value is never returned");
 });
 
-test("a manager's chosen icon reaches the board, the card, contracts, receipts and the ranking", async () => {
+for (const avatar of [7, 24, 29, 30, 35]) test(`manager icon ${avatar} reaches the board, the card, contracts, receipts and the ranking`, async () => {
   const harness = createHarness({ balances: { manager: 0, payer: 1_000 } });
-  const publicManagerId = await openManager(harness, "manager", { avatar: 7 });
-  assert.equal(harness.firestore.read("tributeProfiles/manager").card.avatar, 7);
+  const publicManagerId = await openManager(harness, "manager", { avatar });
+  assert.equal(harness.firestore.read("tributeProfiles/manager").card.avatar, avatar);
   await confirmAge(harness, "payer");
-  assert.equal((await harness.act("payer", "board")).managers[0].avatar, 7);
-  assert.equal((await harness.act("payer", "manager", { publicManagerId })).card.avatar, 7);
+  assert.equal((await harness.act("payer", "board")).managers[0].avatar, avatar);
+  assert.equal((await harness.act("payer", "manager", { publicManagerId })).card.avatar, avatar);
   const contractId = await startContract(harness, "manager", "payer", publicManagerId);
-  assert.equal(harness.contract(contractId).managerCard.avatar, 7, "the contract keeps the icon it was signed with");
+  assert.equal(harness.contract(contractId).managerCard.avatar, avatar, "the contract keeps the icon it was signed with");
   const receipts = await harness.act("payer", "receipts");
-  assert.equal(receipts.receipts[0].avatar, 7);
+  assert.equal(receipts.receipts[0].avatar, avatar);
   const rankings = await harness.act("payer", "rankings");
-  assert.equal(rankings.managers[0].avatar, 7);
+  assert.equal(rankings.managers[0].avatar, avatar);
   const state = await harness.act("payer", "state");
-  assert.equal(state.contracts.find((contract) => contract.contractId === contractId).manager.avatar, 7);
+  assert.equal(state.contracts.find((contract) => contract.contractId === contractId).manager.avatar, avatar);
 
   harness.advance(2_100);
   const changed = await harness.act("manager", "save_profile", {

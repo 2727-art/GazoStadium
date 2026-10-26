@@ -1,0 +1,39 @@
+{
+  "checkedAt": "2026-10-26T08:22:46.566Z",
+  "icons": {
+    "added": 12,
+    "ids": [
+      24,
+      35
+    ],
+    "category": "イラスト",
+    "categoryTotal": 24,
+    "total": 35,
+    "size": [
+      256,
+      256
+    ],
+    "outsideCircleTransparent": true,
+    "existingIconsUnchanged": true
+  },
+  "validation": {
+    "command": "npm --prefix functions run check",
+    "tests": 2144,
+    "pass": 2112,
+    "fail": 0,
+    "skip": 32,
+    "skipReason": "Emulator-only tests",
+    "ui": "Local browser preview: all 12 new icons visible in イラスト; icon 35 selectable and card preview updates."
+  },
+  "deploymentPlan": {
+    "functions": [
+      "tributeAction"
+    ],
+    "hosting": true,
+    "cloudflareMainPush": true,
+    "databaseMigration": false
+  },
+  "limitations": [
+    "No physical iPhone/Safari test."
+  ]
+}
