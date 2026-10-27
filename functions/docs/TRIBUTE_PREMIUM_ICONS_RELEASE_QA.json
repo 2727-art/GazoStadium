@@ -475,5 +475,48 @@
         ]
       }
     ]
+  },
+  "dashboardBuildRollback": {
+    "buildStartedAt": "2026-10-27T10:00:01Z",
+    "githubCheckRun": null,
+    "log": "wrangler 4.153.0 autoconfig, Read 760 files, No updated asset files to upload, Success",
+    "checkedAt": "2026-10-27T10:01:18.885Z",
+    "workersIndexEquals": "dc5e7f1 (ranch-hold-v1, before this release)",
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexOk": true,
+        "newIconStatuses": [
+          200
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexOk": true,
+        "newIconStatuses": [
+          200
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": false,
+        "indexOk": false,
+        "newIconStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": false,
+        "indexOk": false,
+        "newIconStatuses": [
+          404
+        ]
+      }
+    ],
+    "impact": "workers.dev and hariaistadium.com served the previous client: paid icons showed as letter sigils and the store had no paid icon shelf; Functions and Database rules stayed on this release",
+    "fix": "merge a new main commit (this record update) to rebuild workers.dev from main"
   }
 }
