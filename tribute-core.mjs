@@ -32,6 +32,8 @@ export const LIMITS = Object.freeze({
   ngWordLength: 12,
   wantWordCount: 5,
   wantWordLength: 12,
+  // 抵抗は、未払いの請求1件に3回まで（サーバーと同じ）。
+  resistsPerRequest: 3,
   message: 240,
   requestNote: 60,
   pendingRequests: 3,
@@ -233,6 +235,19 @@ export const KIND_LABELS = Object.freeze({
   silent: "無言の献上",
   escrow_take: "管理口座から徴収",
 });
+export const GRANTED_LABEL = "願い出て許された献上";
+
+// 献上の種類の表示。願い出て許された献上は、記録の上は無言の献上（granted の印）。
+export function tributeKindLabel(record) {
+  if (record?.granted === true) return GRANTED_LABEL;
+  return KIND_LABELS[record?.kind] || "献上";
+}
+
+// 抵抗のすえの献上（渋った回数）。0 なら空。
+export function resistedLabel(record) {
+  const count = integer(record?.resisted, 0, LIMITS.resistsPerRequest);
+  return count > 0 ? `${count}回抵抗して献上` : "";
+}
 export const END_REASON_LABELS = Object.freeze({
   withdrawn: "申し込みを取り下げました",
   declined: "申し込みは受理されませんでした",
@@ -443,6 +458,31 @@ export function workOrderView(raw) {
   };
 }
 
+// お預けと願い出。サーバーの holdView・pleaView と同じ。
+export function holdView(raw) {
+  const hold = raw?.hold && typeof raw.hold === "object" ? raw.hold : null;
+  const since = integer(hold?.since);
+  if (!hold || since < 1) return null;
+  return { since, note: String(hold.note || "").slice(0, LIMITS.requestNote) };
+}
+
+export function pleaView(raw) {
+  const plea = raw?.plea && typeof raw.plea === "object" ? raw.plea : null;
+  const pleaSeq = integer(plea?.pleaSeq);
+  const amount = integer(plea?.amount);
+  if (!plea || pleaSeq < 1 || amount < 1) return null;
+  const grantedAt = integer(plea.grantedAt);
+  return {
+    pleaSeq,
+    amount,
+    purpose: visiblePurpose(plea.purpose, { allowSexual: raw.allowSexualPurposes === true }),
+    note: String(plea.note || "").slice(0, LIMITS.requestNote),
+    createdAt: integer(plea.createdAt),
+    granted: grantedAt > 0,
+    grantedAt,
+  };
+}
+
 function purposeCountsView(raw) {
   const counts = object(raw.purposeCounts);
   const allowSexual = raw.allowSexualPurposes === true;
@@ -507,6 +547,7 @@ export function viewContract(contract, uid, now = Date.now()) {
     allowSexualPurposes: raw.allowSexualPurposes === true,
     allowScreenshots: raw.allowScreenshots === true,
     allowWorkOrders: raw.allowWorkOrders === true,
+    allowHolds: raw.allowHolds === true,
     entryFee: integer(raw.entryFee, 0, 1_000),
     renewal: raw.renewal === true,
     createdAt: integer(raw.createdAt),
@@ -532,6 +573,7 @@ export function viewContract(contract, uid, now = Date.now()) {
         amount: integer(entry?.amount),
         note: String(entry?.note || "").slice(0, LIMITS.requestNote),
         purpose: visiblePurpose(entry?.purpose, { allowSexual: raw.allowSexualPurposes === true }),
+        resists: integer(entry?.resists, 0, LIMITS.resistsPerRequest),
         createdAt: integer(entry?.createdAt),
       }))
       .filter((entry) => /^[a-f0-9]{16}$/.test(entry.requestId) && entry.amount > 0)
@@ -539,6 +581,11 @@ export function viewContract(contract, uid, now = Date.now()) {
     reportRequested: integer(raw.reportRequestedAt) > 0,
     workOrder: status === "active" ? workOrderView(raw) : null,
     workOrdersDone: integer(raw.workOrdersDone),
+    hold: status === "active" ? holdView(raw) : null,
+    plea: status === "active" ? pleaView(raw) : null,
+    pleaCount: integer(raw.pleaCount),
+    pleaGrantedCount: integer(raw.pleaGrantedCount),
+    resistedTributes: integer(raw.resistedTributes),
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
     peerReadSeq: Math.min(eventSeq, peerReadSeq),
@@ -564,16 +611,23 @@ export const MANAGER_SITUATIONS = Object.freeze([
   Object.freeze({ id: "voice", label: "言い当てる" }),
   Object.freeze({ id: "after", label: "受け取った後" }),
   Object.freeze({ id: "ignore", label: "突き放す" }),
+  // 抵抗した財布を、払うほうへ追い込む（2026-10-27）。
+  Object.freeze({ id: "press", label: "追い込む" }),
   Object.freeze({ id: "report", label: "報告させる" }),
   Object.freeze({ id: "nekama", label: "ネカマとして" }),
   Object.freeze({ id: "control", label: "寸止め・射精管理", sexual: true }),
   Object.freeze({ id: "ended", label: "終わる時" }),
+  // sheet: 会話の定型文には出さず、お預けのシートの一言の候補にだけ使う。
+  Object.freeze({ id: "hold", label: "お預け", sheet: true }),
 ]);
 export const PAYER_SITUATIONS = Object.freeze([
   Object.freeze({ id: "give", label: "差し出す" }),
   Object.freeze({ id: "reply", label: "返事" }),
   Object.freeze({ id: "control", label: "寸止め・射精管理", sexual: true }),
   Object.freeze({ id: "safety", label: "止める・下げる" }),
+  // 願い出と抵抗のシートの一言の候補（会話の定型文には出さない）。
+  Object.freeze({ id: "plea", label: "願い出る", sheet: true }),
+  Object.freeze({ id: "resist", label: "抵抗する", sheet: true }),
 ]);
 
 export const TEMPLATES = Object.freeze({
@@ -612,6 +666,12 @@ export const TEMPLATES = Object.freeze({
         "{no}号の分、確かに受け取った。",
       ]),
       ignore: Object.freeze(["……。", "既読。", "で？", "興味ない。"]),
+      press: Object.freeze([
+        "渋っても結果は同じ。早く押せ。",
+        "抵抗するふりはもういい。払え。",
+        "嫌がる顔、悪くない。で、払うんでしょ。",
+        "{no}号、往生際が悪い。",
+      ]),
       report: Object.freeze([
         "残高、報告。今すぐ。",
         "財布の中身、隠さず見せろ。",
@@ -635,6 +695,11 @@ export const TEMPLATES = Object.freeze({
         "おつかれ。財布、閉じていいよ。",
         "契約終了。好きにしな。",
       ]),
+      hold: Object.freeze([
+        "お預けだ。許すまで財布に触るな。",
+        "勝手に差し出すな。待て。",
+        "{no}号、お預け。",
+      ]),
     }),
     normal: Object.freeze({
       nudge: Object.freeze([
@@ -656,6 +721,11 @@ export const TEMPLATES = Object.freeze({
         "{no}号、確認した。",
       ]),
       ignore: Object.freeze(["……。", "既読。"]),
+      press: Object.freeze([
+        "抵抗しても無駄。払って。",
+        "迷うのは分かる。でも払うんでしょ。",
+        "{no}号、観念しなさい。",
+      ]),
       report: Object.freeze(["残高、見せて。", "今の財布、報告して。"]),
       nekama: Object.freeze([
         "男に貢いでるって分かってるよね。よろしい。",
@@ -663,6 +733,7 @@ export const TEMPLATES = Object.freeze({
       ]),
       control: Object.freeze(["まだイっちゃだめ。", "イきたいなら先に払って。", "勝手にイったら罰金ね。"]),
       ended: Object.freeze(["おつかれさま。ここまでありがとう。", "契約終了。ちゃんと休んでね。"]),
+      hold: Object.freeze(["当分お預け。勝手に差し出さないこと。", "許すまで待ちなさい。", "{no}号、お預けね。"]),
     }),
     sweet: Object.freeze({
       // お願いの形にはしない（記事で財布が嫌ったのは、媚びる・営業する貢がせ役だった）。
@@ -683,6 +754,11 @@ export const TEMPLATES = Object.freeze({
         "{no}号、えらいね。",
       ]),
       ignore: Object.freeze(["……ふふ。", "今はちょっと放置。"]),
+      press: Object.freeze([
+        "嫌がっても、待ってあげない♡",
+        "最後は払うって、知ってるよ。",
+        "{no}号、がんばって抵抗してるね♡",
+      ]),
       report: Object.freeze(["今の財布、ちょっと見せて？"]),
       nekama: Object.freeze([
         "中身が男でも来てくれるんだ。かわいいね。",
@@ -690,6 +766,7 @@ export const TEMPLATES = Object.freeze({
       ]),
       control: Object.freeze(["まだ我慢できるよね。", "ちゃんと払えたら、イっていいよ。", "勝手にイったら罰金だよ？"]),
       ended: Object.freeze(["おつかれさま。また気が向いたらね。", "ここまでありがとう。ゆっくり休んで。"]),
+      hold: Object.freeze(["今日はお預け。いい子で待っててね♡", "我慢できたら、許してあげる。", "{no}号、お預けだよ♡"]),
     }),
   }),
   payer: Object.freeze({
@@ -698,18 +775,24 @@ export const TEMPLATES = Object.freeze({
       reply: Object.freeze(["はい。", "財布として使ってください。", "もっと罵ってください。", "ありがとうございます。", "貢がせていただき、ありがとうございます。", "ATMとして使ってください。", "養分です。"]),
       control: Object.freeze(["寸止め料、払いました。", "イかせてください。お願いします。", "勝手にイきました。罰金を払います。"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
+      plea: Object.freeze(["貢がせてください。", "お願いします、差し出させてください。", "財布を開く許可をください。", "{no}号に、貢ぐ許可をください。"]),
+      resist: Object.freeze(["……払いたくないです。", "それだけは許してください。", "今日は勘弁してください……", "{no}号、まだ抵抗します。"]),
     }),
     normal: Object.freeze({
       give: Object.freeze(["今日の分です。", "差し出します。", "{no}号、献上します。"]),
       reply: Object.freeze(["はい。", "ありがとうございます。", "貢がせてくれてありがとうございます。", "報告します。"]),
       control: Object.freeze(["寸止め料です。", "イってもいいですか。"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
+      plea: Object.freeze(["貢がせてください。", "差し出してもいいですか。", "{no}号、献上の許可をください。"]),
+      resist: Object.freeze(["今日は払いたくないです。", "もう少し待ってください。", "考えさせてください。"]),
     }),
     sweet: Object.freeze({
       give: Object.freeze(["今日の分、どうぞ。", "受け取ってくれたらうれしい。"]),
       reply: Object.freeze(["ありがとう。", "受け取ってくれてありがとう。", "今日もお願いします。", "うれしい。"]),
       control: Object.freeze(["寸止め料、どうぞ。", "イってもいい？"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
+      plea: Object.freeze(["貢がせてほしいな。", "差し出してもいい？"]),
+      resist: Object.freeze(["もう少しだけ待って……", "ちょっとだけ考えさせて。"]),
     }),
   }),
 });
@@ -721,6 +804,7 @@ export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords =
   const situations = role === "manager" ? MANAGER_SITUATIONS : PAYER_SITUATIONS;
   const number = Number.isSafeInteger(Number(collarNo)) && Number(collarNo) > 0 ? String(Number(collarNo)) : "";
   return situations
+    .filter((situation) => !situation.sheet)
     .filter((situation) => situation.id !== "nekama" || disclosure === "nekama")
     .filter((situation) => !situation.sexual || allowSexual === true)
     .map((situation) => ({
@@ -731,6 +815,19 @@ export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords =
         .filter((line) => !messageProblem(line, { role, ngWords })),
     }))
     .filter((situation) => situation.lines.length);
+}
+
+// シートの一言の候補（管理人のお預け、財布の願い出・抵抗）。管理人は契約の強さ（上限）までを強い順に、
+// 財布は契約の強さのものを出す。{no} は首輪番号に置き換え、言われたくない言葉を含む文は管理人に出さない。
+export function sheetLinesFor(role, tone, situationId, { ngWords = [], collarNo = 0 } = {}) {
+  const roleSet = TEMPLATES[role === "manager" ? "manager" : "payer"];
+  const tones = role === "manager" ? tonesUpTo(tone).reverse() : [roleSet[tone] ? tone : "normal"];
+  const number = Number.isSafeInteger(Number(collarNo)) && Number(collarNo) > 0 ? String(Number(collarNo)) : "";
+  return tones
+    .flatMap((key) => roleSet[key]?.[situationId] || [])
+    .filter((line) => !line.includes("{no}") || number)
+    .map((line) => line.replaceAll("{no}", number))
+    .filter((line) => !contractTextProblem(line, { role, ngWords }));
 }
 
 // 出稼ぎ命令の一言の候補。言葉の強さごとに用意し、定型文と同じ決まりに従う（限度額を上げさせる文・
@@ -808,6 +905,8 @@ export const CONTRACT_TODOS = Object.freeze([
   Object.freeze({ kind: "unpaid", label: "未払いの請求", count: (contract) => (contract.role === "payer" && contract.status === "active" ? (contract.pendingRequests || []).length : 0) }),
   Object.freeze({ kind: "awaiting", label: "受け取り待ち", count: (contract) => (contract.role === "manager" && contract.status === "active" ? integer(contract.awaitingReceipt) : 0) }),
   Object.freeze({ kind: "work_done", label: "出稼ぎの報告", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.workOrder?.done ? 1 : 0) }),
+  Object.freeze({ kind: "plea", label: "願い出", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.plea && !contract.plea.granted ? 1 : 0) }),
+  Object.freeze({ kind: "granted", label: "許された献上", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.plea?.granted ? 1 : 0) }),
   Object.freeze({ kind: "withdraw", label: "使用許可の申請", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.escrowWithdrawRequest ? 1 : 0) }),
   Object.freeze({ kind: "report", label: "残高報告の依頼", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reportRequested ? 1 : 0) }),
   Object.freeze({ kind: "work", label: "出稼ぎ命令", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.workOrder && !contract.workOrder.done ? 1 : 0) }),

@@ -138,6 +138,8 @@ const LIMITS = Object.freeze({
   // 財布が登録する「言われたい言葉」（言われたくない言葉の反対）。管理人の言葉選びの手がかりにする。
   wantWordCount: 5,
   wantWordLength: 12,
+  // 抵抗: 未払いの請求1件に、財布が渋る一言を返せる回数（請求は断れないまま）。
+  resistsPerRequest: 3,
   message: 240,
   requestNote: 60,
   pendingRequests: 3,
@@ -589,6 +591,8 @@ function normalizeApplication(value, { entryFee = 0 } = {}) {
       allowScreenshots: value?.allowScreenshots === true,
       // 管理人の出稼ぎ命令（1on1を○回完走してこい）を受けるか。古い画面から届いた申し込みは受けない。
       allowWorkOrders: value?.allowWorkOrders === true,
+      // 管理人の「お預け」（財布から勝手に差し出せなくする）を受けるか。古い画面から届いた申し込みは受けない。
+      allowHolds: value?.allowHolds === true,
       walletName: normalizeWalletName(value?.walletName),
     },
   };

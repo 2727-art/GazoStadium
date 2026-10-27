@@ -1,0 +1,444 @@
+{
+  "checkedAt": "2026-10-27T09:25:06.862Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "8473e53",
+  "baseCommit": "250c7cd",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch design/ranch-wallet-moves)",
+  "decisions": {
+    "thisRelease": "stage 2 of design section 14",
+    "holdsDefault": "accepted on applying; older contracts and old screens do not accept",
+    "takeBack": "no taking back a sent tribute; managers refuse with holds and denied pleas",
+    "decidedBy": "user, 2026-10-27 JST"
+  },
+  "mechanism": {
+    "hold": "manager hold/unhold, no deadline; blocks silent tributes only; requests and escrow keep working; payer set_holds turns it off and clears hold and plea",
+    "plea": "payer plea with amount (up to the per-tribute cap, number shown only to the payer), purpose and line; one at a time; counts as a payer message",
+    "answer": "plea_grant / plea_deny with an optional line, counted as a manager reply; a grant allows exactly that amount and purpose once via tribute kind 'granted', recorded as silent with granted: true",
+    "cleared": [
+      "unhold",
+      "contract end",
+      "set_holds off",
+      "sexual purpose permission removed (sexual pleas)"
+    ],
+    "resist": "payer resist on an unpaid request, up to 3 times, contract text rules; request stays unpaid; resisted count carried to the tribute and receipt; counts as a payer message",
+    "stockLines": "manager 追い込む in chat templates; hold (manager) and plea/resist (payer) lines only in their sheets"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "newActions": [
+      "set_holds",
+      "hold",
+      "unhold",
+      "plea",
+      "plea_withdraw",
+      "plea_grant",
+      "plea_deny",
+      "resist"
+    ],
+    "firestoreIndexes": [],
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2265,
+    "passed": 2233,
+    "failed": 0,
+    "skipped": 32
+  },
+  "preRelease": {
+    "deliveryCheckedAt": "2026-10-27T09:18:32.604Z",
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "otherSessionChangesIncluded": false,
+    "functionsUnchangedSinceLastRelease": true
+  },
+  "push": "250c7cd..8473e53",
+  "functions": {
+    "checkedAt": "2026-10-27T09:21:04Z",
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "a3cdd6f60e37f5b30929d94b9d509eaadd0c8672",
+        "sourceHash": "9396efbaaeb1c566c8149c398b7561f2decf3877"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "firstAttempt": {
+      "conclusion": "failure",
+      "completedAt": "2026-10-27T09:21:13Z",
+      "cause": "unknown; no Cloudflare incident; logs need a Cloudflare sign-in"
+    },
+    "retry": {
+      "by": "user, Cloudflare dashboard",
+      "build": "15e422d8",
+      "deployCommand": "npx wrangler deploy",
+      "conclusion": "success",
+      "completedAt": "2026-10-27T09:24:13Z"
+    }
+  },
+  "delivery": {
+    "checkedAt": "2026-10-27T09:25:06.862Z",
+    "readOnly": true,
+    "marker": "ranch-hold-v1",
+    "commit": "8473e5354be298f1db1a6275a6c84bdcde2b8f74",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-hold-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-hold.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-hold-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-hold.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-hold-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-hold.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-hold-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-hold.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "tribute.css": true,
+      "tribute-core.mjs": true
+    },
+    "servedClientHas": {
+      "holdPanel": true,
+      "pleaSheet": true,
+      "resistSheet": true,
+      "grantedGive": true,
+      "holdsSetting": true,
+      "pressSituation": true,
+      "grantedLabel": true,
+      "resistLimit3": true
+    },
+    "failedRequests": 0,
+    "storedAuthRecords": 0
+  },
+  "open": [
+    "holds, pleas, granted tributes and resisting were not exercised in production (tests and preview)",
+    "the cause of the first failed Workers build is unknown (the retry succeeded)",
+    "stage 3 (word offerings and recitation, the manager's own words, extension) is not implemented"
+  ]
+}

@@ -227,7 +227,7 @@ async function threadRenderer() {
   const context = vm.createContext({ ...module, ...await deco, previewScreen: "", sealChoices: new Map(),
     state: { profile: { card: { seals: ["yoku", "zako"] } }, thread: {}, contracts: [], walletBalance: 500 },
     frame: (html) => html, escapeHtml: String, renderBlockButton: () => "", renderTemplates: () => "", renderThreadHead: () => "", sealSvg: () => "" });
-  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "rewardChips", "renderWantChips", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "retryReasonText", "canShowShot", "renderShotButton", "renderPendingRequests", "renderWorkOrder", "renderWorkConfirmControls", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
+  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "rewardChips", "renderWantChips", "renderResistRow", "renderHold", "renderGiveButton", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "retryReasonText", "canShowShot", "renderShotButton", "renderPendingRequests", "renderWorkOrder", "renderWorkConfirmControls", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
   return (raw, uid, { work = null, events = [], demo = false } = {}) => {
     context.state.thread = { view: module.viewContract(raw, uid), events, work, demo };
     return context.renderThread();
