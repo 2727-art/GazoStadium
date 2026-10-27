@@ -490,8 +490,10 @@ test("today's word mirrors the server check, sits only in the manager's own hub,
     assert.equal(core.todayWordProblem(text), server.error || "", JSON.stringify(text));
   }
   assert.match(core.todayWordProblem("あ".repeat(31)), /30文字まで/);
-  assert.equal(core.wordAgeLabel(Date.now() - 3 * 3_600_000), "3時間前");
-  assert.equal(core.wordRemainingLabel(Date.now() - 3 * 3_600_000), "あと21時間で消えます");
+  // 同じ「いま」で比べる（Date.now() を2回呼ぶと、間に1ミリ秒進んだ時に「あと20時間」になる）。
+  const wordNow = Date.now();
+  assert.equal(core.wordAgeLabel(wordNow - 3 * 3_600_000, wordNow), "3時間前");
+  assert.equal(core.wordRemainingLabel(wordNow - 3 * 3_600_000, wordNow), "あと21時間で消えます");
 
   const hub = sourceBlock(client, "function renderHub", "function renderWordForm");
   assert.match(hub, /data-screen="card">カードを編集<\/button>\s*<\/div>\s*\$\{boardNotice \? renderBoardNotice\(profile\) : ""\}\s*\$\{renderWordForm\(profile\)\}/, "the form appears only once a manager card exists");

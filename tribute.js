@@ -19,6 +19,7 @@ import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-c
 import {
   AVATAR_GROUPS,
   AVATARS,
+  BOARD_SEXUAL_PATTERN,
   CHEER,
   DEFAULT_SEALS,
   DEFINITION,
@@ -115,7 +116,7 @@ import {
   renderExcerptImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1";
+} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1";
 import {
   CARD_FRAMES,
   FRAME_PALETTES,
@@ -1571,7 +1572,10 @@ function renderEvent(event, view, statuses) {
         ? `<span class="tribute-stamp-seal">${sealSvg({ label: sealLabel(event.seal), name: managerName, at: receivedAt, size: 64, shape: event.sealShape, ink: event.sealInk, rough: false })}</span>`
         : "";
       const controls = !receivedAt && view.role === "manager" && view.status === "active" ? renderReceiveControls(event, view) : "";
-      return `<li class="tribute-event is-word-offering ${mine ? "is-mine" : "is-theirs"}"><div class="tribute-letter"><span class="tribute-eyebrow">言葉の献上</span><p>${escapeHtml(event.text).replace(/\n/g, "<br>")}</p><small>${escapeHtml(payerName)} → ${escapeHtml(managerName)}</small>${status}${seal}</div>${controls}${time}</li>`;
+      const save = view.role === "payer"
+        ? `<button class="tribute-save-image" type="button" data-t="share-open" data-seq="${Number(event.seq)}">画像で保存</button>`
+        : "";
+      return `<li class="tribute-event is-word-offering ${mine ? "is-mine" : "is-theirs"}"><div class="tribute-letter"><span class="tribute-eyebrow">言葉の献上</span><p>${escapeHtml(event.text).replace(/\n/g, "<br>")}</p><small>${escapeHtml(payerName)} → ${escapeHtml(managerName)}</small>${status}${seal}</div>${controls}${save}${time}</li>`;
     }
     case "recite_order":
       return `<li class="tribute-event is-recite-order ${mine ? "is-mine" : "is-theirs"}"><div class="tribute-recite-card"><span class="tribute-eyebrow">復唱 ${Number(event.target)}回</span><strong>「${escapeHtml(event.text)}」</strong></div>${time}</li>`;
@@ -1587,7 +1591,9 @@ function renderEvent(event, view, statuses) {
         : ""}`;
     }
     case "recite_withdrawn":
-      return system(`${escapeHtml(managerName)}が復唱を取り下げました。`);
+      return system(event.reason === "purpose"
+        ? "性的な名目の許可が外れたので、性的な言葉の復唱を取り下げました。"
+        : `${escapeHtml(managerName)}が復唱を取り下げました。`);
     case "extend_request":
       return system(`${escapeHtml(payerName)}が ${Number(event.days)}日の延長を申し込みました。`, "is-caps");
     case "extend_withdrawn":
@@ -2522,7 +2528,7 @@ const SHARE_OPTIONS = Object.freeze([
   Object.freeze({ key: "wallet", label: "財布名を入れる" }),
 ]);
 
-function openShare({ contractId, receiptId = "", seq = 0 }) {
+function openShare({ contractId, receiptId = "", seq = 0, mode = "receipt" }) {
   if (!contractId) return;
   closeSharePreview();
   state.sheet = {
@@ -2530,7 +2536,7 @@ function openShare({ contractId, receiptId = "", seq = 0 }) {
     contractId,
     receiptId,
     seq: Number(seq) || 0,
-    mode: "receipt",
+    mode: mode === "excerpt" ? "excerpt" : "receipt",
     options: { purpose: true, amount: true, marks: true, wallet: false },
     info: null,
     status: "loading",
@@ -2592,8 +2598,17 @@ function shareAllowSexual(sheet) {
   return !sheet.seq || state.thread.view?.allowSexualPurposes === true;
 }
 
+// 貢ぎ報告の画像にできる出来事（献上と、Pay 0 の言葉の献上）。
+const SHARE_EVENT_TYPES = Object.freeze(["tribute", "word_offering"]);
+
 function shareTribute(sheet) {
   return sheet.seq ? state.thread.events.find((event) => event.type === "tribute" && Number(event.seq) === sheet.seq) || null : null;
+}
+
+// 画像の小さな札（「抵抗×2」）。抵抗していなければ空。
+function resistedMark(record) {
+  const count = Math.min(LIMITS.resistsPerRequest, Math.max(0, Math.floor(Number(record?.resisted) || 0)));
+  return count > 0 ? `抵抗×${count}` : "";
 }
 
 function shareReceiptData(sheet) {
@@ -2604,7 +2619,7 @@ function shareReceiptData(sheet) {
   return {
     receiptNo: stored?.receiptNo || 0,
     kind: source.kind,
-    kindLabel: KIND_LABELS[source.kind] || "献上",
+    kindLabel: [tributeKindLabel(source), resistedMark(source)].filter(Boolean).join("・"),
     amount: source.amount,
     purposeLabel: purposeLabel(source.purpose, { allowSexual: shareAllowSexual(sheet) }),
     createdAt: source.createdAt,
@@ -2622,14 +2637,31 @@ function shareReceiptData(sheet) {
 }
 
 // 切り抜き: 選んだ献上までの最大3回分を「請求 → 献上（受取印）→ ご褒美」で並べる。財布や管理人の会話の文は入れない。
+// 言葉の献上も1回分に数え、便箋を差し出したことだけを出す（中の文は会話と同じく入れない）。
 function shareExcerptData(sheet) {
   const info = sheet.info || {};
   const view = state.thread.view;
   const events = state.thread.events;
   const allowSexual = view?.allowSexualPurposes === true;
-  const tributes = events.filter((event) => event.type === "tribute" && Number(event.seq) <= sheet.seq).slice(-3);
+  const entries = events.filter((event) => SHARE_EVENT_TYPES.includes(event.type) && Number(event.seq) <= sheet.seq).slice(-3);
   const items = [];
-  for (const tribute of tributes) {
+  for (const entry of entries) {
+    const received = events.find((event) => event.type === "received" && Number(event.tributeSeq) === Number(entry.seq));
+    if (entry.type === "word_offering") {
+      items.push({
+        type: "words",
+        seq: entry.seq,
+        receivedAt: Number(entry.receivedAt || 0),
+        sealLabel: sealLabel(entry.seal),
+        sealShape: info.consent ? entry.sealShape : "",
+        sealInk: info.consent ? entry.sealInk : "",
+        sealRotation: Number(entry.seq) % 2 ? -10 : 8,
+        at: entry.createdAt,
+      });
+      if (rewardText(received)) items.push({ type: "reward", label: rewardText(received), at: received.createdAt });
+      continue;
+    }
+    const tribute = entry;
     const request = tribute.requestId ? events.find((event) => event.type === "request" && event.requestId === tribute.requestId) : null;
     if (request) {
       items.push({
@@ -2645,7 +2677,9 @@ function shareExcerptData(sheet) {
       type: "tribute",
       seq: tribute.seq,
       purposeLabel: purposeLabel(tribute.purpose, { allowSexual }),
-      kindLabel: KIND_LABELS[tribute.kind] || "献上",
+      kindLabel: tributeKindLabel(tribute),
+      granted: tribute.granted === true,
+      resistedMark: resistedMark(tribute),
       amount: tribute.amount,
       receivedAt: Number(tribute.receivedAt || 0),
       sealLabel: sealLabel(tribute.seal),
@@ -2654,17 +2688,16 @@ function shareExcerptData(sheet) {
       sealRotation: Number(tribute.seq) % 2 ? -12 : 9,
       at: tribute.createdAt,
     });
-    const received = events.find((event) => event.type === "received" && Number(event.tributeSeq) === Number(tribute.seq));
     if (rewardText(received)) items.push({ type: "reward", label: rewardText(received), at: received.createdAt });
   }
   const counts = view?.purposeCounts || {};
   const top = PURPOSES.filter((purpose) => counts[purpose.id]).sort((left, right) => counts[right.id] - counts[left.id])[0];
   return {
-    at: tributes.at(-1)?.createdAt || Date.now(),
+    at: entries.at(-1)?.createdAt || Date.now(),
     collarNo: Number(info.collarNo) || 0,
     walletLabel: shareWalletLabel(sheet),
     manager: shareManager(info),
-    headline: { label: top?.label || "", count: top ? counts[top.id] : 0, rewardCount: view?.rewardCount || 0, tributeCount: view?.tributeCount || 0 },
+    headline: { label: top?.label || "", count: top ? counts[top.id] : 0, rewardCount: view?.rewardCount || 0, tributeCount: view?.tributeCount || 0, wordCount: view?.wordOfferings || 0 },
     items,
   };
 }
@@ -2720,10 +2753,11 @@ function renderShareSheet(sheet, wrap) {
   if (sheet.status === "loading") return wrap("貢ぎ報告の画像", `<p class="tribute-empty">画像の準備をしています…</p>`);
   if (sheet.status === "error") return wrap("貢ぎ報告の画像", `<p class="tribute-form-error" role="alert">${escapeHtml(sheet.error)}</p>`);
   const info = sheet.info || {};
-  const canExcerpt = sheet.seq > 0 && Boolean(shareTribute(sheet));
+  // 献上からは「レシート」と「切り抜き」を選べる。言葉の献上はレシートがないので切り抜きだけ。
+  const canChoose = sheet.seq > 0 && Boolean(shareTribute(sheet));
   const plainWallet = info.collarNo ? `財布 ${info.collarNo}号` : "財布";
   return wrap("貢ぎ報告の画像", `<div class="tribute-share">
-    ${canExcerpt ? `<div class="tribute-radio-row" role="radiogroup" aria-label="画像の種類">${[["receipt", "このレシート"], ["excerpt", "やりとりを切り抜く"]].map(([mode, label]) => `<label><input type="radio" name="shareMode" value="${mode}" data-share-mode ${sheet.mode === mode ? "checked" : ""} /><span>${label}</span></label>`).join("")}</div>` : ""}
+    ${canChoose ? `<div class="tribute-radio-row" role="radiogroup" aria-label="画像の種類">${[["receipt", "このレシート"], ["excerpt", "やりとりを切り抜く"]].map(([mode, label]) => `<label><input type="radio" name="shareMode" value="${mode}" data-share-mode ${sheet.mode === mode ? "checked" : ""} /><span>${label}</span></label>`).join("")}</div>` : ""}
     <div class="tribute-share-body">
       <div class="tribute-share-preview" data-share-preview>${sharePreviewMarkup(sheet)}</div>
       <div class="tribute-share-options">${SHARE_OPTIONS.map((option) => `<label class="tribute-check"><input type="checkbox" data-share-option="${option.key}" ${sheet.options[option.key] ? "checked" : ""} /><span>${escapeHtml(option.label)}${option.key === "wallet" ? `<small>入れない時は「${escapeHtml(plainWallet)}」</small>` : ""}</span></label>`).join("")}</div>
@@ -4118,9 +4152,10 @@ async function handleClick(target) {
       return;
     }
     case "share-open": {
-      const event = state.thread.events.find((entry) => entry.type === "tribute" && Number(entry.seq) === Number(target.dataset.seq));
+      const event = state.thread.events.find((entry) => SHARE_EVENT_TYPES.includes(entry.type) && Number(entry.seq) === Number(target.dataset.seq));
       if (!event || !view) return;
-      openShare({ contractId: view.contractId, receiptId: event.receiptId || "", seq: event.seq });
+      // 言葉の献上にはレシートがないので、切り抜きだけを作る。
+      openShare({ contractId: view.contractId, receiptId: event.receiptId || "", seq: event.seq, mode: event.type === "tribute" ? "receipt" : "excerpt" });
       return;
     }
     case "open-demo":
@@ -5491,6 +5526,14 @@ function previewCall(action, payload) {
           const { [requestId]: _voided, ...rest } = raw.pendingRequests;
           raw.pendingRequests = rest;
           push({ type: "request_cancelled", actor: "system", requestId, reason: "purpose" });
+        }
+        if (raw.plea && sexual.has(raw.plea.purpose)) {
+          push({ type: "plea_withdrawn", actor: "system", pleaSeq: raw.plea.pleaSeq, reason: "purpose" });
+          raw.plea = null;
+        }
+        if (raw.reciteOrder && BOARD_SEXUAL_PATTERN.test(String(raw.reciteOrder.text || "").normalize("NFKC"))) {
+          push({ type: "recite_withdrawn", actor: "system", orderSeq: raw.reciteOrder.orderSeq, reason: "purpose" });
+          raw.reciteOrder = null;
         }
       });
       return Promise.resolve({ ok: true, contract: view });

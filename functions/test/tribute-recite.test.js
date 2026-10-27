@@ -116,6 +116,8 @@ test("sheets, handlers, the card editor and the server actions", () => {
   assert.match(client, /mutate\("recite_order", contractPayload\(\{ text, target \}\)/);
   assert.match(client, /if \(reciteKey\(form\.elements\.text\.value\) !== order\.text\) return setFormError\(form, "一字一句同じに打ってください。"\);/);
   assert.match(client, /mutate\("extend_request", contractPayload\(\{ days \}\)/);
+  assert.match(client, /性的な名目の許可が外れたので、性的な言葉の復唱を取り下げました。/);
+  assert.match(sourceBlock(service, "    set_purposes: {", "    receive: {"), /boardSexualWord\(order\.text\)[\s\S]*type: "recite_withdrawn", actor: "system"/);
   assert.match(client, /mutate\("set_own_words", \{ ownWords: normalized\.ownWords \}/);
   assert.match(client, /const seals = \[\.\.\.new Set\(\[\.\.\.data\.getAll\("seals"\)\.map\(String\), \.\.\.sealWords\.map\(sealWordId\)\]\)\];/);
   assert.match(client, /if \(recitePanel\) recitePanel\.innerHTML = renderRecite\(view\);/);
@@ -136,4 +138,39 @@ test("cache keys and the design note record the release", () => {
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-recite-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /第3段を実装/);
   assert.match(design, /言葉の献上/);
+});
+
+test("the report image carries granted tributes, resists and word offerings, never the offered text", async () => {
+  const core = await loadCore();
+  const events = [
+    { seq: 1, type: "request", requestId: "r1", purpose: "", amount: 50, createdAt: 1 },
+    { seq: 2, type: "tribute", kind: "request", requestId: "r1", amount: 50, resisted: 2, createdAt: 2 },
+    { seq: 3, type: "word_offering", text: "LINEはabcで", receivedAt: 5, seal: "word:よく貢いだ", createdAt: 3 },
+    { seq: 4, type: "received", tributeSeq: 3, words: true, reward: "word", rewardText: "上出来", createdAt: 5 },
+    { seq: 5, type: "tribute", kind: "silent", granted: true, amount: 30, createdAt: 6 },
+  ];
+  const context = vm.createContext({
+    ...core,
+    state: { thread: { view: { allowSexualPurposes: false, purposeCounts: {}, rewardCount: 1, tributeCount: 2, wordOfferings: 1 }, events } },
+    shareWalletLabel: () => "財布",
+    shareManager: () => ({}),
+  });
+  const constant = client.match(/const SHARE_EVENT_TYPES = [^\n]+\n/)[0];
+  vm.runInContext(constant + ["resistedMark", "shareExcerptData"].map(fn).join("\n") + "\nObject.assign(this, { shareExcerptData, resistedMark });", context);
+  // vm の中の配列は別の realm なので、JSON で取り出して比べる。
+  const data = JSON.parse(JSON.stringify(context.shareExcerptData({ seq: 5, info: { consent: true } })));
+  assert.deepEqual(data.items.map((item) => item.type), ["request", "tribute", "words", "reward", "tribute"]);
+  assert.equal(data.items[1].resistedMark, "抵抗×2");
+  assert.deepEqual([data.items[2].sealLabel, data.items[3].label], ["よく貢いだ", "上出来"]);
+  assert.deepEqual([data.items[4].granted, data.items[4].kindLabel], [true, "願い出て許された献上"]);
+  assert.equal(JSON.stringify(data).includes("LINE"), false, "the offered text never reaches the image");
+  assert.equal(data.headline.wordCount, 1);
+  assert.equal(context.resistedMark({ resisted: 9 }), "抵抗×3");
+  // 単発レシートの種類にも、許しと抵抗が入る。言葉の献上は切り抜きだけで開く。
+  assert.match(sourceBlock(client, "function shareReceiptData", "function shareExcerptData"), /kindLabel: \[tributeKindLabel\(source\), resistedMark\(source\)\]\.filter\(Boolean\)\.join\("・"\)/);
+  assert.match(sourceBlock(client, 'case "share-open": {', 'case "open-demo":'), /mode: event\.type === "tribute" \? "receipt" : "excerpt"/);
+  assert.match(fn("renderEvent"), /is-word-offering[^\n]*\$\{controls\}\$\{save\}\$\{time\}/);
+  const share = read("tribute-share.mjs");
+  assert.match(share, /else if \(item\.type === "words"\) \{/);
+  assert.match(share, /item\.granted && item\.purposeLabel \? "願い出て許された" : ""/);
 });

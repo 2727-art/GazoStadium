@@ -764,7 +764,36 @@ export async function renderReceiptImage(data, options = {}) {
 function itemHeight(item) {
   if (item.type === "request") return item.note ? 150 : 112;
   if (item.type === "tribute") return 158;
+  if (item.type === "words") return 136;
   return 70;
+}
+
+// 「財布 → 管理人」と受け取りの札を、1行で真ん中に並べる（献上のカードと便箋で同じ）。
+function paintFlowRow(ctx, { flow, received, baseline, paper = false }) {
+  ctx.font = `400 20px ${SANS}`;
+  const flowWidth = ctx.measureText(flow).width;
+  const chip = received ? `✓ 受け取り ${received}` : "受け取り待ち";
+  ctx.font = `900 20px ${SANS}`;
+  const chipWidth = ctx.measureText(chip).width + 32;
+  const rowX = SHARE_WIDTH / 2 - (flowWidth + 14 + chipWidth) / 2;
+  ctx.fillStyle = paper ? "rgba(42, 34, 48, 0.72)" : "rgba(244, 236, 246, 0.72)";
+  ctx.font = `400 20px ${SANS}`;
+  ctx.fillText(flow, rowX, baseline);
+  roundRectPath(ctx, rowX + flowWidth + 14, baseline - 22, chipWidth, 32, 16);
+  if (received) {
+    ctx.fillStyle = GREEN;
+    ctx.fill();
+    ctx.fillStyle = "#08261a";
+  } else {
+    ctx.strokeStyle = paper ? "rgba(154, 106, 18, 0.8)" : "rgba(232, 194, 122, 0.7)";
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = paper ? "#9a6a12" : GOLD;
+  }
+  ctx.font = `900 20px ${SANS}`;
+  ctx.fillText(chip, rowX + flowWidth + 30, baseline + 1);
 }
 
 export async function renderExcerptImage(data, options = {}) {
@@ -774,7 +803,7 @@ export async function renderExcerptImage(data, options = {}) {
     .filter((item) => show.marks || item.type !== "reward")
     .map((item) => ({ ...item, purposeLabel: show.purpose ? item.purposeLabel || "" : "" }));
   const created = jstParts(data.at);
-  await loadFonts([manager.personaName, data.walletLabel, data.headline?.label, ...items.map((item) => `${item.purposeLabel}${item.note || ""}${item.label || ""}${item.sealLabel || ""}`), "この契約で回ご褒美献上受け取り待ちの請求管理の記録財布号"].join(""));
+  await loadFonts([manager.personaName, data.walletLabel, data.headline?.label, ...items.map((item) => `${item.purposeLabel}${item.kindLabel || ""}${item.note || ""}${item.label || ""}${item.sealLabel || ""}${item.resistedMark || ""}`), "この契約で回ご褒美献上受け取り待ちの請求管理の記録財布号言葉願い出て許された・"].join(""));
   const image = await loadImage(manager.avatarUrl);
   const canvas = canvasFor();
   const ctx = canvas.getContext("2d");
@@ -830,10 +859,13 @@ export async function renderExcerptImage(data, options = {}) {
   ctx.fillText("この契約で", 94, 338);
   spacing(ctx, 0);
   const headline = data.headline || {};
-  const parts = [
-    { text: show.purpose && headline.label ? headline.label : "献上", color: "#ff8fc4" },
-    { text: ` ${Number(show.purpose && headline.label ? headline.count : headline.tributeCount) || 0}回`, color: TEXT },
-  ];
+  const tributeCount = Number(show.purpose && headline.label ? headline.count : headline.tributeCount) || 0;
+  const wordCount = Number(headline.wordCount) || 0;
+  // 言葉の献上だけの契約では「献上 0回」を出さず、言葉の回数から始める。
+  const parts = tributeCount || !wordCount
+    ? [{ text: show.purpose && headline.label ? headline.label : "献上", color: "#ff8fc4" }, { text: ` ${tributeCount}回`, color: TEXT }]
+    : [];
+  if (wordCount) parts.push({ text: `${parts.length ? " ・ " : ""}言葉`, color: "#ff8fc4" }, { text: ` ${wordCount}回`, color: TEXT });
   if (show.marks && Number(headline.rewardCount) > 0) {
     parts.push({ text: " → ", color: GOLD }, { text: `ご褒美 ${Number(headline.rewardCount)}回`, color: TEXT });
   }
@@ -931,31 +963,16 @@ export async function renderExcerptImage(data, options = {}) {
       ctx.font = `600 46px ${NUM}`;
       ctx.fillText(show.amount ? `${formatPayNumber(item.amount)} Pay` : "＊＊＊ Pay", SHARE_WIDTH / 2, lineY);
       ctx.textAlign = "left";
-      const flow = `${data.walletLabel} → ${manager.personaName}`;
-      ctx.font = `400 20px ${SANS}`;
-      const flowWidth = ctx.measureText(flow).width;
-      const chip = received ? `✓ 受け取り ${received}` : "受け取り待ち";
-      ctx.font = `900 20px ${SANS}`;
-      const chipWidth = ctx.measureText(chip).width + 32;
-      const rowX = SHARE_WIDTH / 2 - (flowWidth + 14 + chipWidth) / 2;
-      ctx.fillStyle = "rgba(244, 236, 246, 0.72)";
-      ctx.font = `400 20px ${SANS}`;
-      ctx.fillText(flow, rowX, y + 136);
-      roundRectPath(ctx, rowX + flowWidth + 14, y + 114, chipWidth, 32, 16);
-      if (received) {
-        ctx.fillStyle = GREEN;
-        ctx.fill();
-        ctx.fillStyle = "#08261a";
-      } else {
-        ctx.strokeStyle = "rgba(232, 194, 122, 0.7)";
-        ctx.setLineDash([5, 4]);
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = GOLD;
-      }
-      ctx.font = `900 20px ${SANS}`;
-      ctx.fillText(chip, rowX + flowWidth + 30, y + 137);
+      paintFlowRow(ctx, { flow: `${data.walletLabel} → ${manager.personaName}`, received, baseline: y + 136 });
+      // 願い出て許された献上と、抵抗のすえの献上は、カードの左に札で出す。
+      // 名目を出さない時は、カードの上の種類がもう「願い出て許された献上」なので、許しの札は重ねない。
+      const tags = [item.granted && item.purposeLabel ? "願い出て許された" : "", item.resistedMark || ""].filter(Boolean);
+      const tagFont = `900 22px ${SANS}`;
+      tags.forEach((tag, index) => {
+        ctx.font = tagFont;
+        const tagWidth = ctx.measureText(tag).width + 32;
+        paintPill(ctx, { x: x - 18 - tagWidth, y: y + 30 + index * 52, text: tag, height: 40, font: tagFont, color: "#2a0a1c", border: "#ffb3d6", fill: "#ffb3d6" });
+      });
       if (show.marks && received && item.sealLabel) {
         drawSeal(ctx, {
           x: x + width + 6,
@@ -968,6 +985,44 @@ export async function renderExcerptImage(data, options = {}) {
           shape: item.sealShape,
           ink: item.sealInk,
           seed: Number(item.seq) || 3,
+        });
+      }
+      ctx.restore();
+    } else if (item.type === "words") {
+      // 言葉の献上（Pay 0）。中の文は会話と同じく入れず、便箋を差し出したことだけを出す。
+      const width = 460;
+      const x = (SHARE_WIDTH - width) / 2;
+      const received = item.receivedAt ? jstParts(item.receivedAt).time : "";
+      ctx.save();
+      ctx.translate(SHARE_WIDTH / 2, y + height / 2);
+      ctx.rotate((1.5 * Math.PI) / 180);
+      ctx.translate(-SHARE_WIDTH / 2, -(y + height / 2));
+      roundRectPath(ctx, x, y + 4, width, height - 8, 14);
+      ctx.fillStyle = PAPER;
+      ctx.fill();
+      ctx.strokeStyle = received ? GREEN : GOLD;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.textAlign = "center";
+      ctx.fillStyle = INK;
+      ctx.font = `800 32px ${MINCHO}`;
+      spacing(ctx, 4);
+      ctx.fillText("言葉の献上", SHARE_WIDTH / 2, y + 54);
+      spacing(ctx, 0);
+      ctx.textAlign = "left";
+      paintFlowRow(ctx, { flow: `${data.walletLabel} → ${manager.personaName}`, received, baseline: y + 108, paper: true });
+      if (show.marks && received && item.sealLabel) {
+        drawSeal(ctx, {
+          x: x + width + 6,
+          y: y + 30,
+          size: 128,
+          rotation: item.sealRotation ?? 9,
+          label: item.sealLabel,
+          name: manager.personaName,
+          at: item.receivedAt,
+          shape: item.sealShape,
+          ink: item.sealInk,
+          seed: Number(item.seq) || 5,
         });
       }
       ctx.restore();

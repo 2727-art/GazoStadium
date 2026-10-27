@@ -1977,3 +1977,23 @@ test("extension: the payer asks for days, the manager accepts from the current e
   await act("payer", "extend_withdraw");
   assert.equal(harness.contract(contractId).extension, null);
 });
+
+test("withdrawing the sexual purposes permission withdraws a sexual recitation, and keeps a plain one", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { allowSexualPurposes: true });
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+  await act("manager", "recite_order", { text: "イかせてください", target: 3 });
+  await act("payer", "recite", { text: "イかせてください" });
+  await act("payer", "set_purposes", { allowSexualPurposes: false });
+  const withdrawn = harness.events(contractId).at(-1);
+  assert.deepEqual([withdrawn.type, withdrawn.actor, withdrawn.reason], ["recite_withdrawn", "system", "purpose"]);
+  assert.equal(harness.contract(contractId).reciteOrder, null);
+  await rejects(act("payer", "recite", { text: "イかせてください" }), /復唱する一言はありません/);
+  await rejects(act("manager", "recite_order", { text: "イかせてください", target: 1 }), /性的な言葉を復唱させられません/);
+  await act("payer", "set_purposes", { allowSexualPurposes: true });
+  await act("manager", "recite_order", { text: "私は財布です。", target: 1 });
+  await act("payer", "set_purposes", { allowSexualPurposes: false });
+  assert.equal(harness.contract(contractId).reciteOrder.text, "私は財布です。", "a plain line stays");
+  assert.equal(harness.events(contractId).at(-1).type, "purposes_changed");
+});

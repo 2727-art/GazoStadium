@@ -2833,6 +2833,12 @@ function createTributeService(deps) {
             setContract(ctx, { plea: null });
             pushEvent(ctx, { type: "plea_withdrawn", actor: "system", pleaSeq: integer(plea.pleaSeq, 0, Number.MAX_SAFE_INTEGER, 0), reason: "purpose" });
           }
+          // 性的な言葉の復唱（果たして確認待ちのものも）は、その場で取り下げる。
+          const order = reciteOrderView(ctx.contract);
+          if (order && boardSexualWord(order.text)) {
+            setContract(ctx, { reciteOrder: null });
+            pushEvent(ctx, { type: "recite_withdrawn", actor: "system", orderSeq: order.orderSeq, reason: "purpose" });
+          }
         }
         return { ok: true, contract: view(ctx) };
       },
