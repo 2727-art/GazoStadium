@@ -88,6 +88,14 @@
   - `tribute.js`・`tribute.css`・`online.js`・`account.js`・`app.js`、3つのモジュール、7枚のアイコン（15ファイル）がコミットと一致。
   - 公開しないファイル（設計書・ルール・Functions のソース・確認スクリプト・絵の記録・作成スクリプト）は404。
 
+## 10:00 のビルドで workers.dev が前の版に戻った
+
+- 10:00:01Z に、GitHub のチェックに出ないビルド（ダッシュボードから始めたもの）が走り、成功した。ログは「No updated asset files to upload」。
+- その後の確認（10:01:18Z）で、workers.dev・hariaistadium.com の `index.html` が `dc5e7f1`（お預けの公開）と一致し、7枚のアイコンが404になっていた。web.app・firebaseapp.com は新しい版のまま。
+- 古い画面でも新しい Functions とは動く（有料アイコンは文字の印に見え、ストアに棚が出ないだけ）。
+- この記録のマージで、main の最新から workers.dev を作り直す。マージのあとに `functions/scripts/verify-tribute-premium-icons-release.cjs` で4つの配信先を確かめる。
+- ダッシュボードの「再試行」などで古いビルドをもう一度走らせると、その時のコミットで配信し直される。main の最新に戻すには、main に新しいコミットを入れる。
+
 ## まだ確かめていないこと
 
 - 本番での本物の AnjuPay の購入と、有料アイコンを付けたカードの保存。
