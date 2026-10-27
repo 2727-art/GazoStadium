@@ -396,7 +396,7 @@ AnjuPay 利用履歴の種類: `tribute_sent` 献上、`tribute_received` 献上
 
 ## 14. 財布の打つ手と管理人の言葉（設計、2026年10月）
 
-Status: 第1段を実装し、本番に公開した（2026-10-27、`2475679`、記録は `functions/docs/TRIBUTE_WALLET_WORDS_RELEASE.md`）。言われたい言葉・強さの上限・定型文の追加・期間の追加と「同じ条件で申し込む」・受付中で、2〜7節と12節へ書き移した。第2段を実装し、本番に公開した（お預けと願い出・抵抗。2026-10-27、`8473e53`、記録は `functions/docs/TRIBUTE_HOLD_RELEASE.md`。3〜4節・7節・12節へ書き移した）。第3段を実装し、本番に公開した（言葉の献上と復唱・管理人の自分の言葉・延長。2026-10-27、`0097972`、記録は `functions/docs/TRIBUTE_RECITE_RELEASE.md`。2〜4節・7節・12節へ書き移した。受取印の言葉は `ownWords.seals` ではなく、カードの受取印に `word:言葉` で混ぜる形にした）。採用はユーザーが決めた（2026-10-27）。そのあとの残り（2026-10-27）: 性的な名目の許可を外した時に性的な言葉の復唱を取り下げるようにし（4節）、貢ぎ報告の画像に願い出・抵抗・言葉の献上を入れ（6節）、14.6と14.11を実装に合わせた。本物の Firestore での通しの確認は `functions/test/tribute-wallet-moves-emulator.test.js`（`RUN_TRIBUTE_MOVES_EMULATOR_TESTS=1`）。
+Status: 第1段を実装し、本番に公開した（2026-10-27、`2475679`、記録は `functions/docs/TRIBUTE_WALLET_WORDS_RELEASE.md`）。言われたい言葉・強さの上限・定型文の追加・期間の追加と「同じ条件で申し込む」・受付中で、2〜7節と12節へ書き移した。第2段を実装し、本番に公開した（お預けと願い出・抵抗。2026-10-27、`8473e53`、記録は `functions/docs/TRIBUTE_HOLD_RELEASE.md`。3〜4節・7節・12節へ書き移した）。第3段を実装し、本番に公開した（言葉の献上と復唱・管理人の自分の言葉・延長。2026-10-27、`0097972`、記録は `functions/docs/TRIBUTE_RECITE_RELEASE.md`。2〜4節・7節・12節へ書き移した。受取印の言葉は `ownWords.seals` ではなく、カードの受取印に `word:言葉` で混ぜる形にした）。採用はユーザーが決めた（2026-10-27）。そのあとの残り（2026-10-27）: 性的な名目の許可を外した時に性的な言葉の復唱を取り下げるようにし（4節）、貢ぎ報告の画像に願い出・抵抗・言葉の献上を入れ（6節）、14.6と14.11を実装に合わせた（`c7179ab` で本番に公開、記録は `functions/docs/TRIBUTE_REPORT_MARKS_RELEASE.md`）。本物の Firestore での通しの確認は `functions/test/tribute-wallet-moves-emulator.test.js`（`RUN_TRIBUTE_MOVES_EMULATOR_TESTS=1`）。
 
 貢ぐ側が自分の衝動とやめ方を書いた note の記事（84本、`note.com/light_hebe776`）を、今の仕様と照らした。ユーザーは次の6つを採用した。
 

@@ -1,0 +1,448 @@
+{
+  "checkedAt": "2026-10-27T11:01:00.789Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "c7179ab",
+  "baseCommit": "8fc774d",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch design/ranch-wallet-moves)",
+  "decisions": {
+    "thisRelease": "remaining items of stages 1-3 of design section 14, in the order the user approved",
+    "undecided": [
+      "rename 財布募集の画像 in the UI toward 受付 (hashtag #財布募集 kept)",
+      "split request note suggestions by tone or align the design note (14.5)"
+    ],
+    "decidedBy": "user, 2026-10-27 JST"
+  },
+  "changes": {
+    "reciteWithdrawal": "set_purposes off withdraws a recitation whose line has sexual words (done or not), event recite_withdrawn actor system reason purpose; plain recitations stay",
+    "reportImage": {
+      "receipt": "kind label is 願い出て許された献上 for granted tributes and adds ・抵抗×N for resisted ones",
+      "excerpt": "tribute cards get 抵抗×N and (with the purpose shown) 願い出て許された tags on the left; word offerings are letter cards with receipt, seal and reward, never the offered text; headline adds ・ 言葉 N回",
+      "letters": "payers get 画像で保存 on letters; it opens the excerpt only (no receipt)"
+    },
+    "designNote": "14.6 and 14.11 follow the implementation (received with words: true, word:<text> seals, ownWords lines/rewards); sections 4, 6 and the 14 status record the follow-up",
+    "flakyTest": "today's word remaining-time test compares with one fixed now (failed when 1 ms passed between two Date.now calls)"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreIndexes": [],
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute-share.mjs"
+    ],
+    "unchangedPublicFiles": [
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2275,
+    "passed": 2242,
+    "failed": 0,
+    "skipped": 33
+  },
+  "emulator": {
+    "test": "functions/test/tribute-wallet-moves-emulator.test.js",
+    "env": "RUN_TRIBUTE_MOVES_EMULATOR_TESTS=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080",
+    "project": "demo-tribute-moves",
+    "result": "pass",
+    "covered": [
+      "own words and seal words",
+      "apply with 14 days, want words, holds and sexual purposes",
+      "hold, plea, grant, granted tribute, unhold",
+      "two resists then paying the request",
+      "word offering received with a seal word and an own reward",
+      "sexual recitation withdrawn by set_purposes",
+      "recitation and confirmation",
+      "extension",
+      "state views on both sides"
+    ],
+    "realMergeChecks": [
+      "used grant deleted",
+      "paid request removed from pendingRequests",
+      "withdrawn and confirmed recitation deleted",
+      "accepted extension deleted"
+    ],
+    "existingCostEmulatorTest": {
+      "tests": 14,
+      "passed": 14
+    }
+  },
+  "preRelease": {
+    "deliveryCheckedAt": "2026-10-27T10:43:05.165Z",
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute-share.mjs"
+    ],
+    "functionsUnchangedSinceLastRelease": true
+  },
+  "deployGuard": "HEAD equals the release commit and origin/main is an ancestor of HEAD (added after the stage 3 overlap)",
+  "push": "8fc774d..c7179ab",
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "24e598f25e8d748e60a63bb20b99acfeb2a9c14e",
+        "sourceHash": "0fe03481f3fb6e62fa2f40cfa9f01e69886c52cf"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "commit": "c7179ab",
+    "conclusion": "success",
+    "completedAt": "2026-10-27T10:59:04Z"
+  },
+  "delivery": {
+    "checkedAt": "2026-10-27T11:01:00.789Z",
+    "readOnly": true,
+    "marker": "ranch-report-marks-v1",
+    "commit": "c7179abba347ec8f27dd4c97e0960bd4cb51c1ab",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-report-marks-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-wallet-moves-emulator.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-report-marks-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-wallet-moves-emulator.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-report-marks-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-wallet-moves-emulator.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-report-marks-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-wallet-moves-emulator.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "tribute-share.mjs": true
+    },
+    "servedClientHas": {
+      "letterSaveButton": true,
+      "reciteWithdrawnByPurposeLine": true,
+      "resistedTag": true,
+      "wordsCard": true,
+      "grantedTag": true
+    },
+    "consoleErrors": 1,
+    "consoleErrorNote": "one 403; its URL was not visible in this check; in the stage 3 check the same single 403 was the App Check reCAPTCHA Enterprise token exchange in the check browser; App Check files and settings were not changed",
+    "storedAuthRecords": 0
+  },
+  "open": [
+    "making images and the purposes-triggered recitation withdrawal were not exercised in production (tests, emulator and preview)",
+    "the two undecided items above"
+  ]
+}
