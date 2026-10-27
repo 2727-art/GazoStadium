@@ -14,7 +14,7 @@ const MARKER = "ranch-recite-v1";
 // キャッシュキーが今回の印で終わるファイルと、前回のまま中身も同じであるべきファイル。
 const CHANGED_FILES = Object.freeze(["tribute.js", "tribute.css"]);
 const UNCHANGED_FILES = Object.freeze(["account.js", "app.js"]);
-const PREVIOUS_MARKERS = Object.freeze(["ranch-hold-v1", "ranch-wallet-words-v1", "ranch-cheers-v1", "ranch-activity-optin-v1", "ranch-first-steps-v1", "ranch-work-orders-v1", "ranch-double-pay-refund-v1", "ranch-request-fix-v1", "ranch-thread-ux-v1", "ranch-screenshot-v1", "ranch-free-talk-v1", "ranch-nav-v1", "ranch-vault-v1", "my-stadium-v1"]);
+const PREVIOUS_MARKERS = Object.freeze(["ranch-premium-icons-v1", "ranch-hold-v1", "ranch-wallet-words-v1", "ranch-cheers-v1", "ranch-activity-optin-v1", "ranch-first-steps-v1", "ranch-work-orders-v1", "ranch-double-pay-refund-v1", "ranch-request-fix-v1", "ranch-thread-ux-v1", "ranch-screenshot-v1", "ranch-free-talk-v1", "ranch-nav-v1", "ranch-vault-v1", "my-stadium-v1"]);
 const ENTRY_PATHS = Object.freeze(["/", "/?ranch=000000000000000000000000", "/?open=ranch"]);
 const PRIVATE = Object.freeze([
   "/TRIBUTE_DESIGN.md",

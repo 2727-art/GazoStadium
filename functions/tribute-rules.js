@@ -21,10 +21,14 @@ const TONES = Object.freeze(["sweet", "normal", "harsh"]);
 const DISCLOSURES = Object.freeze(["nekama", "as_is", "undisclosed"]);
 const MANAGER_STYLES = Object.freeze(["harsh", "cold", "sweet"]);
 const SIGIL_COLORS = Object.freeze([0, 1, 2, 3, 4, 5]);
-// 管理人の印のアイコン。0 はペルソナ名の1文字、1〜23 は用意したアイコン（画像のアップロードはない）。
-// 1〜12・24〜35 はイラスト、13〜16 は写真・地雷系、17〜23 は写真・夜ギャル。
-const AVATAR_MAX = 35;
+// 管理人の印のアイコン。0 はペルソナ名の1文字、1〜42 は用意したアイコン（画像のアップロードはない）。
+// 1〜12・24〜35 はイラスト、13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（ここまで無料）。
+// 36〜42 は有料の四角いアイコン（1枚 500 Pay の買い切り）。商品IDは ranch_avatar_<番号>。
+const AVATAR_MAX = 42;
 const AVATAR_IDS = Object.freeze(Array.from({ length: AVATAR_MAX + 1 }, (_, id) => id));
+const PREMIUM_AVATAR_IDS = Object.freeze([36, 37, 38, 39, 40, 41, 42]);
+const PREMIUM_AVATAR_TYPE = "ranchAvatar";
+const PREMIUM_AVATAR_PREFIX = "ranch_avatar_";
 
 // 保存済みの値を読む時も、範囲外は端のアイコンに寄せず文字の印に戻す（クライアントの avatarId と同じ）。
 function normalizeAvatar(value) {
@@ -97,10 +101,15 @@ const FRAME_COLORS = Object.freeze({
   houmotsu: Object.freeze(["gold", "pinkgold", "silver", "ruby", "lapis"]),
   kinjo: Object.freeze(["gold", "pink", "blackgold", "shu", "violet"]),
 });
-const DECORATION_PRODUCT_TYPES = Object.freeze(Object.values(DECORATION_SLOTS).map((slot) => slot.type));
-const DECORATION_PRODUCT_IDS = Object.freeze(Object.values(DECORATION_SLOTS).flatMap((slot) => (
-  slot.ids.filter((id) => id !== slot.fallback).map((id) => `${slot.prefix}${id}`)
-)));
+// 有料アイコンも牧場の飾りと同じに扱う（買っても対戦の装備にはせず、カード編集で選ぶ）。
+// 持っている飾りは Firestore の in で読むので、全部で30個までにする。
+const DECORATION_PRODUCT_TYPES = Object.freeze([...Object.values(DECORATION_SLOTS).map((slot) => slot.type), PREMIUM_AVATAR_TYPE]);
+const DECORATION_PRODUCT_IDS = Object.freeze([
+  ...Object.values(DECORATION_SLOTS).flatMap((slot) => (
+    slot.ids.filter((id) => id !== slot.fallback).map((id) => `${slot.prefix}${id}`)
+  )),
+  ...PREMIUM_AVATAR_IDS.map((id) => `${PREMIUM_AVATAR_PREFIX}${id}`),
+]);
 // 金庫の段階で手に入る非売品の飾り（ストアでは売らない）。一度届いた段階の飾りは、金庫から出してもずっと使える。
 const VAULT_DECORATIONS = Object.freeze([
   Object.freeze({ slot: "sealInk", id: "kogane", tier: 1 }),
@@ -494,11 +503,17 @@ function decorationProductId(slotKey, id) {
   return `${slot.prefix}${id}`;
 }
 
-// 既定ではない飾りの商品ID。保存する前に、この全部を持っているかを確かめる（金庫の飾りは商品ではない）。
+function premiumAvatarProductId(value) {
+  const id = normalizeAvatar(value);
+  return PREMIUM_AVATAR_IDS.includes(id) ? `${PREMIUM_AVATAR_PREFIX}${id}` : "";
+}
+
+// 既定ではない飾りと有料アイコンの商品ID。保存する前に、この全部を持っているかを確かめる（金庫の飾りは商品ではない）。
 function requiredDecorationProducts(decorations) {
-  return Object.keys(DECORATION_SLOTS)
-    .map((key) => decorationProductId(key, decorations?.[key]))
-    .filter(Boolean);
+  return [
+    ...Object.keys(DECORATION_SLOTS).map((key) => decorationProductId(key, decorations?.[key])),
+    premiumAvatarProductId(decorations?.avatar),
+  ].filter(Boolean);
 }
 
 // 選んだ金庫の飾りに必要な段階（いちばん高いもの）。0 なら金庫の飾りを使っていない。
@@ -857,7 +872,9 @@ module.exports = {
   normalizeCardAchievements,
   AVATAR_IDS,
   AVATAR_MAX,
+  PREMIUM_AVATAR_IDS,
   normalizeAvatar,
+  premiumAvatarProductId,
   REPORT_REASONS,
   SEVERE_REPORT_REASONS,
   LIMITS,

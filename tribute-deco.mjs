@@ -1,5 +1,5 @@
-// お貢ぎ牧場の飾り（カードの枠・受取印の形・朱肉の色）。AnjuPayストアで買い切り、管理人カードで選ぶ。
-// 商品ID・値段は functions/product-catalog.js、選べる値は functions/tribute-rules.js の DECORATION_SLOTS と揃える。
+// お貢ぎ牧場の飾り（カードの枠・受取印の形・朱肉の色）と有料アイコン。AnjuPayストアで買い切り、管理人カードで選ぶ。
+// 商品ID・値段は functions/product-catalog.js、選べる値は functions/tribute-rules.js の DECORATION_SLOTS・PREMIUM_AVATAR_IDS と揃える。
 // 飾りが変えるのは見た目だけで、中の人の札・入場料・管理中の人数・掲示板の並び順・手数料には触れない。
 
 export const RANCH_DECORATION_PRODUCTS = Object.freeze([
@@ -17,6 +17,14 @@ export const RANCH_DECORATION_PRODUCTS = Object.freeze([
   Object.freeze({ id: "ranch_ink_sumi", type: "ranchSealInk", deco: "sumi", name: "墨の朱肉", price: 1000, description: "墨色で押す。どの形の印にも使える。" }),
   Object.freeze({ id: "ranch_ink_sakura", type: "ranchSealInk", deco: "sakura", name: "桜の朱肉", price: 2000, description: "桜色で押す。どの形の印にも使える。" }),
   Object.freeze({ id: "ranch_ink_kin", type: "ranchSealInk", deco: "kin", name: "金の朱肉", price: 3000, description: "金の朱肉。レシートでは金茶、画面では金に光る。" }),
+  // 管理人の有料アイコン。無料の丸いアイコンと違い、四角に金の縁で出る。番号は tribute-core.mjs の AVATARS と同じ。
+  Object.freeze({ id: "ranch_avatar_36", type: "ranchAvatar", avatar: 36, name: "アイコン・桜色", price: 500, description: "桃色の髪と、きらめく桃色の瞳。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_37", type: "ranchAvatar", avatar: 37, name: "アイコン・珊瑚色", price: 500, description: "珊瑚色の髪に花の髪飾り、微笑む紫の瞳。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_38", type: "ranchAvatar", avatar: 38, name: "アイコン・シャンパン", price: 500, description: "金の髪にフリルの飾り、水色の瞳。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_39", type: "ranchAvatar", avatar: 39, name: "アイコン・抹茶", price: 500, description: "茶色の髪に緑の瞳、縞の和装とフリル。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_40", type: "ranchAvatar", avatar: 40, name: "アイコン・白桃", price: 500, description: "白に近い淡い桃色で描いた、ピースの子。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_41", type: "ranchAvatar", avatar: 41, name: "アイコン・藤色", price: 500, description: "藤色の髪とリボン、上目づかいの紫の瞳。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_42", type: "ranchAvatar", avatar: 42, name: "アイコン・空色", price: 500, description: "水色の髪と青い瞳、青いリボンのセーラー襟。四角い金縁の印。" }),
 ]);
 
 // 金庫の段階で手に入る非売品の飾り（ストアでは売らない）。サーバーの VAULT_DECORATIONS と同じ。
@@ -44,6 +52,28 @@ const INK_COLORS = Object.freeze({
 });
 
 const productsOf = (type) => RANCH_DECORATION_PRODUCTS.filter((product) => product.type === type);
+
+// 有料アイコン。id はアイコン番号（カードの avatar）。買うまでは試着だけで、保存はできない。
+export const PREMIUM_AVATARS = Object.freeze(productsOf("ranchAvatar").map((product) => Object.freeze({
+  id: product.avatar,
+  productId: product.id,
+  name: product.name,
+  price: product.price,
+})));
+
+export function premiumAvatar(value) {
+  return PREMIUM_AVATARS.find((entry) => entry.id === Number(value)) || null;
+}
+
+export function isPremiumAvatar(value) {
+  return Boolean(premiumAvatar(value));
+}
+
+// ストアの見本に出す絵（tribute-core.mjs の avatarUrl と同じ場所）。
+export function premiumAvatarUrl(value) {
+  const entry = premiumAvatar(value);
+  return entry ? new URL(`./assets/tribute-avatars/avatar-${entry.id}.webp`, import.meta.url).href : "";
+}
 const choice = (product) => Object.freeze({ id: product.deco, productId: product.id, name: product.name, price: product.price, special: product.special === true });
 // 金庫の飾りは商品IDを持たず、必要な金庫の段階（vaultTier）を持つ。
 const vaultChoices = (slot) => VAULT_DECORATION_ITEMS.filter((item) => item.slot === slot)
@@ -159,10 +189,13 @@ export function decorationChoice(slot, id) {
   return list.find((entry) => entry.id === id) || list[0] || null;
 }
 
-// 既定ではない飾りの商品ID（持っていないと保存できないもの）。
+// 既定ではない飾りと有料アイコンの商品ID（持っていないと保存できないもの）。サーバーの requiredDecorationProducts と同じ。
 export function requiredDecorationProducts(decorations) {
   const normalized = normalizeDecorations(decorations);
-  return Object.keys(SLOTS).map((key) => decorationChoice(key, normalized[key])?.productId || "").filter(Boolean);
+  return [
+    ...Object.keys(SLOTS).map((key) => decorationChoice(key, normalized[key])?.productId || ""),
+    premiumAvatar(decorations?.avatar)?.productId || "",
+  ].filter(Boolean);
 }
 
 // 選んだ金庫の飾りに必要な段階（いちばん高いもの）。サーバーの requiredVaultTier と同じ。

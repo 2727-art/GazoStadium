@@ -1,0 +1,522 @@
+{
+  "release": "ranch-premium-icons-v1",
+  "date": "2026-10-27",
+  "pullRequest": "https://github.com/2727-art/GazoStadium/pull/10",
+  "commits": {
+    "implementation": "a8edc2b",
+    "mergeOfOriginMain": "e962899",
+    "mainMerge": "f1618818b6c457e389e1c98b15adc0dd44c7bd96"
+  },
+  "predeployCheck": {
+    "tests": 2265,
+    "pass": 2233,
+    "fail": 0,
+    "skipped": 32
+  },
+  "functions": {
+    "deployed": [
+      "economyAction",
+      "tributeAction"
+    ],
+    "total": 37,
+    "changedHashes": {
+      "economyAction": {
+        "before": "6843453913f3ba6a72668211fd6ce505b10bb868",
+        "after": "bc650ccea2e17fcff5eb262cf835c0992e780cc5"
+      },
+      "tributeAction": {
+        "before": "9396efbaaeb1c566c8149c398b7561f2decf3877",
+        "after": "bc650ccea2e17fcff5eb262cf835c0992e780cc5"
+      }
+    },
+    "unchangedCount": 35
+  },
+  "realtimeDatabaseRules": {
+    "deployed": true,
+    "liveEqualsCommitted": true,
+    "liveDiffersFromBefore": true,
+    "inventoryPatternAdded": "ranch_avatar_(36|37|38|39|40|41|42)"
+  },
+  "firestore": "unchanged",
+  "hosting": {
+    "files": 177,
+    "untrackedInUpload": 0,
+    "fromTreeEqualTo": "origin/main f161881"
+  },
+  "workersBuild": {
+    "commit": "f161881",
+    "buildId": "e013f5a7-1b10-4f52-bad8-60141404c96f",
+    "conclusion": "failure",
+    "completedAt": "2026-10-27T09:46:47Z",
+    "previousMainBuilds": {
+      "dc5e7f1": "success",
+      "8473e53": "success"
+    },
+    "cloudflareUnresolvedIncidents": 0,
+    "localDryRun": "wrangler 4.153.0 deploy --dry-run --assets=. on the exported commit read 735 files without error",
+    "logs": "Cloudflare dashboard only (not readable from this session)",
+    "retry": "the merge of this release record rebuilds workers.dev",
+    "retryResult": {
+      "commit": "e0abc8e522f48b7167987012d13c939a54cd6c08",
+      "buildId": "3568dd52-cef2-4863-8158-ab6aa81b41db",
+      "conclusion": "success",
+      "completedAt": "2026-10-27T09:51:44Z"
+    }
+  },
+  "deliveryCheck": {
+    "script": "functions/scripts/verify-tribute-premium-icons-release.cjs",
+    "checkedAt": "2026-10-27T09:47:38.928Z",
+    "commit": "e962899ca866ad0702cad60e85640c27b8cade00",
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-36.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-37.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-38.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-39.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-40.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-41.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-42.webp",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "online.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-36.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-37.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-38.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-39.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-40.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-41.webp",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-42.webp",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": false,
+        "indexOk": false,
+        "previousMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "ok": false,
+            "error": "Missing cache key ending ranch-premium-icons-v1"
+          },
+          {
+            "file": "tribute.css",
+            "ok": false,
+            "error": "Missing cache key ending ranch-premium-icons-v1"
+          },
+          {
+            "file": "online.js",
+            "ok": false,
+            "error": "Missing cache key ending ranch-premium-icons-v1"
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": false
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": false
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-36.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-37.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-38.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-39.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-40.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-41.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-42.webp",
+            "status": 404,
+            "ok": false
+          }
+        ],
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": false,
+        "indexOk": false,
+        "previousMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "ok": false,
+            "error": "Missing cache key ending ranch-premium-icons-v1"
+          },
+          {
+            "file": "tribute.css",
+            "ok": false,
+            "error": "Missing cache key ending ranch-premium-icons-v1"
+          },
+          {
+            "file": "online.js",
+            "ok": false,
+            "error": "Missing cache key ending ranch-premium-icons-v1"
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": false
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": false
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-36.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-37.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-38.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-39.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-40.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-41.webp",
+            "status": 404,
+            "ok": false
+          },
+          {
+            "file": "assets/tribute-avatars/avatar-42.webp",
+            "status": 404,
+            "ok": false
+          }
+        ],
+        "privateStatuses": [
+          404
+        ]
+      }
+    ]
+  },
+  "localPreview": [
+    "?tributePreview=card: premium row first, try-on shows the buy box under the picker, save disabled while trying, buying makes it 購入済 and saving works",
+    "?tributePreview=board: a premium icon shows square with a gold frame next to round free icons",
+    "?marketPreview store: the ranch shelf starts with seven RANCH PREMIUM ICON cards at 500 Pay",
+    "receipt share image: the premium icon is drawn square with a gold frame",
+    "375px width: premium status labels fit the 36px tiles; no horizontal scroll"
+  ],
+  "notVerified": [
+    "a real AnjuPay purchase and card save in production"
+  ],
+  "productionDataWrites": "none",
+  "finalDeliveryCheck": {
+    "checkedAt": "2026-10-27T09:52:35.047Z",
+    "commit": "e0abc8e522f48b7167987012d13c939a54cd6c08",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": 15,
+        "filesOk": true,
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": 15,
+        "filesOk": true,
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": 15,
+        "filesOk": true,
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": 15,
+        "filesOk": true,
+        "privateStatuses": [
+          404
+        ]
+      }
+    ]
+  },
+  "dashboardBuildRollback": {
+    "buildStartedAt": "2026-10-27T10:00:01Z",
+    "githubCheckRun": null,
+    "log": "wrangler 4.153.0 autoconfig, Read 760 files, No updated asset files to upload, Success",
+    "checkedAt": "2026-10-27T10:01:18.885Z",
+    "workersIndexEquals": "dc5e7f1 (ranch-hold-v1, before this release)",
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexOk": true,
+        "newIconStatuses": [
+          200
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexOk": true,
+        "newIconStatuses": [
+          200
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": false,
+        "indexOk": false,
+        "newIconStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": false,
+        "indexOk": false,
+        "newIconStatuses": [
+          404
+        ]
+      }
+    ],
+    "impact": "workers.dev and hariaistadium.com served the previous client: paid icons showed as letter sigils and the store had no paid icon shelf; Functions and Database rules stayed on this release",
+    "fix": "merge a new main commit (this record update) to rebuild workers.dev from main"
+  }
+}

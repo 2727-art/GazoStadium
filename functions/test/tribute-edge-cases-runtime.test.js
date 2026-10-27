@@ -214,7 +214,7 @@ test("RANCH-05: a list response does not recreate the card editor or erase its d
   let inputValue = "保存済み", replacements = 0;
   for (const name of ["renderError", "renderAge", "renderHub", "renderBoard", "renderManagerDetail", "renderApply", "renderCardEditor", "renderThread", "renderReceipts", "renderLedger", "renderRanking", "renderVault"]) c.context[name] = () => "";
   Object.assign(c.context, await core, await deco, { frame: html => html, escapeHtml: String, sigilColor: () => "#fff", cardXHandle: () => "",
-    renderCardPreview: () => "", renderAvatarChoices: () => "", renderSealSettings: () => "", renderDecorationSettings: () => "", renderCardAchievementPicker: () => "", optionList: () => "", decorationsTried: () => [], vaultDecorationsLocked: () => [] });
+    renderCardPreview: () => "", renderAvatarChoices: () => "", renderSealSettings: () => "", renderDecorationSettings: () => "", renderAvatarTrial: () => "", renderCardAchievementPicker: () => "", optionList: () => "", decorationsTried: () => [], vaultDecorationsLocked: () => [] });
   c.context.state.profile = { card: { intro: "保存済み" } };
   c.context.appRoot = { set innerHTML(value) { replacements++; inputValue = /name="intro"[^>]*value="([^"]*)"/.exec(value)?.[1] || ""; } };
   c.context.renderLayer = () => {};

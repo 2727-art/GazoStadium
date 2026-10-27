@@ -20,7 +20,7 @@ import {
   sealSvg,
   sealTextLayout,
   waxPoints,
-} from "./tribute-deco.mjs?v=ranch-vault-v1";
+} from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1";
 
 export const SHARE_WIDTH = 1080;
 export const SHARE_HEIGHT = 1350;
@@ -386,8 +386,32 @@ function paintFooter(ctx) {
   spacing(ctx, 0);
 }
 
+// 有料アイコンは画面と同じく、四角に金の縁で描く（印の色の輪は使わない）。
+function paintPremiumAvatar(ctx, { image, x, y, radius, ringWidth }) {
+  const outer = radius + ringWidth;
+  const gold = ctx.createLinearGradient(x - outer, y - outer, x + outer, y + outer);
+  [[0, "#fff6d6"], [0.22, "#e8c27a"], [0.46, "#a8762e"], [0.68, "#f6dc9a"], [0.86, "#be8c38"], [1, "#fff0c8"]]
+    .forEach(([stop, color]) => gold.addColorStop(stop, color));
+  ctx.save();
+  ctx.shadowColor = "rgba(232, 194, 122, 0.45)";
+  ctx.shadowBlur = ringWidth * 3;
+  roundRectPath(ctx, x - outer, y - outer, outer * 2, outer * 2, outer * 0.12);
+  ctx.fillStyle = gold;
+  ctx.fill();
+  ctx.restore();
+  ctx.save();
+  roundRectPath(ctx, x - radius, y - radius, radius * 2, radius * 2, radius * 0.08);
+  ctx.clip();
+  ctx.drawImage(image, x - radius, y - radius, radius * 2, radius * 2);
+  ctx.restore();
+}
+
 // 管理人の印（アイコン）。許可がない時はシルエット。
 function paintAvatar(ctx, { image, manager, x, y, radius, ring = PINK, ringWidth = 6 }) {
+  if (image && manager?.premiumAvatar) {
+    paintPremiumAvatar(ctx, { image, x, y, radius, ringWidth });
+    return;
+  }
   ctx.save();
   ctx.beginPath();
   ctx.arc(x, y, radius + ringWidth, 0, Math.PI * 2);
@@ -553,6 +577,7 @@ function managerPresentation(manager) {
     personaName: anonymous ? "管理人様" : manager.personaName,
     color: manager?.color || PINK,
     avatarUrl: anonymous ? "" : manager?.avatarUrl || "",
+    premiumAvatar: !anonymous && manager?.premiumAvatar === true,
     disclosureKey: manager?.disclosureKey || "undisclosed",
     disclosureLabel: manager?.disclosureLabel || "",
     styleLabel: manager?.styleLabel || "",
