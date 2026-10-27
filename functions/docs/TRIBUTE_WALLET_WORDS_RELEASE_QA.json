@@ -1,0 +1,452 @@
+{
+  "checkedAt": "2026-10-27T08:58:21.432Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "2475679",
+  "designCommit": "c1a6ee5",
+  "baseCommit": "b620a1f",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch design/ranch-wallet-moves)",
+  "decisions": {
+    "adopted": [
+      "holds and pleas",
+      "resisting a request",
+      "wished-for words",
+      "word offerings and recitation",
+      "stock lines and the manager's own words",
+      "less effort to continue"
+    ],
+    "alsoFixed": [
+      "the tone is a ceiling the manager picks within",
+      "managers can refuse tributes (via holds, stage 2)",
+      "no recruiting wording"
+    ],
+    "excluded": [
+      "notifications",
+      "showing the weight of a loss",
+      "taking back a sent tribute"
+    ],
+    "holdsDefault": "accepted",
+    "extensionRequestedBy": "payer only",
+    "decidedBy": "user, 2026-10-27 JST",
+    "thisRelease": "stage 1 of design section 14"
+  },
+  "mechanism": {
+    "wantWords": "contract.wantWords, up to 5 x 12 chars, payer-only set_want_words (pending/active), contract text rules, no NG words, sexual words allowed; shown to the manager as a line and composer chips",
+    "rewardWord": "reward 'word' with rewardText, accepted only while the word is registered; recorded on tribute/received/work_confirm events and receipts; returned by receipts and share_info",
+    "toneCeiling": "contract.tone read as a ceiling; rewards, work-order lines and manager templates from every tone up to it; payer templates keep the contract tone",
+    "stockLines": "manager situation 言い当てる, payer thanks, sweet nudge no longer begs, rewards また来てね♡ and 好き♡ (sweet)",
+    "periods": [
+      1,
+      3,
+      7,
+      14,
+      30
+    ],
+    "reapply": "ended accepted contracts show 同じ条件で申し込む for the payer; settings copied, but never acceptNoDecline, sexual names or screenshot consent; contract.managerPublicId kept for new contracts",
+    "recruitImage": "stamp 受付中, pill 財布受付, header ACCEPTING WALLETS; hashtag #財布募集 kept"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreIndexes": [],
+    "firestoreRules": false,
+    "hosting": true,
+    "hostingFiles": 170,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "tribute-share.mjs"
+    ],
+    "alsoDeliveredFromMain": {
+      "commit": "b620a1f",
+      "what": "another session's normal DM gaze mode (online.js, velvet-battle.css, normal-dm-gaze.mjs), already live on workers.dev and hariaistadium.com before this release; Hosting brought it to web.app and firebaseapp.com after the user was told"
+    },
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2257,
+    "passed": 2225,
+    "failed": 0,
+    "skipped": 32
+  },
+  "preRelease": {
+    "deliveryCheckedAt": "2026-10-27T08:23:30.093Z",
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "tribute-share.mjs"
+    ],
+    "functionsUnchangedSinceLastRelease": true
+  },
+  "push": "b620a1f..2475679",
+  "functions": {
+    "checkedAt": "2026-10-27T08:54:47Z",
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "48e8648eacf5f52c4c5029ab9d35db9b09ef1ca5",
+        "sourceHash": "a3cdd6f60e37f5b30929d94b9d509eaadd0c8672"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "conclusion": "success",
+    "completedAt": "2026-10-27T08:56:24Z"
+  },
+  "delivery": {
+    "checkedAt": "2026-10-27T08:58:21.432Z",
+    "readOnly": true,
+    "marker": "ranch-wallet-words-v1",
+    "commit": "247567949918df1905ce8a41e325e2b652b7e455",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-wallet-words-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-wallet-words.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-wallet-words-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-wallet-words.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-wallet-words-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-wallet-words.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-wallet-words-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-wallet-words.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ],
+    "gazeModeMatchesMainOnAllRoutes": true
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "tribute.css": true,
+      "tribute-core.mjs": true,
+      "tribute-share.mjs": true
+    },
+    "servedClientHas": {
+      "wantWordsSheet": true,
+      "templateToneTabs": true,
+      "reapply": true,
+      "toneCeilingLegend": true,
+      "periods14and30": true,
+      "voiceSituation": true,
+      "sukiReward": true
+    },
+    "consoleErrors": 1,
+    "consoleErrorNote": "App Check reCAPTCHA Enterprise token exchange answered 403 in the check browser; App Check files and settings were not changed by this release",
+    "storedAuthRecords": 0
+  },
+  "open": [
+    "registering wished-for words, word rewards, tone switching and reapplying were not exercised in production (tests and preview)",
+    "stage 2 (holds and pleas, resisting) and stage 3 (word offerings and recitation, the manager's own words, extension) are not implemented"
+  ]
+}
