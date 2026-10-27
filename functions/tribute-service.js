@@ -97,6 +97,14 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "set_screenshots",
   "set_nickname",
   "set_want_words",
+  "set_holds",
+  "hold",
+  "unhold",
+  "plea",
+  "plea_withdraw",
+  "plea_grant",
+  "plea_deny",
+  "resist",
   "set_work_orders",
   "work_order",
   "work_withdraw",
@@ -361,6 +369,8 @@ function pendingRequestList(contract) {
       amount: integer(entry?.amount, 0, 1_000_000, 0),
       note: cleanLine(entry?.note, LIMITS.requestNote),
       purpose: visiblePurpose(entry?.purpose, { allowSexual: contract.allowSexualPurposes === true }),
+      // 財布が渋った回数（抵抗）。請求は断れないまま残る。
+      resists: integer(entry?.resists, 0, LIMITS.resistsPerRequest, 0),
       createdAt: integer(entry?.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
     }))
     .filter((entry) => REQUEST_ID_PATTERN.test(entry.requestId) && entry.amount > 0)
@@ -390,6 +400,32 @@ function workOrderView(contract) {
 function openWorkOrder(contract) {
   const order = workOrderView(contract);
   return order && !order.done ? order : null;
+}
+
+// お預け。管理人が「解く」まで続き、その間は財布から勝手に差し出せない（期限はない）。
+function holdView(contract) {
+  const hold = contract.hold && typeof contract.hold === "object" ? contract.hold : null;
+  const since = integer(hold?.since, 0, Number.MAX_SAFE_INTEGER, 0);
+  if (!hold || since < 1) return null;
+  return { since, note: cleanLine(hold.note, LIMITS.requestNote) };
+}
+
+// 願い出（お預けの間に、財布が「貢がせてください」と願い出たもの）。許されると、その金額を1回だけ差し出せる。
+function pleaView(contract) {
+  const plea = contract.plea && typeof contract.plea === "object" ? contract.plea : null;
+  const pleaSeq = integer(plea?.pleaSeq, 0, Number.MAX_SAFE_INTEGER, 0);
+  const amount = integer(plea?.amount, 0, 1_000_000, 0);
+  if (!plea || pleaSeq < 1 || amount < 1) return null;
+  const grantedAt = integer(plea.grantedAt, 0, Number.MAX_SAFE_INTEGER, 0);
+  return {
+    pleaSeq,
+    amount,
+    purpose: visiblePurpose(plea.purpose, { allowSexual: contract.allowSexualPurposes === true }),
+    note: cleanLine(plea.note, LIMITS.requestNote),
+    createdAt: integer(plea.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    granted: grantedAt > 0,
+    grantedAt,
+  };
 }
 
 // 命令の後の完走数。命令した時の完走数（private/work）と、いまの完走数の差を、回数で頭打ちにする。
@@ -452,6 +488,7 @@ function viewContract(contract, uid, now) {
     allowSexualPurposes: contract.allowSexualPurposes === true,
     allowScreenshots: contract.allowScreenshots === true,
     allowWorkOrders: contract.allowWorkOrders === true,
+    allowHolds: contract.allowHolds === true,
     entryFee: integer(contract.entryFee, 0, 1_000, 0),
     renewal: contract.renewal === true,
     createdAt: integer(contract.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -479,6 +516,11 @@ function viewContract(contract, uid, now) {
     reportRequested: Number(contract.reportRequestedAt || 0) > 0,
     workOrder: status === "active" ? workOrderView(contract) : null,
     workOrdersDone: integer(contract.workOrdersDone, 0, Number.MAX_SAFE_INTEGER, 0),
+    hold: status === "active" ? holdView(contract) : null,
+    plea: status === "active" ? pleaView(contract) : null,
+    pleaCount: integer(contract.pleaCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    pleaGrantedCount: integer(contract.pleaGrantedCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    resistedTributes: integer(contract.resistedTributes, 0, Number.MAX_SAFE_INTEGER, 0),
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
     peerReadSeq: Math.min(eventSeq, peerReadSeq),
@@ -706,6 +748,27 @@ function createTributeService(deps) {
   function patchPair(ctx, values) {
     ctx.pair.patch = { ...(ctx.pair.patch || {}), ...values };
     Object.assign(ctx.pair.value, values);
+  }
+
+  // 願い出に答える（許す・退ける）。一言を添えられ、どちらも管理人の返事として既読無視を終える。
+  function answerPlea(ctx, data, grant) {
+    const plea = pleaView(ctx.contract);
+    if (!plea || plea.granted) fail("failed-precondition", "答えられる願い出はありません。");
+    const note = cleanLine(data?.note, LIMITS.requestNote);
+    if (note) checkManagerText(ctx, note);
+    messageRate(ctx);
+    if (grant) {
+      setContract(ctx, {
+        plea: { ...object(ctx.contract.plea), grantedAt: ctx.now },
+        pleaGrantedCount: integer(ctx.contract.pleaGrantedCount, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
+      });
+    } else {
+      setContract(ctx, { plea: null });
+    }
+    pushEvent(ctx, { type: grant ? "plea_granted" : "plea_denied", actor: "manager", pleaSeq: plea.pleaSeq, amount: plea.amount, ...(note ? { note } : {}) });
+    setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
+    markManagerActive(ctx);
+    return { ok: true, contract: view(ctx) };
   }
 
   // 受け取り・出稼ぎの確認に添えるご褒美。一覧は契約の強さ（上限）まで、言われたい言葉は言葉そのものを残す。
@@ -1071,7 +1134,8 @@ function createTributeService(deps) {
   }
 
 
-  function stageTribute(ctx, extra, { kind, amount, requestId = "", note = "", purpose = "", opKey }) {
+  // marks: 願い出て許された献上（granted）と、抵抗したあとの献上（resisted、渋った回数）。献上とレシートに残す。
+  function stageTribute(ctx, extra, { kind, amount, requestId = "", note = "", purpose = "", opKey, marks = {} }) {
     const contract = ctx.contract;
     const caps = ctx.caps || effectiveCaps(contract, ctx.now).caps;
     const violation = capViolation(amount, contract, caps, ctx.now);
@@ -1144,7 +1208,12 @@ function createTributeService(deps) {
     // 入場料と管理口座からの徴収は管理人が自分で動かしたので、その場で受け取り済み。
     const receivable = RECEIVABLE_KINDS.includes(kind);
     const purposeCounts = object(contract.purposeCounts);
+    const tributeMarks = {
+      ...(marks.granted === true ? { granted: true } : {}),
+      ...(integer(marks.resisted, 0, LIMITS.resistsPerRequest, 0) > 0 ? { resisted: integer(marks.resisted, 0, LIMITS.resistsPerRequest, 0) } : {}),
+    };
     setContract(ctx, {
+      ...(tributeMarks.resisted ? { resistedTributes: integer(contract.resistedTributes, 0, Number.MAX_SAFE_INTEGER, 0) + 1 } : {}),
       ...(purpose ? { purposeCounts: { ...purposeCounts, [purpose]: integer(purposeCounts[purpose], 0, Number.MAX_SAFE_INTEGER, 0) + 1 } } : {}),
       ...(receivable ? { awaitingReceipt: integer(contract.awaitingReceipt, 0, Number.MAX_SAFE_INTEGER, 0) + 1 } : {}),
       totalTributed: integer(contract.totalTributed, 0, Number.MAX_SAFE_INTEGER, 0) + amount,
@@ -1184,6 +1253,7 @@ function createTributeService(deps) {
       avatar: card.avatar,
       collarNo,
       pairCount: pairCountBefore + 1,
+      ...tributeMarks,
       ...(receivable ? {} : { receivedAt: ctx.now }),
       createdAt: ctx.now,
     };
@@ -1232,6 +1302,7 @@ function createTributeService(deps) {
       ...(requestId ? { requestId } : {}),
       ...(note ? { note } : {}),
       ...(purpose ? { purpose } : {}),
+      ...tributeMarks,
       ...(receivable ? {} : { receivedAt: ctx.now }),
     });
     stageTributeAchievements(ctx, extra, firstForPairToday);
@@ -1739,9 +1810,13 @@ function createTributeService(deps) {
         allowSexualPurposes: application.allowSexualPurposes,
         allowScreenshots: application.allowScreenshots,
         allowWorkOrders: application.allowWorkOrders,
+        allowHolds: application.allowHolds,
         workOrder: null,
         workOrderSeq: 0,
         workOrdersDone: 0,
+        hold: null,
+        plea: null,
+        pleaSeq: 0,
         purposeCounts: {},
         rewardCount: 0,
         awaitingReceipt: 0,
@@ -1781,6 +1856,7 @@ function createTributeService(deps) {
         allowSexualPurposes: application.allowSexualPurposes,
         allowScreenshots: application.allowScreenshots,
         allowWorkOrders: application.allowWorkOrders,
+        allowHolds: application.allowHolds,
         createdAt: now,
       });
       transaction.set(profileRef(uid), {
@@ -2000,12 +2076,15 @@ function createTributeService(deps) {
         if (extra.receipt) {
           return { ok: true, replayed: true, receipt: { receiptId: extra.receiptId, ...extra.receipt } };
         }
-        const kind = data?.kind === "request" ? "request" : "silent";
+        // 種類: 請求に応える・無言の献上・願い出て許された献上（granted。記録の上は無言の献上）。
+        const requested = String(data?.kind || "");
+        const kind = requested === "request" ? "request" : "silent";
         const allowSexual = ctx.contract.allowSexualPurposes === true;
         let amount;
         let requestId = "";
         let note = "";
         let purpose = "";
+        let marks = {};
         if (kind === "request") {
           requestId = String(data?.requestId || "");
           const requests = { ...object(ctx.contract.pendingRequests) };
@@ -2015,15 +2094,26 @@ function createTributeService(deps) {
           if (Number(data?.amount) !== amount) fail("failed-precondition", "請求の金額が変わりました。開き直してください。");
           note = cleanLine(request.note, LIMITS.requestNote);
           purpose = visiblePurpose(request.purpose, { allowSexual });
+          marks = { resisted: integer(request.resists, 0, LIMITS.resistsPerRequest, 0) };
           delete requests[requestId];
           setContract(ctx, { pendingRequests: requests });
+        } else if (requested === "granted") {
+          const plea = pleaView(ctx.contract);
+          if (!plea?.granted) fail("failed-precondition", "許された願い出はありません。開き直してください。");
+          amount = plea.amount;
+          if (Number(data?.amount) !== amount) fail("failed-precondition", "許された金額が変わりました。開き直してください。");
+          purpose = plea.purpose;
+          marks = { granted: true };
+          setContract(ctx, { plea: null });
         } else {
+          // お預けの間は、財布から勝手に差し出せない（請求に応えるのと、許された願い出はできる）。
+          if (holdView(ctx.contract)) fail("failed-precondition", "お預け中です。差し出すには、願い出て許してもらってください。");
           amount = requireAmount(data?.amount);
           const named = normalizePurpose(data?.purpose, { allowSexual });
           if (named.error) fail("failed-precondition", named.error);
           purpose = named.purpose;
         }
-        const outcome = stageTribute(ctx, extra, { kind, amount, requestId, purpose, opKey: `client:${clientRequestId}` });
+        const outcome = stageTribute(ctx, extra, { kind, amount, requestId, purpose, marks, opKey: `client:${clientRequestId}` });
         return {
           ok: true,
           receipt: outcome.receipt,
@@ -2268,6 +2358,128 @@ function createTributeService(deps) {
         return { ok: true, contract: view(ctx) };
       },
     },
+    // お預けを受けるか。決めるのは預ける側だけで、いつでも変えられる。外すと、お預けと願い出はその場で消える。
+    set_holds: {
+      roles: ["payer"],
+      statuses: ["pending", "active"],
+      write(ctx, _extra, data) {
+        const allow = data?.allowHolds === true;
+        if ((ctx.contract.allowHolds === true) === allow) return { ok: true, contract: view(ctx), unchanged: true };
+        const held = holdView(ctx.contract);
+        setContract(ctx, { allowHolds: allow });
+        pushEvent(ctx, { type: "holds_changed", actor: "payer", allowHolds: allow });
+        if (!allow && (held || ctx.contract.plea)) {
+          setContract(ctx, { hold: null, plea: null });
+          if (held) pushEvent(ctx, { type: "unhold", actor: "system", reason: "setting" });
+        }
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // お預け。管理する側が、財布から勝手に差し出すこと（無言の献上）を止める。期限はなく、「解く」まで続く。
+    // 請求に応える献上と管理口座の出し入れは止めない。限度額と解約は、これまでどおり財布が持つ。
+    hold: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        if (ctx.contract.allowHolds !== true) fail("failed-precondition", "この契約では、お預けにできません。");
+        if (holdView(ctx.contract)) fail("failed-precondition", "もうお預けにしています。");
+        const note = cleanLine(data?.note, LIMITS.requestNote);
+        if (note) checkManagerText(ctx, note);
+        messageRate(ctx);
+        setContract(ctx, { hold: { since: ctx.now, note } });
+        pushEvent(ctx, { type: "hold", actor: "manager", ...(note ? { note } : {}) });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    unhold: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        if (!holdView(ctx.contract)) fail("failed-precondition", "お預けにしていません。");
+        // お預けが解けると、願い出（許したものも）は要らなくなるので消える。
+        setContract(ctx, { hold: null, plea: null });
+        pushEvent(ctx, { type: "unhold", actor: "manager", reason: "manager" });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 願い出。お預けの間に、財布が金額・名目・一言を付けて「貢がせてください」と願い出る。1件ずつ。
+    // 財布の発言に数える（読んで返さなければ既読無視）。金額は1回の限度額まで（数字は財布にだけ返す）。
+    plea: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        if (!holdView(ctx.contract)) fail("failed-precondition", "お預け中ではないので、願い出なくても差し出せます。");
+        if (ctx.contract.plea) fail("failed-precondition", "願い出は1件ずつです。");
+        const amount = requireAmount(data?.amount);
+        const caps = ctx.caps || effectiveCaps(ctx.contract, ctx.now).caps;
+        if (!caps || amount > caps.perTribute) fail("failed-precondition", `1回の限度額（${caps ? caps.perTribute : 0} Pay）を超えています。`);
+        const named = normalizePurpose(data?.purpose, { allowSexual: ctx.contract.allowSexualPurposes === true });
+        if (named.error) fail("failed-precondition", named.error);
+        const note = cleanLine(data?.note, LIMITS.requestNote);
+        if (note) checkManagerText(ctx, note);
+        messageRate(ctx);
+        const pleaSeq = integer(ctx.contract.pleaSeq, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+        setContract(ctx, {
+          pleaSeq,
+          plea: { pleaSeq, amount, purpose: named.purpose, note, createdAt: ctx.now, grantedAt: 0 },
+          pleaCount: integer(ctx.contract.pleaCount, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
+        });
+        pushEvent(ctx, { type: "plea", actor: "payer", pleaSeq, amount, ...(named.purpose ? { purpose: named.purpose } : {}), ...(note ? { note } : {}) });
+        setContract(ctx, { lastPayerMessageSeq: ctx.seq });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    plea_withdraw: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx) {
+        const plea = pleaView(ctx.contract);
+        if (!plea) fail("failed-precondition", "取り下げられる願い出はありません。");
+        setContract(ctx, { plea: null });
+        pushEvent(ctx, { type: "plea_withdrawn", actor: "payer", pleaSeq: plea.pleaSeq, reason: "withdrawn" });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 許すと、財布はその金額をいつもの長押しで1回だけ差し出せる（差し出すかは財布が決める）。退けると願い出は消える。
+    // どちらも管理人の返事に数え、既読無視を終える。
+    plea_grant: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        return answerPlea(ctx, data, true);
+      },
+    },
+    plea_deny: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        return answerPlea(ctx, data, false);
+      },
+    },
+    // 抵抗。未払いの請求に、財布が渋る一言を返す（1件の請求に3回まで）。請求は断れず、未払いのまま残る。
+    // 財布の発言に数える。払うと、渋った回数が献上とレシートに残る。
+    resist: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        const requestId = String(data?.requestId || "");
+        const requests = { ...object(ctx.contract.pendingRequests) };
+        const request = requests[requestId];
+        if (!request) fail("not-found", "その請求は残っていません。");
+        const resists = integer(request.resists, 0, LIMITS.resistsPerRequest, 0);
+        if (resists >= LIMITS.resistsPerRequest) fail("failed-precondition", `抵抗は1つの請求に${LIMITS.resistsPerRequest}回までです。`);
+        const text = cleanLine(data?.text, LIMITS.requestNote);
+        if (!text) fail("invalid-argument", "渋る一言を入力してください。");
+        checkManagerText(ctx, text);
+        messageRate(ctx);
+        setContract(ctx, { pendingRequests: { ...requests, [requestId]: { ...request, resists: resists + 1 } } });
+        pushEvent(ctx, { type: "resist", actor: "payer", requestId, count: resists + 1, text, ...(data?.template === true ? { template: true } : {}) });
+        setContract(ctx, { lastPayerMessageSeq: ctx.seq });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
     // 出稼ぎ命令を受けるか。決めるのは預ける側だけで、いつでも変えられる。外すと、まだ果たしていない命令はその場で消える。
     set_work_orders: {
       roles: ["payer"],
@@ -2394,6 +2606,12 @@ function createTributeService(deps) {
             }
           }
           setContract(ctx, { pendingRequests: requests });
+          // 性的な名目の願い出（許したものも）は、その場で消える。
+          const plea = object(ctx.contract.plea);
+          if (SEXUAL_PURPOSE_IDS.includes(String(plea.purpose || ""))) {
+            setContract(ctx, { plea: null });
+            pushEvent(ctx, { type: "plea_withdrawn", actor: "system", pleaSeq: integer(plea.pleaSeq, 0, Number.MAX_SAFE_INTEGER, 0), reason: "purpose" });
+          }
         }
         return { ok: true, contract: view(ctx) };
       },
@@ -2581,6 +2799,8 @@ function createTributeService(deps) {
         receivedAt: integer(value.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0),
         reward: typeof value.reward === "string" && /^[a-z_]{1,24}$/.test(value.reward) ? value.reward : "",
         rewardText: storedRewardText(value),
+        granted: value.granted === true,
+        resisted: integer(value.resisted, 0, LIMITS.resistsPerRequest, 0),
         seal: SEAL_IDS.includes(value.seal) ? value.seal : "",
         ...sealLook(value),
         collarNo: integer(value.collarNo, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -2627,6 +2847,8 @@ function createTributeService(deps) {
         ...sealLook(stored),
         reward: typeof stored.reward === "string" && /^[a-z_]{1,24}$/.test(stored.reward) ? stored.reward : "",
         rewardText: storedRewardText(stored),
+        granted: stored.granted === true,
+        resisted: integer(stored.resisted, 0, LIMITS.resistsPerRequest, 0),
       }
       : null;
     return {

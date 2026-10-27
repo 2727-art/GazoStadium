@@ -1784,3 +1784,96 @@ test("the tone is a ceiling: a harsh contract also offers soft rewards, a sweet 
   await harness.act("manager", "receive", { contractId: sweet, tributeSeq: sweetSeq, reward: "mata" });
   assert.equal(harness.events(sweet).at(-1).reward, "mata");
 });
+
+// 財布の打つ手・第2段（ranch-hold-v1、2026-10-27 ユーザー決定）: お預けと願い出、抵抗する。
+test("a hold stops silent tributes until the manager grants a plea; requests and the escrow still work", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000, other: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const old = await startContract(harness, "manager", "other", publicManagerId);
+  await rejects(harness.act("manager", "hold", { contractId: old }), /お預けにできません/, "contracts without the setting never get holds");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { allowHolds: true, allowSexualPurposes: true });
+  assert.equal(harness.contract(contractId).allowHolds, true);
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+
+  await rejects(act("payer", "plea", { amount: 30 }), /お預け中ではない/);
+  await rejects(act("payer", "hold"), /この操作はできません/);
+  const held = await act("manager", "hold", { note: "許すまで待て" });
+  assert.deepEqual([held.contract.hold.note, harness.events(contractId).at(-1).type], ["許すまで待て", "hold"]);
+  await rejects(act("manager", "hold"), /もうお預けにしています/);
+  await rejects(act("payer", "tribute", { kind: "silent", amount: 30, clientRequestId: nextRequestId() }), /お預け中です/);
+  // 請求に応えるのと、管理口座の出し入れは止めない。
+  await act("manager", "request", { amount: 20 });
+  const requestId = Object.keys(harness.contract(contractId).pendingRequests)[0];
+  await act("payer", "tribute", { kind: "request", requestId, amount: 20, clientRequestId: nextRequestId() });
+  await act("payer", "escrow_deposit", { amount: 50, clientRequestId: nextRequestId() });
+
+  // 願い出: 1回の限度額まで、1件ずつ。財布の発言に数える。
+  await rejects(act("payer", "plea", { amount: 300 }), /1回の限度額（100 Pay）/);
+  await rejects(act("payer", "tribute", { kind: "granted", amount: 30, clientRequestId: nextRequestId() }), /許された願い出はありません/);
+  await act("payer", "plea", { amount: 30, note: "貢がせてください" });
+  await rejects(act("payer", "plea", { amount: 40 }), /1件ずつ/);
+  await act("manager", "mark_read", { seq: harness.contract(contractId).eventSeq });
+  assert.ok(harness.contract(contractId).ignoredSince > 0, "a plea read without an answer is 既読無視");
+  await rejects(act("payer", "plea_grant"), /この操作はできません/);
+  const denied = await act("manager", "plea_deny", { note: "まだ早い" });
+  assert.equal(denied.contract.plea, null);
+  assert.equal(harness.contract(contractId).ignoredSince, 0, "an answer ends 既読無視");
+  assert.deepEqual([harness.events(contractId).at(-1).type, harness.events(contractId).at(-1).note], ["plea_denied", "まだ早い"]);
+
+  // 許すと、その金額を1回だけ差し出せる（名目も願い出のまま）。
+  await act("payer", "plea", { amount: 60, purpose: "management" });
+  const granted = await act("manager", "plea_grant", { note: "いいよ" });
+  assert.deepEqual([granted.contract.plea.granted, granted.contract.plea.amount], [true, 60]);
+  await rejects(act("payer", "tribute", { kind: "granted", amount: 50, clientRequestId: nextRequestId() }), /許された金額が変わりました/);
+  const given = await act("payer", "tribute", { kind: "granted", amount: 60, clientRequestId: nextRequestId() });
+  const tribute = harness.events(contractId).at(-1);
+  assert.deepEqual([tribute.type, tribute.kind, tribute.granted, tribute.purpose, tribute.amount], ["tribute", "silent", true, "management", 60]);
+  assert.equal(given.contract.plea, null, "a grant is used once");
+  assert.deepEqual([given.contract.pleaCount, given.contract.pleaGrantedCount], [2, 1]);
+  const receipt = (await harness.act("payer", "receipts")).receipts.find((row) => row.receiptId === given.receipt.receiptId);
+  assert.equal(receipt.granted, true);
+  await rejects(act("payer", "tribute", { kind: "silent", amount: 30, clientRequestId: nextRequestId() }), /お預け中です/, "the hold stays after the grant is used");
+
+  // 解くと、願い出（許したものも）は消え、また自分から差し出せる。
+  await act("payer", "plea", { amount: 30 });
+  await act("manager", "plea_grant");
+  const released = await act("manager", "unhold");
+  assert.deepEqual([released.contract.hold, released.contract.plea], [null, null]);
+  await act("payer", "tribute", { kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+
+  // 性的な名目の許可を外すと、その名目の願い出は消える。財布がお預けを受けるのをやめると、お預けもその場で解ける。
+  await act("manager", "hold");
+  await act("payer", "plea", { amount: 30, purpose: "edging" });
+  await act("payer", "set_purposes", { allowSexualPurposes: false });
+  assert.equal(harness.contract(contractId).plea, null);
+  assert.equal(harness.events(contractId).at(-1).reason, "purpose");
+  const off = await act("payer", "set_holds", { allowHolds: false });
+  assert.deepEqual([off.contract.allowHolds, off.contract.hold], [false, null]);
+  assert.deepEqual([harness.events(contractId).at(-1).type, harness.events(contractId).at(-1).reason], ["unhold", "setting"]);
+  await rejects(act("manager", "hold"), /お預けにできません/);
+});
+
+test("a payer resists an unpaid request up to three times; it stays unpaid and the count reaches the receipt", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId);
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+  await act("manager", "request", { amount: 40, note: "払え" });
+  const requestId = Object.keys(harness.contract(contractId).pendingRequests)[0];
+  await rejects(act("manager", "resist", { requestId, text: "嫌" }), /この操作はできません/);
+  await rejects(act("payer", "resist", { requestId, text: "" }), /渋る一言/);
+  await rejects(act("payer", "resist", { requestId, text: "ペイペイなら払う" }), /外部の決済/);
+  for (const text of ["……払いたくないです。", "それだけは許して", "今日は勘弁して"]) await act("payer", "resist", { requestId, text });
+  await rejects(act("payer", "resist", { requestId, text: "まだ" }), /3回まで/);
+  const event = harness.events(contractId).at(-1);
+  assert.deepEqual([event.type, event.actor, event.count, event.text], ["resist", "payer", 3, "今日は勘弁して"]);
+  const managerView = (await harness.act("manager", "state")).contracts.find((contract) => contract.contractId === contractId);
+  assert.equal(managerView.pendingRequests[0].resists, 3, "the manager sees the count");
+  await act("manager", "mark_read", { seq: harness.contract(contractId).eventSeq });
+  assert.ok(harness.contract(contractId).ignoredSince > 0, "a resist is a payer message");
+  const paid = await act("payer", "tribute", { kind: "request", requestId, amount: 40, clientRequestId: nextRequestId() });
+  assert.equal(harness.events(contractId).at(-1).resisted, 3);
+  assert.equal(paid.contract.resistedTributes, 1);
+  const receipt = (await harness.act("payer", "receipts")).receipts.find((row) => row.receiptId === paid.receipt.receiptId);
+  assert.equal(receipt.resisted, 3);
+});

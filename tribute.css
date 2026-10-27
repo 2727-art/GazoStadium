@@ -1520,3 +1520,46 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .tribute-cheer-seen { display: inline-block; margin-left: 4px; padding: 0 7px; border: 1.5px solid #ff4f7a; border-radius: 4px; color: #ff8fa8; font-size: 0.7rem; font-weight: 800; transform: rotate(-4deg); }
 .tribute-cheer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .tribute-todo-chip.is-cheer { border-color: rgba(255, 122, 184, 0.55); background: rgba(255, 122, 184, 0.14); }
+
+/* お預けと願い出・抵抗（ranch-hold-v1）: お預けは紫で、請求（金）・出稼ぎ（緑）と見分ける。 */
+.tribute-check.is-hold small { display: block; margin-top: 2px; font-size: 0.74rem; }
+.tribute-tally .is-hold { border-color: rgba(180, 140, 255, 0.6); background: rgba(180, 140, 255, 0.14); color: #e2d4ff; }
+.tribute-tally .is-hold-ok { border-color: rgba(180, 140, 255, 0.45); color: #d3c2ff; }
+.tribute-tally .is-plea { border-color: rgba(180, 140, 255, 0.45); color: #d3c2ff; }
+.tribute-tally .is-resist { border-color: rgba(255, 140, 120, 0.5); color: #ffc6b8; }
+.tribute-hold-panel { display: grid; gap: 8px; border-color: rgba(180, 140, 255, 0.5); background: linear-gradient(160deg, rgba(180, 140, 255, 0.12), var(--tr-panel) 60%); }
+.tribute-hold-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.tribute-hold-head .tribute-eyebrow { color: #d3c2ff; }
+.tribute-hold-head small { color: var(--tr-mist); font-size: 0.74rem; }
+.tribute-hold-note { margin: 0; color: var(--tr-text); font-size: 0.88rem; overflow-wrap: anywhere; }
+.tribute-hold-state { margin: 0; color: var(--tr-mist); font-size: 0.82rem; }
+.tribute-plea-ask,
+.tribute-plea-mine { display: grid; gap: 6px; padding: 10px 12px; border: 1px dashed rgba(180, 140, 255, 0.55); border-radius: 12px; background: rgba(180, 140, 255, 0.08); }
+.tribute-plea-mine.is-granted { border-style: solid; border-color: rgba(255, 79, 163, 0.6); background: rgba(255, 79, 163, 0.1); }
+.tribute-plea-mine small { color: var(--tr-mist); font-size: 0.76rem; }
+.tribute-plea-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.tribute-plea-line strong { color: #f3ecff; font-size: 1.05rem; }
+.tribute-plea-line span { font-size: 0.84rem; overflow-wrap: anywhere; }
+.tribute-hold-card,
+.tribute-plea-card {
+  display: grid;
+  gap: 4px;
+  min-width: 200px;
+  max-width: min(86%, 380px);
+  padding: 10px 14px;
+  border: 1px dashed rgba(180, 140, 255, 0.6);
+  border-radius: 14px;
+  background: rgba(180, 140, 255, 0.08);
+}
+.tribute-hold-card strong,
+.tribute-plea-card strong { color: #e2d4ff; }
+.tribute-hold-card p,
+.tribute-plea-card p { margin: 0; font-size: 0.84rem; overflow-wrap: anywhere; }
+.tribute-plea-card small { color: var(--tr-mist); font-size: 0.74rem; }
+.tribute-event.is-plea-answer.is-granted .tribute-plea-card { border-style: solid; border-color: rgba(255, 79, 163, 0.65); background: rgba(255, 79, 163, 0.12); }
+.tribute-event.is-plea-answer.is-denied .tribute-plea-card { border-style: solid; border-color: var(--tr-line); background: var(--tr-panel-2); }
+.tribute-resist-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tribute-chip.is-resist { background: rgba(255, 140, 120, 0.16); color: #ffc6b8; }
+.tribute-event.is-resist .tribute-bubble { border-style: dashed; border-color: rgba(255, 140, 120, 0.6); }
+.tribute-resist-mark { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 4px; background: rgba(255, 140, 120, 0.2); color: #ffc6b8; font-size: 0.7rem; font-style: normal; font-weight: 800; }
+.tribute-resisted { color: #ffc6b8; font-size: 0.76rem; font-style: normal; font-weight: 700; }
