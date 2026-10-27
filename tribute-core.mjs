@@ -75,7 +75,29 @@ export const DISCLOSURE_LABELS = Object.freeze({
   undisclosed: "非開示",
 });
 export const DISCLOSURE_SHORT = Object.freeze({ nekama: "ネカマ", as_is: "素", undisclosed: "非開示" });
-export const STYLE_LABELS = Object.freeze({ harsh: "罵倒", cold: "事務的", sweet: "甘やかし" });
+// 管理の型（2026-10-27 に5つへ。サーバーの MANAGER_STYLES と同じ）。管理人はカードに1つか2つ選ぶ。
+// 2つの型の主と副（ギャップ）はカードでは伝えないので、並びはいつもこの順にする。
+// それまでの3つ（罵倒・事務的・甘やかし、カードの style）は解除し、選び直してもらう（読まない）。
+export const MANAGER_STYLES = Object.freeze([
+  Object.freeze({ id: "insight", label: "見透かす", hint: "敬語で淡々と、本心を言い当てる" }),
+  Object.freeze({ id: "manage", label: "管理する", hint: "約束・報告・規律で縛る" }),
+  Object.freeze({ id: "tease", label: "煽る", hint: "甘い声で笑って、突き放す" }),
+  Object.freeze({ id: "pamper", label: "甘やかす", hint: "肯定して、お礼を言わせる" }),
+  Object.freeze({ id: "aloof", label: "突き放す", hint: "気まぐれで、手が届かない" }),
+]);
+export const MAX_MANAGER_STYLES = 2;
+export const STYLE_LABELS = Object.freeze(Object.fromEntries(MANAGER_STYLES.map((style) => [style.id, style.label])));
+
+// サーバーの normalizeStyles と同じ: 知らない型は捨て、重なりをなくし、一覧の順にそろえる（2つまで）。
+export function normalizeStyles(value) {
+  const chosen = new Set((Array.isArray(value) ? value : []).map(String));
+  return MANAGER_STYLES.map((style) => style.id).filter((id) => chosen.has(id)).slice(0, MAX_MANAGER_STYLES);
+}
+
+// カードの型の札（「見透かす・煽る」）。選び直す前のカードは空。
+export function stylesLabel(card) {
+  return normalizeStyles(card?.styles).map((id) => STYLE_LABELS[id]).join("・");
+}
 export const SIGIL_COLORS = Object.freeze(["#ff4fa3", "#b48cff", "#5fd4ff", "#ffd166", "#7ee08a", "#ff7a59"]);
 // 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある42種から選ぶ。
 // 1〜6 はゆるめの絵、7〜12 は同じ6人の大人びた絵。13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（無料）。
@@ -202,16 +224,64 @@ export function sealsFor(cardSeals, ngWords = []) {
   return usable.length ? usable : ["juryo"];
 }
 
-// 請求の一言の候補。名目ごとに出し、性的な名目は許可のある契約でだけ使われる。
+// 請求の一言の候補（2026-10-27 に見直し）。名目ごとの一言と、管理人の型ごとの一言を並べる。
+// どれも強さの札を持ち、契約の言葉の強さ（財布が決めた上限）以下のものだけを出す。
+// 決まり（財布側の note の分析から。functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md）:
+// - お願いや営業の形にしない（言い切るか、命令する）。払う理由を言い切り、対象のない言葉で終えない。
+// - 「今だけ」「あなただけ」のような急かし、脅し、過去の献上を持ち出す言い方は使わない。
+// - 1文で短く。読み違える漢字はひらがなに開く。♥ は使わず、♡ は文末だけ。
+// 性的な名目の一言は、その名目を選べる契約（財布が許した契約）でだけ出る。型の一言は性的な言葉を使わない。
+const note = (text, tone) => Object.freeze({ text, tone });
 export const REQUEST_NOTES = Object.freeze({
-  "": Object.freeze(["今日の分。", "遅れずに。"]),
-  management: Object.freeze(["今月の管理費。", "管理費、遅れずに。"]),
-  reward_fee: Object.freeze(["ご褒美が欲しいなら先に払いな。", "ご褒美代。"]),
-  penalty: Object.freeze(["罰金。言い訳は聞かない。", "待たせた罰金。"]),
-  edging: Object.freeze(["まだイかせない。", "寸止め料、払え。"]),
-  release: Object.freeze(["イきたいなら払え。", "イく許可、買う？"]),
-  leak_penalty: Object.freeze(["勝手にイったね。罰金。", "許可なくイった罰金。"]),
+  "": Object.freeze([note("今日の分。", "normal"), note("遅れずに。", "normal"), note("今日の分、置いていってね。", "sweet")]),
+  management: Object.freeze([note("今月の管理費。", "normal"), note("管理費、遅れずに。", "normal"), note("今月の管理費、ちゃんと預かるね。", "sweet")]),
+  reward_fee: Object.freeze([note("ご褒美が欲しいなら先に払いな。", "harsh"), note("ご褒美代。", "normal"), note("ご褒美代、先にね。", "sweet")]),
+  penalty: Object.freeze([note("罰金。言い訳は聞かない。", "harsh"), note("待たせた罰金。", "normal"), note("罰金だよ。次は気をつけようね。", "sweet")]),
+  edging: Object.freeze([note("まだイかせない。", "harsh"), note("寸止め料、払え。", "harsh")]),
+  release: Object.freeze([note("イきたいなら払え。", "harsh"), note("イく許可、買う？", "normal")]),
+  leak_penalty: Object.freeze([note("勝手にイったね。罰金。", "harsh"), note("許可なくイった罰金。", "normal")]),
 });
+export const STYLE_REQUEST_NOTES = Object.freeze({
+  insight: Object.freeze([
+    note("ちゃんと分かっていますよ。今日の分です。", "sweet"),
+    note("払う理由は、あなたが一番よく分かっていますね。", "normal"),
+    note("迷っているふりは要りません。どうぞ。", "normal"),
+    note("言い訳を考えている顔ですね。先に払いなさい。", "harsh"),
+  ]),
+  manage: Object.freeze([
+    note("今月もきちんと続けようね。今日の分。", "sweet"),
+    note("約束の分です。期日は守ること。", "normal"),
+    note("決めた額です。遅れたら記録に残します。", "normal"),
+    note("報告が遅れた分も含めて、今日中に。", "harsh"),
+  ]),
+  tease: Object.freeze([
+    note("今日もちゃんと来たね。えらいえらい♡", "sweet"),
+    note("また来たんだ。分かりやすいね♡", "normal"),
+    note("払うしかないの、自分でも分かってるでしょ♡", "harsh"),
+    note("我慢できなかったんだ。かわいそ♡", "harsh"),
+  ]),
+  pamper: Object.freeze([
+    note("今日もえらかったね。ご褒美代、置いていって。", "sweet"),
+    note("お礼も忘れずにね。今日の分。", "sweet"),
+    note("払えたら、ちゃんと褒めてあげる。", "normal"),
+  ]),
+  aloof: Object.freeze([
+    note("たまには相手してあげる。今日の分ね。", "sweet"),
+    note("払うなら勝手にどうぞ。見てないけど。", "normal"),
+    note("今日の分。返事は期待しないで。", "normal"),
+    note("用があるのはお財布だけ。", "harsh"),
+  ]),
+});
+
+// 請求のシートに出す一言の候補。名目の一言を先に、管理人の型の一言をその後に並べる。
+// 強さの上限・言われたくない言葉・契約後の会話の決まりで絞る。
+export function requestNotesFor({ purpose = "", tone = "normal", styles = [], ngWords = [] } = {}) {
+  const allowed = tonesUpTo(tone);
+  const usable = (entry) => allowed.includes(entry.tone) && !contractTextProblem(entry.text, { role: "manager", ngWords });
+  const purposeLines = (REQUEST_NOTES[purpose] || REQUEST_NOTES[""]).filter(usable).map((entry) => entry.text);
+  const styleLines = normalizeStyles(styles).flatMap((id) => STYLE_REQUEST_NOTES[id].filter(usable).map((entry) => entry.text));
+  return { purpose: purposeLines, style: [...new Set(styleLines)].filter((line) => !purposeLines.includes(line)) };
+}
 
 export function visiblePurpose(value, { allowSexual = false } = {}) {
   const purpose = String(value ?? "");
@@ -597,7 +667,7 @@ function cardSnapshot(card) {
   return {
     personaName: String(source.personaName || "管理人").slice(0, 32),
     disclosure: String(source.disclosure || "undisclosed"),
-    style: String(source.style || "cold"),
+    styles: normalizeStyles(source.styles),
     sigil: integer(source.sigil, 0, 5),
     avatar: avatarId(source.avatar),
   };

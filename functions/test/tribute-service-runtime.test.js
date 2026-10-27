@@ -298,7 +298,7 @@ async function confirmAge(harness, uid) {
 async function openManager(harness, uid, card = {}) {
   await confirmAge(harness, uid);
   const saved = await harness.act(uid, "save_profile", {
-    card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 10, sigil: 2, ...card },
+    card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 10, sigil: 2, ...card },
     accepting: true,
   });
   harness.advance(2_100);
@@ -352,12 +352,12 @@ test("manager card rejects contact, payment, meeting and exposure wording, and t
   const harness = createHarness();
   await confirmAge(harness, "manager");
   await rejects(harness.act("manager", "save_profile", {
-    card: { personaName: "ミオ", intro: "LINE交換しよ", disclosure: "nekama", style: "harsh", entryFee: 0 },
+    card: { personaName: "ミオ", intro: "LINE交換しよ", disclosure: "nekama", styles: ["insight"], entryFee: 0 },
     accepting: true,
   }), /外部の連絡先/);
   harness.advance(2_100);
   await rejects(harness.act("manager", "save_profile", {
-    card: { personaName: "ミオ", intro: "PayPayで送って", disclosure: "nekama", style: "harsh", entryFee: 0 },
+    card: { personaName: "ミオ", intro: "PayPayで送って", disclosure: "nekama", styles: ["insight"], entryFee: 0 },
     accepting: true,
   }), /外部の決済/);
   harness.advance(2_100);
@@ -758,7 +758,7 @@ test("the manager's daily receive cap applies across contracts", async () => {
 test("only managers paid by 3 wallets with 1,000 Pay can open a vault; Pay moves in and out freely and only the tier is shown", async () => {
   const harness = createHarness({ balances: { manager: 20_000, p1: 3_000, p2: 3_000, p3: 3_000 } });
   await confirmAge(harness, "viewer");
-  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 };
+  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 0, sigil: 2 };
   const publicManagerId = await openManager(harness, "manager", card);
   const move = (uid, action, amount, clientRequestId = nextRequestId()) => harness.act(uid, action, { amount, clientRequestId });
   const open = { caps: { perTribute: 1_000, perDay: 1_000, total: 10_000 } };
@@ -834,7 +834,7 @@ test("only managers paid by 3 wallets with 1,000 Pay can open a vault; Pay moves
 
 test("the ended fund's honors become limited achievements once, with the lower honors too", async () => {
   const harness = createHarness();
-  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 };
+  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 0, sigil: 2 };
   await openManager(harness, "manager", card);
   harness.firestore.write("tributeHonors/2026-10__manager", { uid: "manager", monthKey: "2026-10", offered: 1_600, tierId: "grand_offerer" });
   const state = await harness.act("manager", "state");
@@ -1050,7 +1050,7 @@ test("a manager can add, show and remove an optional X profile; payers see it on
   const harness = createHarness();
   await confirmAge(harness, "manager");
   const saved = await harness.act("manager", "save_profile", {
-    card: { personaName: "ミオ様", intro: "", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio_sama" },
+    card: { personaName: "ミオ様", intro: "", disclosure: "nekama", styles: ["insight"], entryFee: 0, xProfile: "https://x.com/mio_sama" },
     accepting: true,
   });
   assert.equal(saved.profile.card.xHandle, "mio_sama");
@@ -1063,12 +1063,12 @@ test("a manager can add, show and remove an optional X profile; payers see it on
 
   harness.advance(2_100);
   await rejects(harness.act("manager", "save_profile", {
-    card: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio_sama/status/1" },
+    card: { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0, xProfile: "https://x.com/mio_sama/status/1" },
     accepting: true,
   }), /https:\/\/x\.com\/ユーザー名/);
   harness.advance(2_100);
   const cleared = await harness.act("manager", "save_profile", {
-    card: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "" },
+    card: { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0, xProfile: "" },
     accepting: true,
   });
   assert.equal(cleared.profile.card.xHandle, "");
@@ -1098,7 +1098,7 @@ for (const avatar of [7, 24, 29, 30, 35]) test(`manager icon ${avatar} reaches t
 
   harness.advance(2_100);
   const changed = await harness.act("manager", "save_profile", {
-    card: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 10, avatar: 99 },
+    card: { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 10, avatar: 99 },
     accepting: true,
   });
   assert.equal(changed.profile.card.avatar, 0, "an unknown icon falls back to the letter sigil");
@@ -1280,7 +1280,7 @@ test("share_info gives only the payer the manager's current consent, card and th
 
   harness.advance(2_100);
   await harness.act("manager", "save_profile", {
-    card: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, avatar: 7, reportConsent: true },
+    card: { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0, avatar: 7, reportConsent: true },
     accepting: true,
   });
   const shown = await harness.act("payer", "share_info", { contractId });
@@ -1371,7 +1371,7 @@ test("the board lists only managers active in the last 7 days; a word, a card sa
   assert.equal((await harness.act("viewer", "manager", { publicManagerId })).card.personaName, "ミオ様", "the invite link still opens the card");
 
   // カードを保存すると、掲示板の一番上に戻る。
-  await harness.act("m1", "save_profile", { card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 }, accepting: true });
+  await harness.act("m1", "save_profile", { card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 0, sigil: 2 }, accepting: true });
   assert.deepEqual(await names(), ["ミオ様", "サキ"]);
   assert.equal((await standing("m1")).boardUntil, harness.now() + week);
 
@@ -1392,7 +1392,7 @@ test("the board lists only managers active in the last 7 days; a word, a card sa
 
 test("ranch decorations and card achievements need a purchase or an unlock, reach the board, and seal looks stay as pressed", async () => {
   const harness = createHarness({ balances: { manager: 0, payer: 1_000, viewer: 0 } });
-  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 };
+  const card = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 0, sigil: 2 };
   const publicManagerId = await openManager(harness, "manager", card);
   const save = async (extra) => {
     harness.advance(2_100);
@@ -1482,7 +1482,7 @@ test("screenshot consent is the payer's contract setting, shown to the manager w
 
   // 宣言は外せる。
   harness.advance(2_100);
-  const saved = await harness.act("manager", "save_profile", { card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 10, sigil: 2, postsScreenshots: false }, accepting: true });
+  const saved = await harness.act("manager", "save_profile", { card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 10, sigil: 2, postsScreenshots: false }, accepting: true });
   assert.equal(saved.profile.card.postsScreenshots, false);
 });
 
@@ -1605,7 +1605,7 @@ test("a manager's last activity reaches others only when the manager chose to sh
   // 出さない管理人も、掲示板は動いた順に並ぶ。カードを保存した「シズ」が一番上に戻る。
   assert.deepEqual((await harness.act("payer", "board")).managers.map((card) => card.personaName), ["ミオ様", "シズ"]);
   harness.advance(2_100);
-  const saved = await harness.act("quiet", "save_profile", { card: { personaName: "シズ", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0, sigil: 2 }, accepting: true });
+  const saved = await harness.act("quiet", "save_profile", { card: { personaName: "シズ", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 0, sigil: 2 }, accepting: true });
   assert.equal(saved.profile.card.showsActivity, false);
   assert.deepEqual((await harness.act("payer", "board")).managers.map((card) => card.personaName), ["シズ", "ミオ様"]);
 });
@@ -1654,7 +1654,7 @@ test("the monthly gross ranking counts only managers tributed by 3+ wallets, car
 
   // 番付のひとことも、掲示板と同じく連絡先・性的な言葉は通さない。
   harness.advance(2_100);
-  await rejects(harness.act("m2", "save_profile", { card: { personaName: "サキ", intro: "", disclosure: "nekama", style: "harsh", entryFee: 10, rankingWord: "エロい財布募集" }, accepting: true }), /性的な言葉/);
+  await rejects(harness.act("m2", "save_profile", { card: { personaName: "サキ", intro: "", disclosure: "nekama", styles: ["insight"], entryFee: 10, rankingWord: "エロい財布募集" }, accepting: true }), /性的な言葉/);
 });
 
 test("only wallets that tributed this month write in a manager's cheer column; managers mark them seen or hide them", async () => {
@@ -1996,4 +1996,28 @@ test("withdrawing the sexual purposes permission withdraws a sexual recitation, 
   await act("payer", "set_purposes", { allowSexualPurposes: false });
   assert.equal(harness.contract(contractId).reciteOrder.text, "私は財布です。", "a plain line stays");
   assert.equal(harness.events(contractId).at(-1).type, "purposes_changed");
+});
+
+// 管理の型（ranch-styles-v1、2026-10-27 ユーザー決定）: 5つから1つか2つ。それまでの型（card.style）は解除して読まない。
+test("managers choose one or two of the five types; a card with only the old type shows none until it is chosen again", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  await confirmAge(harness, "manager");
+  const card = { personaName: "ミオ様", intro: "", disclosure: "nekama", entryFee: 0 };
+  await rejects(harness.act("manager", "save_profile", { card: { ...card, style: "harsh" }, accepting: true }), /管理の型を1つか2つ/);
+  await rejects(harness.act("manager", "save_profile", { card: { ...card, styles: ["insight", "manage", "tease"] }, accepting: true }), /1つか2つ/);
+  const saved = await harness.act("manager", "save_profile", { card: { ...card, styles: ["tease", "insight"] }, accepting: true });
+  assert.deepEqual(saved.profile.card.styles, ["insight", "tease"]);
+  await confirmAge(harness, "payer");
+  const board = await harness.act("payer", "board");
+  assert.deepEqual(board.managers.find((row) => row.publicManagerId === saved.profile.publicManagerId).styles, ["insight", "tease"]);
+  const contractId = await startContract(harness, "manager", "payer", saved.profile.publicManagerId, {}, 0);
+  assert.deepEqual(harness.contract(contractId).managerCard.styles, ["insight", "tease"]);
+  // 本番の古いカード（型は style だけ）を写す。掲示板には出たまま、型は空になる。
+  const stored = harness.firestore.read("tributeProfiles/manager");
+  harness.firestore.write("tributeProfiles/manager", { ...stored, card: { ...stored.card, styles: undefined, style: "harsh" } });
+  harness.advance(2_100);
+  const legacy = (await harness.act("payer", "board")).managers.find((row) => row.publicManagerId === saved.profile.publicManagerId);
+  assert.ok(legacy, "the card stays on the board");
+  assert.deepEqual(legacy.styles, []);
+  assert.equal("style" in legacy, false);
 });

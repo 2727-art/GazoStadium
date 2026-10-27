@@ -218,7 +218,7 @@ test("RANCH-05: a list response does not recreate the card editor or erase its d
   c.context.state.profile = { card: { intro: "保存済み" } };
   c.context.appRoot = { set innerHTML(value) { replacements++; inputValue = /name="intro"[^>]*value="([^"]*)"/.exec(value)?.[1] || ""; } };
   c.context.renderLayer = () => {};
-  addFunctions(c.context, ["loadList", "render", "renderCardEditor", "renderOwnWordsEditor"]);
+  addFunctions(c.context, ["loadList", "render", "renderCardEditor", "renderOwnWordsEditor", "needsStyles", "styleReselectNotice"]);
   const loading = c.context.loadList("receipts", "receipts", payload => ({ items: payload.receipts }));
   c.context.state.screen = "card"; c.context.render(); inputValue = "編集中の紹介文";
   const before = replacements; gate.resolve({ receipts: [] }); await loading;

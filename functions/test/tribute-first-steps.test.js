@@ -63,7 +63,7 @@ test("the hub opens with the first steps for newcomers and offers the fee-0 boar
 
 test("the board can show only fee-0 managers and how recently each manager acted", () => {
   const board = sourceBlock(client, "function renderBoard()", "function renderRankingRows");
-  assert.match(board, /const managers = board\.feeZeroOnly \? board\.managers\.filter\(\(card\) => !Number\(card\.entryFee\)\) : board\.managers;/);
+  assert.match(board, /\.filter\(\(card\) => !board\.feeZeroOnly \|\| !Number\(card\.entryFee\)\)/);
   assert.match(board, /data-t="toggle-fee-zero"/);
   assert.match(client, /input\[data-t="toggle-fee-zero"\]/, "the change listener routes the toggle");
   // 出すのは、管理人がカードで選んだ時だけ（ranch-activity-optin-v1）。

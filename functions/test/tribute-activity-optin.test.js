@@ -32,7 +32,7 @@ function sourceBlock(source, startText, endText) {
   return source.slice(start, end);
 }
 
-const CARD = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0 };
+const CARD = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 0 };
 
 test("showing the last activity is an opt-in card setting, off by default", () => {
   assert.equal(rules.normalizeManagerCard(CARD).card.showsActivity, false);

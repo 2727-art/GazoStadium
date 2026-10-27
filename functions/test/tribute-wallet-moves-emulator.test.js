@@ -86,7 +86,7 @@ test("wallet moves and manager words run end to end on real Firestore transactio
   // 管理人: カードの受取印に自分の言葉を混ぜ、自分の言葉を登録する。
   for (const uid of [manager, payer]) await act(uid, "age_confirm", { version: TRIBUTE_AGE_VERSION, adult: true, premise: true });
   const saved = await act(manager, "save_profile", {
-    card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 10, sigil: 2, seals: ["yoku", "word:よく貢いだ"] },
+    card: { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 10, sigil: 2, seals: ["yoku", "word:よく貢いだ"] },
     accepting: true,
   });
   await act(manager, "set_own_words", { ownWords: {

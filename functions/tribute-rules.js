@@ -19,7 +19,10 @@ const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
 const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 const TONES = Object.freeze(["sweet", "normal", "harsh"]);
 const DISCLOSURES = Object.freeze(["nekama", "as_is", "undisclosed"]);
-const MANAGER_STYLES = Object.freeze(["harsh", "cold", "sweet"]);
+// 管理の型（2026-10-27 に5つへ）。見透かす・管理する・煽る・甘やかす・突き放す。カードに1つか2つ選ぶ。
+// それまでの3つ（カードの style: harsh・cold・sweet）は解除し、読まない。選び直してもらう。
+const MANAGER_STYLES = Object.freeze(["insight", "manage", "tease", "pamper", "aloof"]);
+const MAX_MANAGER_STYLES = 2;
 const SIGIL_COLORS = Object.freeze([0, 1, 2, 3, 4, 5]);
 // 管理人の印のアイコン。0 はペルソナ名の1文字、1〜42 は用意したアイコン（画像のアップロードはない）。
 // 1〜12・24〜35 はイラスト、13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（ここまで無料）。
@@ -546,17 +549,25 @@ function normalizeCardAchievements(value) {
   return [...new Set(list.map(String).filter((id) => CARD_ACHIEVEMENT_ID_PATTERN.test(id)))].slice(0, LIMITS.cardAchievements);
 }
 
+// 知らない型は捨て、重なりをなくし、一覧の順にそろえる（2つまで）。主と副はカードで伝えないので、並びは一覧の順。
+function normalizeStyles(value) {
+  const chosen = new Set((Array.isArray(value) ? value : []).map(String));
+  return MANAGER_STYLES.filter((id) => chosen.has(id)).slice(0, MAX_MANAGER_STYLES);
+}
+
 function normalizeManagerCard(value) {
   const personaName = cleanLine(value?.personaName, LIMITS.personaName);
   const intro = cleanLine(value?.intro, LIMITS.intro);
   const disclosure = pickEnum(value?.disclosure, DISCLOSURES);
-  const style = pickEnum(value?.style, MANAGER_STYLES);
+  const styles = normalizeStyles(value?.styles);
   const entryFee = pickOption(value?.entryFee, ENTRY_FEE_OPTIONS);
   const sigil = pickOption(value?.sigil, SIGIL_COLORS, 0);
   const avatar = normalizeAvatar(value?.avatar);
   if (!personaName) return { error: "ペルソナ名を1〜16文字で入力してください。" };
   if (!disclosure) return { error: "中の人の札を選んでください。" };
-  if (!style) return { error: "管理の型を選んでください。" };
+  if (!styles.length || (Array.isArray(value?.styles) && value.styles.length > MAX_MANAGER_STYLES)) {
+    return { error: `管理の型を1つか${MAX_MANAGER_STYLES}つ選んでください。` };
+  }
   if (entryFee === null) return { error: "入場料を選び直してください。" };
   for (const text of [personaName, intro]) {
     const reason = forbiddenReason(text);
@@ -571,7 +582,7 @@ function normalizeManagerCard(value) {
       personaName,
       intro,
       disclosure,
-      style,
+      styles,
       entryFee,
       sigil,
       avatar,
@@ -843,6 +854,8 @@ module.exports = {
   tonesUpTo,
   DISCLOSURES,
   MANAGER_STYLES,
+  MAX_MANAGER_STYLES,
+  normalizeStyles,
   SIGIL_COLORS,
   PURPOSES,
   PURPOSE_IDS,

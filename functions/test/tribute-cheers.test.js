@@ -51,7 +51,7 @@ test("the client mirrors the server limits and text checks for the ranking word 
   assert.match(core.cheerProblem("あ".repeat(41)), /40文字まで/);
   assert.equal(core.rankingWordProblem(""), "", "an empty ranking word removes it");
   assert.equal(rules.normalizeCheer("").text, "", "an empty cheer deletes it");
-  assert.equal(rules.normalizeManagerCard({ personaName: "ミオ", disclosure: "nekama", style: "harsh", entryFee: 0 }).card.rankingWord, "");
+  assert.equal(rules.normalizeManagerCard({ personaName: "ミオ", disclosure: "nekama", styles: ["insight"], entryFee: 0 }).card.rankingWord, "");
 });
 
 test("hearts get richer toward first place and appear only for ranks 1 to 5", () => {

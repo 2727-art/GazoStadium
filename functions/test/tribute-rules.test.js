@@ -114,17 +114,17 @@ test("caps must be chosen options in order and the entry fee must fit one tribut
 });
 
 test("manager cards need a persona, a disclosure tag and a style but never a gender", () => {
-  const result = rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 30, sigil: 9 });
+  const result = rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 30, sigil: 9 });
   assert.equal(result.card.disclosure, "nekama");
   assert.equal(result.card.sigil, 0);
   assert.equal(Object.hasOwn(result.card, "gender"), false);
   assert.deepEqual([...rules.DISCLOSURES], ["nekama", "as_is", "undisclosed"]);
-  assert.match(rules.normalizeManagerCard({ personaName: "", disclosure: "nekama", style: "harsh", entryFee: 0 }).error, /ペルソナ名/);
-  assert.match(rules.normalizeManagerCard({ personaName: "ミオ", disclosure: "female", style: "harsh", entryFee: 0 }).error, /中の人の札/);
+  assert.match(rules.normalizeManagerCard({ personaName: "", disclosure: "nekama", styles: ["insight"], entryFee: 0 }).error, /ペルソナ名/);
+  assert.match(rules.normalizeManagerCard({ personaName: "ミオ", disclosure: "female", styles: ["insight"], entryFee: 0 }).error, /中の人の札/);
 });
 
 test("manager cards take one of the 42 prepared icons or fall back to the letter sigil", () => {
-  const base = { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 };
+  const base = { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0 };
   assert.deepEqual([...rules.AVATAR_IDS], Array.from({ length: 43 }, (_, id) => id));
   assert.equal(rules.AVATAR_MAX, 42);
   assert.equal(rules.normalizeManagerCard(base).card.avatar, 0, "no icon keeps the letter sigil");
@@ -227,11 +227,11 @@ test("the optional X profile accepts only an x.com profile and stores just the u
   ]) {
     assert.match(rules.normalizeXProfile(input).error, /https:\/\/x\.com\/ユーザー名/, input);
   }
-  const card = rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio_sama" });
+  const card = rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0, xProfile: "https://x.com/mio_sama" });
   assert.equal(card.card.xHandle, "mio_sama");
-  assert.equal(rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 }).card.xHandle, "");
-  assert.match(rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio/status/1" }).error, /x\.com/);
-  assert.match(rules.normalizeManagerCard({ personaName: "ミオ様", intro: "@mio_sama で探して", disclosure: "nekama", style: "harsh", entryFee: 0 }).error, /SNSのID/, "the intro still cannot carry an SNS ID");
+  assert.equal(rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0 }).card.xHandle, "");
+  assert.match(rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0, xProfile: "https://x.com/mio/status/1" }).error, /x\.com/);
+  assert.match(rules.normalizeManagerCard({ personaName: "ミオ様", intro: "@mio_sama で探して", disclosure: "nekama", styles: ["insight"], entryFee: 0 }).error, /SNSのID/, "the intro still cannot carry an SNS ID");
 });
 
 test("named fees: sexual names only with the payer's consent, and hidden again when it is withdrawn", () => {
@@ -290,7 +290,7 @@ test("receipt seals come from a fixed list, three per card, and fall back to 受
   assert.equal(rules.sealFor("", { seals: ["zako"] }), "zako");
   assert.equal(rules.sealFor("zako", { seals: ["zako"], ngWords: ["雑魚"] }), rules.FALLBACK_SEAL);
   for (const seal of rules.SEALS) assert.equal(rules.forbiddenReason(seal.label), "", seal.label);
-  const base = { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 };
+  const base = { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0 };
   const card = rules.normalizeManagerCard(base).card;
   assert.deepEqual(card.seals, [...rules.DEFAULT_SEALS]);
   assert.equal(card.reportConsent, false, "consent to appear in payers' images is never assumed");

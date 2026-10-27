@@ -34,11 +34,12 @@ import {
   PER_DAY_OPTIONS,
   PER_TRIBUTE_OPTIONS,
   PREMISES,
+  MANAGER_STYLES,
+  MAX_MANAGER_STYLES,
   MAX_SEALS,
   PURPOSES,
   RECEIVABLE_KINDS,
   RECITE_TARGETS,
-  REQUEST_NOTES,
   REWARD_WORD,
   SEAL_WORD_PREFIX,
   REPORT_REASON_LABELS,
@@ -83,6 +84,9 @@ import {
   sealWordId,
   sealWordProblem,
   wordOfferingProblem,
+  normalizeStyles,
+  requestNotesFor,
+  stylesLabel,
   normalizeXProfile,
   purposeLabel,
   purposesFor,
@@ -109,7 +113,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -191,7 +195,7 @@ function createState() {
     contracts: [],
     achievements: null,
     walletBalance: null,
-    board: { status: "idle", managers: [], nekamaOnly: false, feeZeroOnly: false },
+    board: { status: "idle", managers: [], nekamaOnly: false, feeZeroOnly: false, style: "" },
     manager: { status: "idle", publicManagerId: "", data: null },
     applyTarget: null,
     // 終わった契約の「同じ条件で申し込む」で写す設定（その管理人の申し込みでだけ使う）。
@@ -549,6 +553,7 @@ function renderMyPanel(profile, { boardNotice = true } = {}) {
             <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
             <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
           </div>
+          ${styleReselectNotice(profile)}
           ${boardNotice ? renderBoardNotice(profile) : ""}
           ${renderWordForm(profile)}
           ${renderInvite(profile)}`
@@ -779,7 +784,7 @@ function renderManagerCard(card, { compact = false, preview = false } = {}) {
     : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame, card.frameColor)}>`;
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
     ${face}
-      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${rankHeart(card.grossRank)}${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${vaultTag(card.vault)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${rankHeart(card.grossRank)}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
       ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
@@ -788,13 +793,34 @@ function renderManagerCard(card, { compact = false, preview = false } = {}) {
   </article>`;
 }
 
+// 管理の型の札。選び直す前のカード（型なし）には出さない。
+function styleTag(card) {
+  const label = stylesLabel(card);
+  return label ? `<span class="tribute-tag is-style">${escapeHtml(label)}</span>` : "";
+}
+
+// 2026-10-27 に管理の型を5つにした時、それまでの型は解除した。カードがあって型がない管理人に、選び直しを頼む。
+function needsStyles(profile) {
+  return Boolean(profile?.card) && normalizeStyles(profile.card.styles).length === 0;
+}
+
+function styleReselectNotice(profile) {
+  return needsStyles(profile)
+    ? `<p class="tribute-form-hint is-alert">管理の型が新しくなりました（${MANAGER_STYLES.length}つから${MAX_MANAGER_STYLES}つまで）。カードを編集して選び直してください。選ぶまで、カードに型の札は出ません。</p>`
+    : "";
+}
+
 function renderBoard() {
   const board = state.board;
-  // 入場料0のみ: 読み込んだ掲示板を画面の上で絞る（Payが0の財布でも受理される管理人）。
-  const managers = board.feeZeroOnly ? board.managers.filter((card) => !Number(card.entryFee)) : board.managers;
-  const emptyText = board.feeZeroOnly
-    ? "入場料0の管理人は、いま受付していません。「入場料0のみ」を外すと、ほかの管理人も見られます。"
-    : board.nekamaOnly ? "ネカマ開示の管理人は、いま受付していません。" : "いま受付中の管理人はいません。";
+  // 入場料0のみ・管理の型: 読み込んだ掲示板を画面の上で絞る（入場料0は、Payが0の財布でも受理される管理人）。
+  const managers = board.managers
+    .filter((card) => !board.feeZeroOnly || !Number(card.entryFee))
+    .filter((card) => !board.style || normalizeStyles(card.styles).includes(board.style));
+  const emptyText = board.style
+    ? `「${STYLE_LABELS[board.style] || ""}」の管理人は、いま受付していません。型を「すべて」にすると、ほかの管理人も見られます。`
+    : board.feeZeroOnly
+      ? "入場料0の管理人は、いま受付していません。「入場料0のみ」を外すと、ほかの管理人も見られます。"
+      : board.nekamaOnly ? "ネカマ開示の管理人は、いま受付していません。" : "いま受付中の管理人はいません。";
   const body = board.status === "loading" && !board.managers.length
     ? `<p class="tribute-empty">掲示板を読み込んでいます…</p>`
     : board.status === "error"
@@ -806,6 +832,7 @@ function renderBoard() {
     <div class="tribute-board-tools">
       <label class="tribute-switch"><input type="checkbox" data-t="toggle-nekama" ${board.nekamaOnly ? "checked" : ""} /><span>ネカマ開示のみ</span></label>
       <label class="tribute-switch"><input type="checkbox" data-t="toggle-fee-zero" ${board.feeZeroOnly ? "checked" : ""} /><span>入場料0のみ</span></label>
+      <label class="tribute-board-style"><span>管理の型</span><select data-t="board-style"><option value="">すべて</option>${MANAGER_STYLES.map((style) => `<option value="${style.id}" ${board.style === style.id ? "selected" : ""}>${escapeHtml(style.label)}</option>`).join("")}</select></label>
       <small>性別で絞る機能はありません。中の人の札は、分かって渡すための札です。</small>
       ${isNewWallet() ? '<button class="tribute-link" type="button" data-t="open-demo">初めてなら、見本の契約を見学できます</button>' : ""}
     </div>
@@ -839,7 +866,7 @@ function renderManagerDetail() {
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
     <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame, card.frameColor)}>
-      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${rankHeart(card.grossRank, " is-large")}${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${vaultTag(card.vault)}${declarationTags(card)}</div></div></div>
+      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${rankHeart(card.grossRank, " is-large")}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${declarationTags(card)}</div></div></div>
       ${cardAchievementsMarkup(card.achievements, " is-large")}
       ${wordBubble(card.word, " is-large")}
       <p class="tribute-profile-intro">${escapeHtml(card.intro || "（紹介文なし）")}</p>
@@ -997,7 +1024,8 @@ function renderCardEditor() {
       <small>貢がれ総額の番付で${GROSS_RANKING.limit}位以内に入ると、X のプロフィールと一緒に番付に載ります。連絡先・外部決済・性的な言葉は書けません。</small></label>
     <fieldset><legend>中の人の札</legend><div class="tribute-radio-col">${Object.entries(DISCLOSURE_LABELS).map(([key, label]) => `<label><input type="radio" name="disclosure" value="${key}" ${card.disclosure === key ? "checked" : ""} required /><span>${escapeHtml(label)}</span></label>`).join("")}</div>
       <small>ネカマ貢がせは、男性であることを隠さず行うジャンルです。受け手の性別を女性に限る仕組みはありません。</small></fieldset>
-    <fieldset><legend>管理の型</legend><div class="tribute-radio-row">${Object.entries(STYLE_LABELS).map(([key, label]) => `<label><input type="radio" name="style" value="${key}" ${(card.style || "harsh") === key ? "checked" : ""} /><span>${escapeHtml(label)}</span></label>`).join("")}</div></fieldset>
+    <fieldset class="tribute-style-picker" data-style-picker><legend>管理の型（${MAX_MANAGER_STYLES}つまで）</legend>${styleReselectNotice(profile)}<div class="tribute-radio-col">${MANAGER_STYLES.map((style) => `<label><input type="checkbox" name="styles" value="${style.id}" ${normalizeStyles(card.styles).includes(style.id) ? "checked" : ""} /><span>${escapeHtml(style.label)}<small>${escapeHtml(style.hint)}</small></span></label>`).join("")}</div>
+      <small>1つか2つ選びます。2つ選んでも、カードには並べて出すだけで、どちらが主かは出しません。選んだ型の一言が、請求の一言の候補に出ます。</small></fieldset>
     <label class="tribute-field"><span>入場料</span><select name="entryFee">${optionList(ENTRY_FEE_OPTIONS, card.entryFee ?? 0)}</select></label>
     <label class="tribute-check"><input type="checkbox" name="accepting" ${profile.accepting || !profile.card ? "checked" : ""} /><span>受付する（掲示板に出す）</span></label>
     <p class="tribute-note">連絡先・SNSのID・外部決済・現金・会う約束・住所や本名に関わる言葉は、カードに書けません。契約後の会話で送れないのは、外部決済・現金・現実の金額だけです。</p>
@@ -1396,7 +1424,7 @@ function renderCardPreview(card) {
   }, { preview: true });
 }
 
-// 編集中のカードの印を、保存する前に見せる。form.style は「管理の型」の入力（name="style"）を指すので、
+// 編集中のカードの印を、保存する前に見せる。form.style は要素のスタイルと紛らわしいので、
 // 色は印の見本と選択欄に直接置く。
 function updateCardPreview(form) {
   const preview = form.querySelector("[data-card-preview]");
@@ -1408,7 +1436,7 @@ function updateCardPreview(form) {
     sigil: Number(data.get("sigil") || 0),
     intro: String(data.get("intro") || ""),
     disclosure: String(data.get("disclosure") || state.profile?.card?.disclosure || "undisclosed"),
-    style: String(data.get("style") || "harsh"),
+    styles: normalizeStyles(data.getAll("styles")),
     entryFee: Number(data.get("entryFee") || 0),
     xHandle: normalizeXProfile(data.get("xProfile")).xHandle || "",
     ignoreUnpaid: data.get("ignoreUnpaid") === "on",
@@ -2510,11 +2538,11 @@ function renderSheet() {
 
 // 差し出した直後の献上完了の画面。金額・宛先・名目・時刻・支払後の財布を、改ざんできない記録として並べる。
 // 見た目は牧場のもので、実在の決済サービスの画面には似せない。
-// 請求の一言の候補。選んだ名目に合わせて変え、言われたくない言葉を含む候補は出さない。
+// 請求の一言の候補。名目の一言と、管理人が選んだ型の一言（is-style）を、契約の強さの上限までで出す。
 function renderNoteChips(purpose, view) {
-  const lines = (REQUEST_NOTES[purpose] || REQUEST_NOTES[""])
-    .filter((line) => !contractTextProblem(line, { role: "manager", ngWords: view.ngWords }));
-  return lines.map((line) => `<button type="button" data-t="pick-note" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("");
+  const notes = requestNotesFor({ purpose, tone: view.tone, styles: state.profile?.card?.styles, ngWords: view.ngWords });
+  const chip = (line, extra = "") => `<button type="button"${extra} data-t="pick-note" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`;
+  return notes.purpose.map((line) => chip(line)).join("") + notes.style.map((line) => chip(line, ' class="is-style"')).join("");
 }
 
 // ───────────── 貢ぎ報告の画像（財布だけ・この端末の中で作る） ─────────────
@@ -2583,7 +2611,7 @@ function shareManager(info) {
     color: SIGIL_COLORS[Number(manager.sigil) || 0] || SIGIL_COLORS[0],
     disclosureKey,
     disclosureLabel: DISCLOSURE_LABELS[disclosureKey],
-    styleLabel: STYLE_LABELS[manager.style] || "",
+    styleLabel: stylesLabel(manager),
   };
 }
 
@@ -2788,7 +2816,7 @@ function recruitData(card, month) {
       color: sigilColor(card),
       disclosureKey,
       disclosureLabel: DISCLOSURE_LABELS[disclosureKey],
-      styleLabel: STYLE_LABELS[card.style] || "",
+      styleLabel: stylesLabel(card),
     },
     vaultLabel: vaultTierInfo(card.vault?.level)?.label || "",
     ignoreUnpaid: card.ignoreUnpaid === true,
@@ -3626,13 +3654,15 @@ async function handleSubmit(form) {
       }
       const seals = [...new Set([...data.getAll("seals").map(String), ...sealWords.map(sealWordId)])];
       if (seals.length > MAX_SEALS) return setFormError(form, `受取印は、一覧の印と自分の言葉の印を合わせて${MAX_SEALS}つまでです。`);
+      const styles = normalizeStyles(data.getAll("styles"));
+      if (!styles.length || data.getAll("styles").length > MAX_MANAGER_STYLES) return setFormError(form, `管理の型を1つか${MAX_MANAGER_STYLES}つ選んでください。`);
       await mutate("save_profile", {
         card: {
           personaName,
           intro: String(data.get("intro") || ""),
           xProfile: x.xHandle,
           disclosure: String(data.get("disclosure") || ""),
-          style: String(data.get("style") || ""),
+          styles,
           entryFee: Number(data.get("entryFee")),
           sigil: Number(data.get("sigil") || 0),
           avatar: avatarId(data.get("avatar")),
@@ -4017,6 +4047,10 @@ async function handleClick(target) {
       return;
     case "toggle-fee-zero":
       state.board.feeZeroOnly = target.checked;
+      render();
+      return;
+    case "board-style":
+      state.board.style = STYLE_LABELS[target.value] ? target.value : "";
       render();
       return;
     case "board-free":
@@ -4541,10 +4575,14 @@ function bindRoot(root) {
 
   root.addEventListener("change", (event) => {
     if (!active) return;
-    const target = event.target.closest?.('input[data-t="toggle-nekama"], input[data-t="toggle-fee-zero"], input[data-t="toggle-declaration"]');
+    const target = event.target.closest?.('input[data-t="toggle-nekama"], input[data-t="toggle-fee-zero"], input[data-t="toggle-declaration"], select[data-t="board-style"]');
     if (target) handleClick(target);
     const cardForm = event.target.closest?.('form[data-form="card"]');
-    if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee", "ignoreUnpaid", "postsScreenshots", "showsActivity"].includes(event.target.name)) updateCardPreview(cardForm);
+    if (cardForm && event.target.name === "styles" && cardForm.querySelectorAll('input[name="styles"]:checked').length > MAX_MANAGER_STYLES) {
+      event.target.checked = false;
+      showToast(`管理の型は${MAX_MANAGER_STYLES}つまでです。`);
+    }
+    if (cardForm && ["avatar", "sigil", "disclosure", "styles", "entryFee", "ignoreUnpaid", "postsScreenshots", "showsActivity"].includes(event.target.name)) updateCardPreview(cardForm);
     if (cardForm && event.target.name === "avatar") updateDecorations(cardForm);
     if (cardForm && ["frame", "frameColor", "sealShape", "sealInk"].includes(event.target.name)) {
       if (event.target.name === "frame") refreshFrameColors(cardForm);
@@ -4805,7 +4843,7 @@ function previewNow() {
 // 見学用の見本の契約。本番でも開けるが、サーバーには何も送らない（call() が見本の処理へ回す）。
 // 性的な名目にまだ同意していない人も見るため、名目は管理費・ご褒美代・罰金だけにする。
 const DEMO_CONTRACT_ID = "demo";
-const DEMO_MANAGER_CARD = Object.freeze({ personaName: "ミオ様（見本）", disclosure: "nekama", style: "harsh", sigil: 0, avatar: 7 });
+const DEMO_MANAGER_CARD = Object.freeze({ personaName: "ミオ様（見本）", disclosure: "nekama", styles: ["tease"], sigil: 0, avatar: 7 });
 
 function demoThread() {
   const now = Date.now();
@@ -4915,7 +4953,7 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   personaName: "ミオ様",
   intro: "雑魚財布は黙って差し出せ。中身は男、分かって来な。",
   disclosure: "nekama",
-  style: "harsh",
+  styles: ["insight", "tease"],
   entryFee: 10,
   sigil: 0,
   avatar: 7,
@@ -4960,7 +4998,7 @@ function previewRaw(role, status = "active") {
     managerUid: role === "manager" ? me : "preview-other",
     payerUid: role === "payer" ? me : "preview-other",
     status,
-    managerCard: role === "payer" ? PREVIEW_MANAGER_CARD : { personaName: "レイ", disclosure: "as_is", style: "cold", sigil: 2, avatar: 5 },
+    managerCard: role === "payer" ? PREVIEW_MANAGER_CARD : { personaName: "レイ", disclosure: "as_is", styles: ["manage"], sigil: 2, avatar: 5 },
     payerWalletName: role === "payer" ? "ポチ財布" : "しもべ3号",
     entryFee: 10,
     caps: { perTribute: 100, perDay: 300, total: 1_000 },
@@ -5070,7 +5108,7 @@ function previewCall(action, payload) {
         ageConfirmed: previewScreen !== "age",
         profile: previewSavedProfile || {
           walletName: "ポチ財布",
-          card: { ...PREVIEW_MANAGER_CARD, personaName: "レイ", disclosure: "as_is", style: "cold", sigil: 2, avatar: 5, frame: "kurokawa", frameColor: "navy", sealShape: "heart", sealInk: "sakura", seals: ["yoku", "word:よく貢いだ", "kakunin"], achievements: ["tribute_manager_10"], mine: true },
+          card: { ...PREVIEW_MANAGER_CARD, personaName: "レイ", disclosure: "as_is", styles: ["manage"], sigil: 2, avatar: 5, frame: "kurokawa", frameColor: "navy", sealShape: "heart", sealInk: "sakura", seals: ["yoku", "word:よく貢いだ", "kakunin"], achievements: ["tribute_manager_10"], mine: true },
           ownWords: { lines: [{ text: "跪いて差し出しな。", tone: "harsh" }, { text: "今日もちゃんと来たね。", tone: "sweet" }], rewards: [{ text: "上出来", tone: "normal" }, { text: "イっていいよ", tone: "harsh" }] },
           accepting: true,
           publicManagerId: "f".repeat(24),
@@ -5106,10 +5144,10 @@ function previewCall(action, payload) {
         ok: true,
         managers: [
           { ...PREVIEW_MANAGER_CARD, grossRank: 1 },
-          { ...PREVIEW_MANAGER_CARD, grossRank: 5, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"], showsActivity: false, lastActiveAt: 0 },
-          { ...PREVIEW_MANAGER_CARD, grossRank: 2, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 38, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], lastActiveAt: now - 5 * 3_600_000 },
-          { ...PREVIEW_MANAGER_CARD, grossRank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [], showsActivity: false, lastActiveAt: 0 },
-          { ...PREVIEW_MANAGER_CARD, grossRank: 4, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, vault: { level: 3 }, intro: "毎日決まった額を、決まった時間に。", frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane", achievements: ["battle_total_1"] },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 5, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", styles: ["aloof"], entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"], showsActivity: false, lastActiveAt: 0 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 2, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", styles: ["pamper"], entryFee: 5, sigil: 3, avatar: 38, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], lastActiveAt: now - 5 * 3_600_000 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", styles: ["insight"], entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [], showsActivity: false, lastActiveAt: 0 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 4, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", styles: ["manage", "pamper"], entryFee: 5, sigil: 3, avatar: 2, word: null, vault: { level: 3 }, intro: "毎日決まった額を、決まった時間に。", frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane", achievements: ["battle_total_1"] },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
       });
     case "manager": {
@@ -5282,7 +5320,7 @@ function previewCall(action, payload) {
         ok: true,
         contractId: payload.contractId,
         consent: true,
-        manager: { personaName: card.personaName, disclosure: card.disclosure, style: card.style, sigil: card.sigil, avatar: card.avatar },
+        manager: { personaName: card.personaName, disclosure: card.disclosure, styles: card.styles, sigil: card.sigil, avatar: card.avatar },
         collarNo: Number(state.thread.raw?.collarNo) || 3,
         walletName: state.thread.raw?.payerWalletName || "ポチ財布",
         receipt,

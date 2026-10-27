@@ -99,7 +99,7 @@ test("the decoration catalog is the same in the browser, the store prices and th
 });
 
 test("the manager card accepts decorations and up to three achievements, and decoration sales no longer feed a fund", () => {
-  const base = { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 };
+  const base = { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0 };
   const plain = rules.normalizeManagerCard(base).card;
   assert.deepEqual({ frame: plain.frame, sealShape: plain.sealShape, sealInk: plain.sealInk, achievements: plain.achievements }, { frame: "", sealShape: "date", sealInk: "shu", achievements: [] });
   const decorated = rules.normalizeManagerCard({ ...base, frame: "kinbuchi", sealShape: "crown", sealInk: "kin", achievements: ["battle_total_10", "battle_total_10", "Bad Id", "tribute_manager_1", "tribute_wallet_3", "battle_total_30"] }).card;

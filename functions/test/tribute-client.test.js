@@ -115,7 +115,7 @@ test("client filters and contract views mirror the server", async () => {
     managerUid: "m",
     payerUid: "p",
     status: "active",
-    managerCard: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", sigil: 2, avatar: 7 },
+    managerCard: { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], sigil: 2, avatar: 7 },
     payerWalletName: "ポチ財布",
     entryFee: 10,
     caps: { perTribute: 100, perDay: 300, total: 1_000 },
@@ -414,13 +414,36 @@ test("seals, collar numbers, templates and note suggestions mirror the server an
     for (const id of offered) assert.equal(rules.sealFor(id, { seals, ngWords }), id, `${id} is pressed as offered`);
   }
   const banned = /死|殺|自殺|消えろ|首吊|殴|刺す|晒|特定|ばら|上限を上げ|上げろ|逃げ|逃が|解約したら|やめたら|許さない|裏切/u;
-  for (const [purpose, lines] of Object.entries(core.REQUEST_NOTES)) {
-    assert.ok(purpose === "" || rules.PURPOSE_IDS.includes(purpose), purpose);
-    for (const line of lines) {
-      assert.equal(rules.forbiddenReason(line), "", line);
-      assert.doesNotMatch(line, banned, line);
-    }
+  // 請求の一言（名目ごとと、管理の型ごと）。どれも強さの札を持ち、決まり（functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md）を守る。
+  assert.deepEqual(Object.keys(core.STYLE_REQUEST_NOTES), [...rules.MANAGER_STYLES]);
+  const notes = [
+    ...Object.entries(core.REQUEST_NOTES).map(([purpose, lines]) => {
+      assert.ok(purpose === "" || rules.PURPOSE_IDS.includes(purpose), purpose);
+      return lines;
+    }),
+    ...Object.values(core.STYLE_REQUEST_NOTES),
+  ].flat();
+  for (const { text, tone } of notes) {
+    assert.ok(rules.TONES.includes(tone), `${text} ${tone}`);
+    assert.equal(rules.forbiddenReason(text), "", text);
+    assert.doesNotMatch(text, banned, text);
+    assert.doesNotMatch(text, /♥|今だけ|あなただけ|お願い|ください/u, text);
+    assert.doesNotMatch(text, /♡(?!$)/u, `${text}: ♡ only at the end`);
+    assert.ok(text.length <= 30, `${text}: one short sentence`);
   }
+  for (const lines of Object.values(core.STYLE_REQUEST_NOTES)) {
+    assert.ok(lines.some((line) => line.tone === "sweet"), "every type has a line for sweet contracts");
+    for (const { text } of lines) assert.equal(core.forbiddenReason(text), "", text);
+  }
+  // 型の一言は、契約の強さの上限までで、選んだ型の分だけ出る。
+  const sweet = core.requestNotesFor({ purpose: "penalty", tone: "sweet", styles: ["insight"] });
+  assert.deepEqual(sweet.purpose, ["罰金だよ。次は気をつけようね。"]);
+  assert.deepEqual(sweet.style, ["ちゃんと分かっていますよ。今日の分です。"]);
+  const harsh = core.requestNotesFor({ purpose: "penalty", tone: "harsh", styles: ["tease", "insight"] });
+  assert.ok(harsh.purpose.includes("罰金。言い訳は聞かない。"));
+  assert.equal(harsh.style[0], "ちゃんと分かっていますよ。今日の分です。", "types follow the list order");
+  assert.deepEqual(core.requestNotesFor({ purpose: "", tone: "harsh", styles: [] }).style, []);
+  assert.equal(core.requestNotesFor({ purpose: "", tone: "harsh", styles: ["aloof"], ngWords: ["財布"] }).style.includes("用があるのはお財布だけ。"), false);
   const plain = core.templatesFor("manager", "harsh", { disclosure: "nekama" });
   assert.equal(plain.some((group) => group.id === "control"), false, "sexual lines need the payer's consent");
   assert.equal(plain.flatMap((group) => group.lines).some((line) => line.includes("{no}") || /\d+号/.test(line)), false, "numbered lines need a collar number");
@@ -496,7 +519,7 @@ test("today's word mirrors the server check, sits only in the manager's own hub,
   assert.equal(core.wordRemainingLabel(wordNow - 3 * 3_600_000, wordNow), "あと21時間で消えます");
 
   const hub = sourceBlock(client, "function renderHub", "function renderWordForm");
-  assert.match(hub, /data-screen="card">カードを編集<\/button>\s*<\/div>\s*\$\{boardNotice \? renderBoardNotice\(profile\) : ""\}\s*\$\{renderWordForm\(profile\)\}/, "the form appears only once a manager card exists");
+  assert.match(hub, /data-screen="card">カードを編集<\/button>\s*<\/div>\s*\$\{styleReselectNotice\(profile\)\}\s*\$\{boardNotice \? renderBoardNotice\(profile\) : ""\}\s*\$\{renderWordForm\(profile\)\}/, "the form appears only once a manager card exists");
   const form = sourceBlock(client, "function renderWordForm", "const ACHIEVEMENT_SIDES");
   assert.match(form, /maxlength="\$\{TODAY_WORD\.length\}"/);
   assert.match(form, /性的な言葉は書けません/);

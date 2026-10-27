@@ -24,6 +24,7 @@ const {
   normalizeTodayWord,
   normalizeCheer,
   normalizeSeals,
+  normalizeStyles,
   sealFor,
   storedSeal,
   normalizeOwnWords,
@@ -312,7 +313,7 @@ function publicCard(profile, monthKey, now) {
     personaName: cleanLine(card.personaName, LIMITS.personaName),
     intro: cleanLine(card.intro, LIMITS.intro),
     disclosure: String(card.disclosure || "undisclosed"),
-    style: String(card.style || "cold"),
+    styles: normalizeStyles(card.styles),
     entryFee: integer(card.entryFee, 0, 1_000, 0),
     sigil: integer(card.sigil, 0, 5, 0),
     avatar: normalizeAvatar(card.avatar),
@@ -369,7 +370,7 @@ function cardSnapshot(card) {
   return {
     personaName: cleanLine(source.personaName, LIMITS.personaName) || "管理人",
     disclosure: String(source.disclosure || "undisclosed"),
-    style: String(source.style || "cold"),
+    styles: normalizeStyles(source.styles),
     sigil: integer(source.sigil, 0, 5, 0),
     avatar: normalizeAvatar(source.avatar),
   };
@@ -3087,7 +3088,7 @@ function createTributeService(deps) {
       contractId,
       consent,
       manager: consent
-        ? { personaName: card.personaName, disclosure: card.disclosure, style: card.style, sigil: card.sigil, avatar: card.avatar }
+        ? { personaName: card.personaName, disclosure: card.disclosure, styles: normalizeStyles(card.styles), sigil: card.sigil, avatar: card.avatar }
         : { personaName: "", disclosure: card.disclosure, sigil: 0, avatar: 0 },
       collarNo: integer(contract.collarNo, 0, Number.MAX_SAFE_INTEGER, 0),
       walletName: normalizeWalletName(contract.payerWalletName),

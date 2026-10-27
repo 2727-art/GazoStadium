@@ -385,6 +385,8 @@
 .tribute-board-tools { display: grid; gap: 4px; }
 .tribute-switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; cursor: pointer; }
 .tribute-switch input { width: 18px; height: 18px; accent-color: var(--tr-accent); }
+.tribute-board-style { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.tribute-board-style select { max-width: 12rem; padding: 4px 8px; border: 1px solid var(--tr-line); border-radius: 8px; background: var(--tr-panel-2); color: var(--tr-text); font: inherit; font-size: 0.85rem; }
 .tribute-section-title { margin-bottom: 10px !important; }
 
 .tribute-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; }
@@ -482,6 +484,9 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
 .tribute-radio-col input:checked + span { border-color: var(--tr-accent); background: rgba(255, 79, 163, 0.16); }
 .tribute-radio-row input:focus-visible + span,
 .tribute-radio-col input:focus-visible + span { outline: 2px solid var(--tr-accent); }
+/* 管理の型（1つか2つ）。名前の下に一言の説明。 */
+.tribute-style-picker .tribute-radio-col span small { display: block; margin-top: 2px; color: var(--tr-mist); font-size: 0.74rem; font-weight: 400; }
+.tribute-form-hint.is-alert { margin: 6px 0; padding: 8px 12px; border: 1px solid rgba(255, 209, 102, 0.6); border-radius: 10px; background: rgba(255, 209, 102, 0.1); color: #ffe3a3; font-size: 0.8rem; }
 .tribute-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .tribute-swatches label { position: relative; cursor: pointer; }
 .tribute-swatches input { position: absolute; opacity: 0; }
@@ -813,6 +818,9 @@ body.tribute-shot-mode .site-footer { display: none; }
 .tribute-note-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .tribute-note-chips button { padding: 4px 10px; border: 1px solid var(--tr-line); border-radius: 999px; background: var(--tr-panel-2); color: var(--tr-text); font: inherit; font-size: 0.76rem; cursor: pointer; }
 .tribute-note-chips button:hover { border-color: var(--tr-accent); }
+/* 管理人が選んだ型の一言（ranch-styles-v1）。名目の一言と見分けられるように紫に寄せる。 */
+.tribute-note-chips button.is-style { border-color: rgba(180, 140, 255, 0.55); background: rgba(180, 140, 255, 0.12); }
+.tribute-note-chips button.is-style:hover { border-color: #b48cff; }
 
 /* 貢ぎ報告の画像（財布だけ） */
 .tribute-share { display: grid; gap: 12px; }

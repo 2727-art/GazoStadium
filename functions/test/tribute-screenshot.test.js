@@ -26,7 +26,7 @@ function sourceBlock(source, startText, endText) {
   return source.slice(start, end);
 }
 
-const CARD = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", style: "harsh", entryFee: 0 };
+const CARD = { personaName: "ミオ様", intro: "雑魚財布は黙って差し出せ", disclosure: "nekama", styles: ["insight"], entryFee: 0 };
 const APPLICATION = { caps: { perTribute: 100, perDay: 300, total: 1_000 }, durationDays: 3, tone: "harsh", acceptNoDecline: true };
 
 test("the card declaration and the payer's consent are opt-in booleans on the server", () => {
