@@ -62,6 +62,22 @@ const REWARDS = Object.freeze([
   Object.freeze({ id: "tsugi", label: "次も持ってきな", tones: Object.freeze(["harsh"]) }),
   Object.freeze({ id: "mata", label: "また来てね♡", tones: Object.freeze(["sweet"]) }),
   Object.freeze({ id: "suki", label: "好き♡", tones: Object.freeze(["sweet"]) }),
+  // 管理の型ごとのご褒美（2026-10-27）。その型を選んだ管理人にだけ出す（style）。性的な言葉は使わない。
+  Object.freeze({ id: "tadashii", label: "正しい判断です", tones: Object.freeze(["sweet"]), style: "insight" }),
+  Object.freeze({ id: "mitooshi", label: "お見通しです", tones: Object.freeze(["normal"]), style: "insight" }),
+  Object.freeze({ id: "soutei", label: "想定どおりです", tones: Object.freeze(["harsh"]), style: "insight" }),
+  Object.freeze({ id: "yakusoku", label: "約束どおりだね", tones: Object.freeze(["sweet"]), style: "manage" }),
+  Object.freeze({ id: "kiroku", label: "記録しました", tones: Object.freeze(["normal"]), style: "manage" }),
+  Object.freeze({ id: "kijitsu", label: "次も期日を守ること", tones: Object.freeze(["harsh"]), style: "manage" }),
+  Object.freeze({ id: "eraierai", label: "えらいえらい♡", tones: Object.freeze(["sweet"]), style: "tease" }),
+  Object.freeze({ id: "choroi", label: "ちょろいね♡", tones: Object.freeze(["normal"]), style: "tease" }),
+  Object.freeze({ id: "matamake", label: "また負けたね♡", tones: Object.freeze(["harsh"]), style: "tease" }),
+  Object.freeze({ id: "yokudekita", label: "よくできたね♡", tones: Object.freeze(["sweet"]), style: "pamper" }),
+  Object.freeze({ id: "erasugi", label: "えらすぎ♡", tones: Object.freeze(["sweet"]), style: "pamper" }),
+  Object.freeze({ id: "oreiha", label: "お礼は？", tones: Object.freeze(["normal"]), style: "pamper" }),
+  Object.freeze({ id: "tamaniha", label: "たまにはいいね", tones: Object.freeze(["sweet"]), style: "aloof" }),
+  Object.freeze({ id: "fuun", label: "ふーん", tones: Object.freeze(["normal"]), style: "aloof" }),
+  Object.freeze({ id: "maamaa", label: "まあまあ", tones: Object.freeze(["harsh"]), style: "aloof" }),
 ]);
 // 財布の「言われたい言葉」をご褒美に使った時の印。記録には言葉そのもの（rewardText）を残す。
 const REWARD_WORD = "word";
@@ -678,9 +694,12 @@ function tonesUpTo(tone) {
   return TONES.slice(0, (index < 0 ? TONES.indexOf("normal") : index) + 1);
 }
 
-function rewardsFor(tone, ngWords = []) {
+// 型ごとのご褒美（style 付き）は、管理人がその型をカードで選んでいる時だけ選べる。
+function rewardsFor(tone, ngWords = [], styles = []) {
   const allowed = tonesUpTo(tone);
-  return REWARDS.filter((reward) => reward.tones.some((entry) => allowed.includes(entry)) && !containsNgWord(reward.label, ngWords));
+  const chosen = normalizeStyles(styles);
+  return REWARDS.filter((reward) => (!reward.style || chosen.includes(reward.style))
+    && reward.tones.some((entry) => allowed.includes(entry)) && !containsNgWord(reward.label, ngWords));
 }
 
 // 管理人の自分の言葉（定型文・ご褒美）を、この契約で出せるか。強さの札が契約の上限以下、言われたくない言葉を含まない、
@@ -694,7 +713,7 @@ function ownWordUsable(entry, { tone = "normal", ngWords = [], allowSexual = fal
 
 // ご褒美は一覧の一言か、言葉そのもの（REWARD_WORD）。言葉は、財布がいま登録している言われたい言葉か、
 // 管理人の自分のご褒美のうちこの契約で出せるもの。
-function normalizeReward(value, { tone = "normal", ngWords = [], wantWords = [], ownRewards = [], allowSexual = false, text = "" } = {}) {
+function normalizeReward(value, { tone = "normal", ngWords = [], wantWords = [], ownRewards = [], allowSexual = false, text = "", styles = [] } = {}) {
   const reward = String(value ?? "");
   if (!reward) return { reward: "" };
   if (reward === REWARD_WORD) {
@@ -707,7 +726,7 @@ function normalizeReward(value, { tone = "normal", ngWords = [], wantWords = [],
     if (containsNgWord(word, ngWords)) return { error: "このご褒美は、この契約では選べません。" };
     return { reward, rewardText: word };
   }
-  if (!rewardsFor(tone, ngWords).some((entry) => entry.id === reward)) {
+  if (!rewardsFor(tone, ngWords, styles).some((entry) => entry.id === reward)) {
     return { error: "このご褒美は、この契約では選べません。" };
   }
   return { reward };

@@ -391,7 +391,7 @@ test("named fees, receiving and rewards mirror the server and stay in the hands 
   const events = sourceBlock(client, "function renderEvent", "function renderThreadHead");
   assert.match(events, /receivable && view\.role === "manager" && view\.status === "active"\s*\? renderReceiveControls\(event, view\)/, "only the manager receives, only while active");
   assert.match(sourceBlock(client, "function renderReceiveControls", "function renderTally"), /rewardChips\(view, "receive", ` data-seq="\$\{seq\}"`\)/);
-  assert.match(sourceBlock(client, "function rewardChips", "function renderPendingRequests"), /rewardsFor\(view\.tone, view\.ngWords\)/);
+  assert.match(sourceBlock(client, "function rewardChips", "function renderPendingRequests"), /rewardsFor\(view\.tone, view\.ngWords, view\.role === "manager" \? state\.profile\?\.card\?\.styles : \[\]\)/);
   assert.match(events, /case "received": \{[\s\S]*?rewardText\(event\)/);
   const overlay = sourceBlock(client, "function renderReceiptOverlay", "function renderReceipts");
   assert.match(overlay, /献上完了/);

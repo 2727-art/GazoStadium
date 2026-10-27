@@ -263,7 +263,8 @@ test("rewards are short fixed praises chosen per tone and filtered by the payer'
   // 契約の強さは上限。上限までのどの強さのご褒美も選べる（2026-10-27、ユーザー決定）。
   assert.deepEqual(rules.rewardsFor("sweet").map((reward) => reward.id), ["gohoubi", "fufu", "iiko", "erai", "arigato", "mata", "suki"]);
   assert.deepEqual(rules.rewardsFor("normal").map((reward) => reward.id), ["gohoubi", "fufu", "iiko", "erai", "arigato", "yoku", "mata", "suki"]);
-  assert.deepEqual(rules.rewardsFor("harsh").map((reward) => reward.id), rules.REWARDS.map((reward) => reward.id));
+  // 型ごとのご褒美（style 付き）は、型を選んでいる時だけ（tribute-styles.test.js）。
+  assert.deepEqual(rules.rewardsFor("harsh").map((reward) => reward.id), rules.REWARDS.filter((reward) => !reward.style).map((reward) => reward.id));
   assert.deepEqual(rules.rewardsFor("unknown"), rules.rewardsFor("normal"));
   assert.ok(!rules.rewardsFor("harsh", ["ざこ"]).some((reward) => reward.id === "zako"));
   assert.deepEqual(rules.normalizeReward(""), { reward: "" });

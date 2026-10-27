@@ -86,6 +86,7 @@ import {
   wordOfferingProblem,
   normalizeStyles,
   requestNotesFor,
+  styleTemplatesFor,
   stylesLabel,
   normalizeXProfile,
   purposeLabel,
@@ -113,7 +114,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -2018,8 +2019,11 @@ function renderTemplates(view) {
     : "";
   const summary = view.role === "manager" ? `定型文（${TONE_CEILING_LABELS[view.tone] || "普通まで"}）` : `定型文（${TONE_LABELS[view.tone] || "普通"}）`;
   const own = ownWordsFor(view, "lines");
+  // 管理人が選んだ型の定型文（欄で選んでいる強さのもの）。一覧の定型文より先に出す。
+  const typed = view.role === "manager" ? styleTemplatesFor(state.profile?.card?.styles, tone, { ngWords: view.ngWords, collarNo: view.collarNo }) : [];
   return `<details class="tribute-templates"${state.thread.templatesOpen ? " open" : ""}><summary>${escapeHtml(summary)}</summary>
     ${own.length ? `<div class="tribute-template-group is-own"><span>自分の定型文</span><div>${own.map((line) => `<button type="button" data-t="template" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div></div>` : ""}${tabs}
+    ${typed.map((group) => `<div class="tribute-template-group is-style"><span>型：${escapeHtml(group.label)}</span><div>${group.lines.map((line) => `<button type="button" data-t="template" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div></div>`).join("")}
     ${groups.map((group) => `<div class="tribute-template-group"><span>${escapeHtml(group.label)}</span><div>${group.lines.map((line) => `<button type="button" data-t="template" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div></div>`).join("")}
   </details>`;
 }
@@ -2032,13 +2036,14 @@ function renderWantChips(view) {
 
 // 受け取り・出稼ぎの確認に添えるご褒美の札。一覧は契約の強さまで、続けて財布の言われたい言葉。
 function rewardChips(view, action, extra = "") {
-  const rewards = rewardsFor(view.tone, view.ngWords);
+  // 型ごとのご褒美は、管理人がカードで選んでいる型の分だけ（is-style）。
+  const rewards = rewardsFor(view.tone, view.ngWords, view.role === "manager" ? state.profile?.card?.styles : []);
   const labels = new Set(rewards.map((reward) => reward.label));
   const own = ownWordsFor(view, "rewards").filter((text) => !labels.has(text));
   const words = view.wantWords.filter((word) => !labels.has(word) && !own.includes(word));
   if (!rewards.length && !words.length && !own.length) return "";
   const wordChip = (text, className) => `<button class="${className}" type="button" data-t="${action}"${extra} data-reward="${REWARD_WORD}" data-text="${escapeHtml(text)}">${escapeHtml(text)}</button>`;
-  return `${rewards.map((reward) => `<button type="button" data-t="${action}"${extra} data-reward="${escapeHtml(reward.id)}">${escapeHtml(reward.label)}</button>`).join("")}${own.map((text) => wordChip(text, "is-own")).join("")}${words.map((word) => wordChip(word, "is-want")).join("")}`;
+  return `${rewards.map((reward) => `<button${reward.style ? ' class="is-style"' : ""} type="button" data-t="${action}"${extra} data-reward="${escapeHtml(reward.id)}">${escapeHtml(reward.label)}</button>`).join("")}${own.map((text) => wordChip(text, "is-own")).join("")}${words.map((word) => wordChip(word, "is-want")).join("")}`;
 }
 
 function renderPendingRequests(view) {

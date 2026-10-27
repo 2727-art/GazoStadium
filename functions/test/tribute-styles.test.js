@@ -71,8 +71,66 @@ test("the server keeps only the new list on cards, the board, contract snapshots
 });
 
 test("cache keys and the design note record the release", () => {
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-styles-v1"`), name);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-styles-v1"/);
+  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-styles-v1(?:-[a-z0-9-]+)?"`), name);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-styles-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /管理の型（`styles`/);
   assert.match(design, /見透かす・管理する・煽る・甘やかす・突き放す/);
+});
+
+// 型の定型文とご褒美（ranch-style-words-v1、2026-10-27 ユーザー決定: 会話の定型文とご褒美も型に合わせる）。
+test("type rewards and type stock lines: per type and tone, only for the manager's chosen types, same rules as request notes", async () => {
+  const core = await loadCore();
+  assert.deepEqual(core.REWARDS.map((reward) => ({ ...reward, tones: [...reward.tones] })), rules.REWARDS.map((reward) => ({ ...reward, tones: [...reward.tones] })));
+  const typed = core.REWARDS.filter((reward) => reward.style);
+  assert.deepEqual([...new Set(typed.map((reward) => reward.style))], [...rules.MANAGER_STYLES]);
+  for (const id of rules.MANAGER_STYLES) {
+    assert.ok(typed.some((reward) => reward.style === id && reward.tones.includes("sweet")), `${id} has a sweet reward`);
+  }
+  const banned = /死|殺|自殺|消えろ|首吊|殴|刺す|晒|特定|ばら|上限を上げ|上げろ|逃げ|逃が|解約したら|やめたら|許さない|裏切|♥|今だけ|あなただけ|お願い|ください/u;
+  for (const reward of typed) {
+    assert.ok(reward.label.length <= rules.LIMITS.ownRewardLength, reward.label);
+    assert.doesNotMatch(reward.label, banned, reward.label);
+    assert.equal(rules.forbiddenReason(reward.label), "", reward.label);
+    assert.equal(rules.boardSexualWord?.(reward.label) || false, false, reward.label);
+  }
+  for (const [tone, styles] of [["harsh", ["tease"]], ["sweet", ["tease", "insight"]], ["normal", []], ["harsh", ["bogus"]]]) {
+    assert.deepEqual(core.rewardsFor(tone, [], styles).map((reward) => reward.id), rules.rewardsFor(tone, [], styles).map((reward) => reward.id), `${tone} ${styles}`);
+  }
+  assert.deepEqual(core.rewardsFor("harsh", [], ["tease"]).filter((reward) => reward.style).map((reward) => reward.id), ["eraierai", "choroi", "matamake"]);
+  assert.equal(core.rewardsFor("harsh").some((reward) => reward.style), false, "no type, no type rewards");
+  assert.equal(rules.normalizeReward("choroi", { tone: "harsh", styles: ["tease"] }).reward, "choroi");
+  assert.match(rules.normalizeReward("choroi", { tone: "harsh", styles: ["insight"] }).error, /選べません/, "another type's reward");
+  assert.match(rules.normalizeReward("matamake", { tone: "normal", styles: ["tease"] }).error, /選べません/, "above the ceiling");
+  assert.equal(core.rewardLabel("mitooshi"), "お見通しです");
+
+  assert.deepEqual(Object.keys(core.STYLE_TEMPLATES), [...rules.MANAGER_STYLES]);
+  for (const [id, byTone] of Object.entries(core.STYLE_TEMPLATES)) {
+    assert.deepEqual(Object.keys(byTone), ["sweet", "normal", "harsh"], id);
+    for (const line of Object.values(byTone).flat()) {
+      assert.doesNotMatch(line, banned, line);
+      assert.doesNotMatch(line, /♡(?!$)/u, `${line}: ♡ only at the end`);
+      assert.equal(rules.forbiddenReason(line.replaceAll("{no}", "3")), "", line);
+      assert.ok(line.length <= 30, line);
+    }
+  }
+  const groups = core.styleTemplatesFor(["tease", "insight"], "harsh", { collarNo: 3 });
+  assert.deepEqual(groups.map((group) => group.label), ["見透かす", "煽る"]);
+  assert.ok(groups[0].lines.includes("3号、あなたの考えることは全部お見通しです。"));
+  assert.equal(core.styleTemplatesFor(["tease"], "harsh").flatMap((group) => group.lines).some((line) => line.includes("{no}") || /\d+号/.test(line)), false, "numbered lines need a collar number");
+  assert.equal(core.styleTemplatesFor(["aloof"], "harsh", { ngWords: ["財布"] })[0].lines.includes("用があるのは、お財布だけ。"), false);
+  assert.deepEqual(core.styleTemplatesFor([], "harsh"), []);
+});
+
+test("the thread shows the type stock lines and type rewards only to the manager", () => {
+  const templates = sourceBlock(client, "function renderTemplates", "function rewardChips");
+  assert.match(templates, /const typed = view\.role === "manager" \? styleTemplatesFor\(state\.profile\?\.card\?\.styles, tone, \{ ngWords: view\.ngWords, collarNo: view\.collarNo \}\) : \[\];/);
+  assert.match(templates, /tribute-template-group is-style"><span>型：/);
+  const chips = sourceBlock(client, "function rewardChips", "\n}\n");
+  assert.match(chips, /rewardsFor\(view\.tone, view\.ngWords, view\.role === "manager" \? state\.profile\?\.card\?\.styles : \[\]\)/);
+  assert.match(chips, /reward\.style \? ' class="is-style"' : ""/);
+  assert.match(service, /styles: ctx\.profiles\.manager\.value\.card\?\.styles,/);
+  for (const selector of [".tribute-template-group.is-style button {", ".tribute-reward-chips button.is-style {"]) assert.ok(styles.includes(selector), selector);
+  assert.match(html, /tribute\.js\?v=[^"]*-ranch-style-words-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-style-words-v1"/);
+  assert.match(design, /型の定型文/);
 });

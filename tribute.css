@@ -821,6 +821,10 @@ body.tribute-shot-mode .site-footer { display: none; }
 /* 管理人が選んだ型の一言（ranch-styles-v1）。名目の一言と見分けられるように紫に寄せる。 */
 .tribute-note-chips button.is-style { border-color: rgba(180, 140, 255, 0.55); background: rgba(180, 140, 255, 0.12); }
 .tribute-note-chips button.is-style:hover { border-color: #b48cff; }
+/* 型の定型文とご褒美（ranch-style-words-v1）。請求の一言の型の札と同じ紫。 */
+.tribute-template-group.is-style > span { color: #cdb6ff; }
+.tribute-template-group.is-style button { border-color: rgba(180, 140, 255, 0.55); background: rgba(180, 140, 255, 0.12); }
+.tribute-reward-chips button.is-style { border-color: rgba(180, 140, 255, 0.55); background: rgba(180, 140, 255, 0.12); }
 
 /* 貢ぎ報告の画像（財布だけ） */
 .tribute-share { display: grid; gap: 12px; }

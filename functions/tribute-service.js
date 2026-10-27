@@ -830,6 +830,8 @@ function createTributeService(deps) {
       ownRewards: ctx.profiles.manager.value.ownWords?.rewards,
       allowSexual: ctx.contract.allowSexualPurposes === true,
       text: data?.rewardText,
+      // 型ごとのご褒美は、いまカードで選んでいる型の分だけ。
+      styles: ctx.profiles.manager.value.card?.styles,
     });
     if (normalized.error) fail("invalid-argument", normalized.error);
     const reward = normalized.reward;

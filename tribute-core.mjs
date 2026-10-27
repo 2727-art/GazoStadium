@@ -190,6 +190,22 @@ export const REWARDS = Object.freeze([
   Object.freeze({ id: "tsugi", label: "次も持ってきな", tones: Object.freeze(["harsh"]) }),
   Object.freeze({ id: "mata", label: "また来てね♡", tones: Object.freeze(["sweet"]) }),
   Object.freeze({ id: "suki", label: "好き♡", tones: Object.freeze(["sweet"]) }),
+  // 管理の型ごとのご褒美（2026-10-27）。その型を選んだ管理人にだけ出す（style）。性的な言葉は使わない。
+  Object.freeze({ id: "tadashii", label: "正しい判断です", tones: Object.freeze(["sweet"]), style: "insight" }),
+  Object.freeze({ id: "mitooshi", label: "お見通しです", tones: Object.freeze(["normal"]), style: "insight" }),
+  Object.freeze({ id: "soutei", label: "想定どおりです", tones: Object.freeze(["harsh"]), style: "insight" }),
+  Object.freeze({ id: "yakusoku", label: "約束どおりだね", tones: Object.freeze(["sweet"]), style: "manage" }),
+  Object.freeze({ id: "kiroku", label: "記録しました", tones: Object.freeze(["normal"]), style: "manage" }),
+  Object.freeze({ id: "kijitsu", label: "次も期日を守ること", tones: Object.freeze(["harsh"]), style: "manage" }),
+  Object.freeze({ id: "eraierai", label: "えらいえらい♡", tones: Object.freeze(["sweet"]), style: "tease" }),
+  Object.freeze({ id: "choroi", label: "ちょろいね♡", tones: Object.freeze(["normal"]), style: "tease" }),
+  Object.freeze({ id: "matamake", label: "また負けたね♡", tones: Object.freeze(["harsh"]), style: "tease" }),
+  Object.freeze({ id: "yokudekita", label: "よくできたね♡", tones: Object.freeze(["sweet"]), style: "pamper" }),
+  Object.freeze({ id: "erasugi", label: "えらすぎ♡", tones: Object.freeze(["sweet"]), style: "pamper" }),
+  Object.freeze({ id: "oreiha", label: "お礼は？", tones: Object.freeze(["normal"]), style: "pamper" }),
+  Object.freeze({ id: "tamaniha", label: "たまにはいいね", tones: Object.freeze(["sweet"]), style: "aloof" }),
+  Object.freeze({ id: "fuun", label: "ふーん", tones: Object.freeze(["normal"]), style: "aloof" }),
+  Object.freeze({ id: "maamaa", label: "まあまあ", tones: Object.freeze(["harsh"]), style: "aloof" }),
 ]);
 // 財布の「言われたい言葉」をご褒美に使った時の印（サーバーの REWARD_WORD と同じ）。言葉そのものは rewardText に残る。
 export const REWARD_WORD = "word";
@@ -298,9 +314,12 @@ export function purposesFor({ allowSexual = false } = {}) {
   return PURPOSES.filter((purpose) => !purpose.sexual || allowSexual === true);
 }
 
-export function rewardsFor(tone, ngWords = []) {
+// 型ごとのご褒美（style 付き）は、管理人がその型を選んでいる時だけ出す（サーバーの rewardsFor と同じ）。
+export function rewardsFor(tone, ngWords = [], styles = []) {
   const allowed = tonesUpTo(tone);
-  return REWARDS.filter((reward) => reward.tones.some((entry) => allowed.includes(entry)) && !containsNgWord(reward.label, ngWords));
+  const chosen = normalizeStyles(styles);
+  return REWARDS.filter((reward) => (!reward.style || chosen.includes(reward.style))
+    && reward.tones.some((entry) => allowed.includes(entry)) && !containsNgWord(reward.label, ngWords));
 }
 
 export function rewardLabel(value) {
@@ -977,6 +996,51 @@ export const TEMPLATES = Object.freeze({
     }),
   }),
 });
+
+// 管理の型ごとの定型文（2026-10-27）。管理人が選んだ型の分だけ、定型文の欄の上に「型の定型文」として出す。
+// 強さごとに用意し、欄で選んでいる強さ（契約の上限まで）のものを出す。請求の一言と同じ決まりで、性的な言葉は使わない。
+export const STYLE_TEMPLATES = Object.freeze({
+  insight: Object.freeze({
+    sweet: Object.freeze(["ちゃんと分かっていますよ。今日も来ると思っていました。", "無理はしなくていいです。あなたのことは見ていますから。", "言わなくても伝わっています。よくできました。"]),
+    normal: Object.freeze(["顔に出ていますよ。払いたいんでしょう。", "理由を探さなくていいです。もう決めていますね。", "迷っているふりは、もう要りません。"]),
+    harsh: Object.freeze(["言い訳を考える時間、全部見えています。", "自分で分かっているのに、まだ待たせるんですか。", "{no}号、あなたの考えることは全部お見通しです。"]),
+  }),
+  manage: Object.freeze({
+    sweet: Object.freeze(["今日の報告、ちゃんとできたね。", "約束を守れてえらいね。この調子で続けよう。", "決めたことを続けられるの、いいことだよ。"]),
+    normal: Object.freeze(["今日の報告をしなさい。", "約束の時間です。忘れていないね。", "決めたルールは守ること。"]),
+    harsh: Object.freeze(["報告が遅い。管理されている自覚を持て。", "約束を破るなら、それも記録に残す。", "{no}号、今日の分の報告がまだ。"]),
+  }),
+  tease: Object.freeze({
+    sweet: Object.freeze(["また来たの？かわいいね♡", "えらいえらい、ちゃんと来られたね♡", "そんなに来たかったんだ♡"]),
+    normal: Object.freeze(["分かりやすすぎて笑っちゃう♡", "我慢してたの？全然できてないけど♡", "顔に出てるよ、払いたいって♡"]),
+    harsh: Object.freeze(["ほんと財布って単純♡", "渋ってるふり、下手すぎ♡", "{no}号、また負けに来たんだ♡"]),
+  }),
+  pamper: Object.freeze({
+    sweet: Object.freeze(["今日も来てくれてうれしいな。", "差し出せるの、ちゃんとえらいよ。", "ありがとうは？ちゃんと言えたら褒めてあげる。"]),
+    normal: Object.freeze(["貢ぐのは悪いことじゃないよ。", "よくがんばったね。お礼を言ってごらん。", "ここでは素直でいていいよ。"]),
+    harsh: Object.freeze(["褒めてほしいなら、まずお礼から。", "甘やかすのは、ちゃんと差し出した財布だけ。", "{no}号、お礼がまだだよ。"]),
+  }),
+  aloof: Object.freeze({
+    sweet: Object.freeze(["たまには相手してあげる。", "今日は機嫌がいいから、見ててあげる。", "気が向いたら、また返事するね。"]),
+    normal: Object.freeze(["ふーん。それで？", "返事は気が向いたらね。", "見てるかどうかは、教えない。"]),
+    harsh: Object.freeze(["用があるのは、お財布だけ。", "構ってほしいなら、先に差し出して。", "{no}号、今日は気分じゃない。"]),
+  }),
+});
+
+// 型の定型文の欄（型ごとに1つ）。欄で選んでいる強さのものを出し、{no} は首輪番号に置き換える（番号がなければその文を出さない）。
+export function styleTemplatesFor(styles, tone, { ngWords = [], collarNo = 0 } = {}) {
+  const number = Number.isSafeInteger(Number(collarNo)) && Number(collarNo) > 0 ? String(Number(collarNo)) : "";
+  return normalizeStyles(styles)
+    .map((id) => ({
+      id,
+      label: STYLE_LABELS[id],
+      lines: (STYLE_TEMPLATES[id][tone] || STYLE_TEMPLATES[id].normal)
+        .filter((line) => !line.includes("{no}") || number)
+        .map((line) => line.replaceAll("{no}", number))
+        .filter((line) => !messageProblem(line, { role: "manager", ngWords })),
+    }))
+    .filter((group) => group.lines.length);
+}
 
 // 性的な定型文は、預ける側が性的な名目を許した契約でだけ出す。{no} は首輪番号に置き換え、番号がなければその文を出さない。
 export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords = [], allowSexual = false, collarNo = 0 } = {}) {
