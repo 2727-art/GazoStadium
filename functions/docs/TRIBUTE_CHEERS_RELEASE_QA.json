@@ -1,0 +1,431 @@
+{
+  "checkedAt": "2026-10-27T05:48:43.899Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "a317f96",
+  "releaseHead": "ff18cfb",
+  "baseCommit": "b08eaf9",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch release/ranch-cheers, no upstream)",
+  "decisions": {
+    "grossRanking": "monthly (not lifetime), only managers tributed by 3+ wallets this month, top 10 with X profile and ranking word",
+    "badges": "heart badge for gross ranks 1-5 on board cards and the manager detail, richer toward first place",
+    "cheers": "cheer column on the manager detail, written only by wallets that tributed this month; managers hide, mark 見たよ and see unseen cheers in やること",
+    "decidedBy": "user, 2026-10-27 JST"
+  },
+  "mechanism": {
+    "grossRanking": "rankings {kind: gross}: tributeManagerMonths.receivedGross desc (scan 60), payers >= 3, not hidden, top 10; ranks not compacted by the viewer's blocks",
+    "badgeCache": "tributeRankCache/gross-{monthKey} keeps the top 5 for 10 minutes; recounted when the gross tab opens; no badges if counting fails",
+    "rankingWord": "card.rankingWord, 40 chars, public text filter + sexual words; returned to others only in the gross top 10",
+    "cheers": "tributePairs cheer* fields, 40 chars, 3 writes a day, ordered by this month's tribute without amounts, cleared when the month changes; hidden cheers seen only by the manager and the writer",
+    "todo": "tributeProfiles.cheerInbox {monthKey, unseen}",
+    "actions": [
+      "set_cheer",
+      "cheer_seen",
+      "cheer_hide",
+      "cheer_show"
+    ]
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreIndexes": [
+      "tributeManagerMonths (monthKey ASC, receivedGross DESC)",
+      "tributePairs (managerUid ASC, cheerMonthKey ASC, monthTotal DESC)",
+      "tributePairs (managerUid ASC, cheerId ASC)"
+    ],
+    "firestoreRules": false,
+    "hosting": true,
+    "hostingFiles": 169,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2238,
+    "passed": 2206,
+    "failed": 0,
+    "skipped": 32
+  },
+  "preRelease": {
+    "deliveryCheckedAt": "2026-10-27T05:23:05.249Z",
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "indexesAddedOnly": 3,
+    "indexesOnlyInProduction": 0,
+    "functionsUnchangedSinceLastRelease": true
+  },
+  "push": "b08eaf9..ff18cfb",
+  "indexes": {
+    "allThreeReady": true,
+    "checkedAt": "2026-10-27T05:48Z"
+  },
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "runtimes": [
+      "nodejs24"
+    ],
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "3ed03688303121b25bae7bd144c5a2bfafeb3753",
+        "sourceHash": "48e8648eacf5f52c4c5029ab9d35db9b09ef1ca5"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "conclusion": "success",
+    "completedAt": "2026-10-27T05:39:40Z"
+  },
+  "delivery": {
+    "checkedAt": "2026-10-27T05:48:43.899Z",
+    "readOnly": true,
+    "marker": "ranch-cheers-v1",
+    "commit": "ff18cfb995041b6a1ffd572b94ae3d7715cb905a",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-cheers-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-cheers.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-cheers-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-cheers.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-cheers-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-cheers.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-cheers-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-cheers.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "tribute.css": true,
+      "tribute-core.mjs": true
+    },
+    "servedClientHas": {
+      "rankHearts": true,
+      "cheerColumn": true,
+      "grossRankingTab": true,
+      "rankingWordField": true,
+      "cheerTodo": true
+    },
+    "consoleErrors": 0,
+    "storedAuthRecords": 0
+  },
+  "open": [
+    "no production manager has 3+ wallets checked here; whether anyone is on the gross ranking this month was not read (production data)",
+    "writing a cheer, 見たよ, hiding and the badges were not exercised in production (tests and preview)",
+    "the gross ranking resets on 2026-11-01 JST"
+  ]
+}
