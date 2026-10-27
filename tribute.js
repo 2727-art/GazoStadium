@@ -19,6 +19,7 @@ import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-c
 import {
   AVATAR_GROUPS,
   AVATARS,
+  CHEER,
   DEFAULT_SEALS,
   DEFINITION,
   DISCLOSURE_LABELS,
@@ -26,6 +27,7 @@ import {
   DURATION_DAYS_OPTIONS,
   END_REASON_LABELS,
   ENTRY_FEE_OPTIONS,
+  GROSS_RANKING,
   KIND_LABELS,
   LIMITS,
   PER_DAY_OPTIONS,
@@ -43,6 +45,7 @@ import {
   TONE_LABELS,
   INVITE_QUERY_KEY,
   RANCH_OPEN_QUERY,
+  RANKING_WORD,
   TODAY_WORD,
   TOTAL_OPTIONS,
   TRIAL_DURATION_DAYS,
@@ -51,6 +54,7 @@ import {
   VAULT_TIERS,
   WORK_ORDER_TARGETS,
   capViolation,
+  cheerProblem,
   X_EXTERNAL_CONFIRM_MESSAGE,
   X_HANDLE_PATTERN,
   avatarId,
@@ -71,6 +75,7 @@ import {
   purposeLabel,
   purposesFor,
   ranchOpenUrl,
+  rankingWordProblem,
   remainingLabel,
   rewardLabel,
   rewardsFor,
@@ -88,7 +93,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -173,7 +178,8 @@ function createState() {
     thread: { contractId: "", raw: null, view: null, events: [], status: "idle" },
     receipts: { status: "idle", items: [], more: false, cursor: null, loadingMore: false },
     ledger: { status: "idle", asPayer: [], asManager: [] },
-    ranking: { status: "idle", managers: [], monthKey: "" },
+    // kind: 番付加算（score）か貢がれ総額（gross）か。画面を移っても選んだ方を覚えておく。
+    ranking: { status: "idle", managers: [], monthKey: "", kind: "score" },
     vault: { status: "idle", data: null, pendingMove: null, moveError: "" },
     // 管理人カードの編集で使う、持っている飾り・解除済みの実績・金庫のいちばん高い段階（編集を開いた時に読む）。
     decorations: { status: "idle", owned: [], achievements: [], vaultBestTier: 0 },
@@ -441,10 +447,14 @@ function renderHub() {
 function renderTodo(open, profile) {
   const todos = contractTodos(open);
   const notice = renderBoardNotice(profile);
+  // 応援欄に「見たよ」を押していない応援があれば、自分の管理人の詳細へ案内する。
+  const cheers = Number(profile?.cheersUnseen || 0) > 0 && profile?.publicManagerId
+    ? `<button type="button" class="tribute-todo-chip is-cheer" data-t="open-manager" data-id="${escapeHtml(profile.publicManagerId)}">応援 <b>${Number(profile.cheersUnseen)}</b></button>`
+    : "";
   return `<section class="tribute-todo" aria-labelledby="tributeTodoTitle">
     <h2 class="tribute-eyebrow" id="tributeTodoTitle">やること</h2>
-    ${todos.length
-      ? `<div class="tribute-todo-list">${todos.map((todo) => `<button type="button" class="tribute-todo-chip is-${todo.kind}" data-t="open-thread" data-contract="${escapeHtml(todo.contractId)}">${escapeHtml(todo.label)} <b>${todo.total}</b></button>`).join("")}</div>`
+    ${todos.length || cheers
+      ? `<div class="tribute-todo-list">${todos.map((todo) => `<button type="button" class="tribute-todo-chip is-${todo.kind}" data-t="open-thread" data-contract="${escapeHtml(todo.contractId)}">${escapeHtml(todo.label)} <b>${todo.total}</b></button>`).join("")}${cheers}</div>`
       : `<p class="tribute-todo-clear">いま、やることはありません。</p>`}
     ${notice}
   </section>`;
@@ -722,13 +732,32 @@ function cardAchievementsMarkup(ids, extra = "") {
 }
 
 // preview: カード編集の見本（押しても開かない）。
+// 貢がれ総額の今月の順位（1〜5位）の札。上の順位ほどハートが豪華になる（5位は輪郭だけ、1位は王冠と金の縁）。
+const RANK_HEART_PATH = "M16 28.5 4.6 17.4C1.4 14.2 1.4 9.1 4.6 6c3.1-3 8-2.9 11 .3l.4.4.4-.4c3-3.2 7.9-3.3 11-.3 3.2 3.1 3.2 8.2 0 11.4L16 28.5Z";
+
+function rankHeartSvg(rank) {
+  const sparkle = (x, y, size) => `<path class="spark" d="M${x} ${y - size}L${x + size * 0.28} ${y - size * 0.28}L${x + size} ${y}L${x + size * 0.28} ${y + size * 0.28}L${x} ${y + size}L${x - size * 0.28} ${y + size * 0.28}L${x - size} ${y}L${x - size * 0.28} ${y - size * 0.28}Z"/>`;
+  const gloss = '<ellipse class="gloss" cx="10.5" cy="10.5" rx="3.6" ry="2.4" transform="rotate(-35 10.5 10.5)"/>';
+  if (rank === 5) return `<svg viewBox="0 0 32 32" aria-hidden="true"><path class="rim" d="${RANK_HEART_PATH}"/></svg>`;
+  if (rank === 4) return `<svg viewBox="0 0 32 32" aria-hidden="true"><path class="fill" d="${RANK_HEART_PATH}"/></svg>`;
+  if (rank === 3) return `<svg viewBox="0 0 32 32" aria-hidden="true"><path class="fill" d="${RANK_HEART_PATH}"/><path class="inner" d="${RANK_HEART_PATH}" transform="translate(16 16) scale(0.62) translate(-16 -15)"/>${gloss}</svg>`;
+  if (rank === 2) return `<svg viewBox="0 0 32 32" aria-hidden="true"><path class="fill" d="${RANK_HEART_PATH}"/><path class="inner" d="${RANK_HEART_PATH}" transform="translate(16 16) scale(0.62) translate(-16 -15)"/>${gloss}${sparkle(27, 5, 3.4)}${sparkle(4, 26, 2.4)}</svg>`;
+  return `<svg viewBox="0 -7 32 39" aria-hidden="true"><path class="crown" d="M8.6 4.6 7.4 -3 12 0.8 16 -5.2 20 0.8 24.6 -3 23.4 4.6Z"/><circle class="jewel" cx="16" cy="2" r="1.3"/><path class="fill" d="${RANK_HEART_PATH}"/><path class="inner" d="${RANK_HEART_PATH}" transform="translate(16 16) scale(0.62) translate(-16 -15)"/>${gloss}${sparkle(28, 9, 3.8)}${sparkle(3.5, 25, 2.8)}${sparkle(28.5, 25.5, 2)}</svg>`;
+}
+
+function rankHeart(rank, extra = "") {
+  const value = Number(rank) || 0;
+  if (value < 1 || value > GROSS_RANKING.badgeTop) return "";
+  return `<span class="tribute-rank-heart is-rank-${value}${extra}" title="貢がれ総額 今月${value}位">${rankHeartSvg(value)}<b>${value}位</b></span>`;
+}
+
 function renderManagerCard(card, { compact = false, preview = false } = {}) {
   const face = preview
     ? `<div class="tribute-card-face"${frameAttr(card.frame, card.frameColor)}>`
     : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame, card.frameColor)}>`;
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
     ${face}
-      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${vaultTag(card.vault)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${rankHeart(card.grossRank)}${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${vaultTag(card.vault)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
       ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
@@ -772,7 +801,7 @@ function renderManagerDetail() {
   if (entry.status === "loading" || !entry.data) {
     return frame(`<p class="tribute-empty">${entry.status === "error" ? "この管理人を開けませんでした。" : "管理人カードを開いています…"}</p>`, { title: "管理人" });
   }
-  const { card, month, openContractId, myTotal, ranking } = entry.data;
+  const { card, month, openContractId, myTotal, ranking, cheers, myCheer } = entry.data;
   const welcome = entry.invited && !card.mine
     ? `<div class="tribute-invite-welcome" role="note"><b>${escapeHtml(card.personaName)}の招待で来ました</b><span>初めてなら、見本の契約で流れを見てから「お試しの設定」で申し込めます。限度額と解約は、いつでも自分で設定できます（管理人には見えません）。</span><button class="button button-ghost button-small" type="button" data-t="open-demo">見学する</button></div>`
     : "";
@@ -786,7 +815,7 @@ function renderManagerDetail() {
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
     <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame, card.frameColor)}>
-      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${vaultTag(card.vault)}${declarationTags(card)}</div></div></div>
+      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${rankHeart(card.grossRank, " is-large")}${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${vaultTag(card.vault)}${declarationTags(card)}</div></div></div>
       ${cardAchievementsMarkup(card.achievements, " is-large")}
       ${wordBubble(card.word, " is-large")}
       <p class="tribute-profile-intro">${escapeHtml(card.intro || "（紹介文なし）")}</p>
@@ -803,6 +832,7 @@ function renderManagerDetail() {
         ${card.mine || previewScreen ? "" : renderBlockButton({ mode: "tribute", publicManagerId: card.publicManagerId }, "この管理人をブロック")}
       </div>
     </section>
+    ${renderCheers(card, cheers, myCheer)}
     <section class="tribute-panel">
       <h2>${escapeHtml(card.personaName)}の番付 <small>番付に載ることを選んだ財布だけ</small></h2>
       <div class="tribute-two-col">
@@ -811,6 +841,40 @@ function renderManagerDetail() {
       </div>
     </section>
   </div>`, { title: card.personaName });
+}
+
+// 応援欄。今月この管理人に貢いだ財布だけが書け、今月の献上額の多い順に並ぶ（額は出さない）。
+// 管理人は「見たよ」の印を返し、隠せる。隠した応援は、管理人と書いた財布にだけ見える。
+function renderCheers(card, cheers, myCheer) {
+  const list = Array.isArray(cheers) ? cheers : [];
+  const manager = card.mine === true;
+  const rows = list.length
+    ? `<ol class="tribute-cheer-list">${list.map((cheer) => `<li class="${cheer.mine ? "is-mine" : ""}${cheer.hidden ? " is-hidden" : ""}">
+        <span class="tribute-cheer-name">${escapeHtml(cheer.walletName)}</span>
+        <p>${escapeHtml(cheer.text)}</p>
+        <small>${escapeHtml(formatDateTime(cheer.at))}${cheer.seen ? ' <b class="tribute-cheer-seen">見たよ</b>' : ""}${cheer.hidden ? (manager ? " ・ 隠しています" : " ・ 管理人が隠しています（あなたにだけ見えます）") : ""}</small>
+        ${manager ? `<span class="tribute-cheer-actions">${cheer.seen || cheer.hidden ? "" : `<button class="button button-primary button-small" type="button" data-t="cheer-seen" data-cheer="${escapeHtml(cheer.cheerId)}">見たよ</button>`}<button class="tribute-link" type="button" data-t="${cheer.hidden ? "cheer-show" : "cheer-hide"}" data-cheer="${escapeHtml(cheer.cheerId)}">${cheer.hidden ? "戻す" : "隠す"}</button></span>` : ""}
+      </li>`).join("")}</ol>`
+    : `<p class="tribute-empty">今月の応援はまだありません。</p>`;
+  const note = manager
+    ? `<p class="tribute-note">今月あなたに貢いだ財布が書けます。「見たよ」を押すと、応援に印が付きます（誰にでも見えます）。隠した応援は、あなたと書いた財布にだけ見えます。</p>`
+    : "";
+  return `<section class="tribute-panel tribute-cheers" aria-labelledby="tributeCheersTitle">
+    <h2 id="tributeCheersTitle">応援欄 <small>今月貢いだ財布だけ・今月の献上額の順</small></h2>
+    ${note}
+    ${manager ? "" : renderCheerForm(card, myCheer)}
+    ${rows}
+  </section>`;
+}
+
+function renderCheerForm(card, myCheer) {
+  if (!myCheer?.canWrite) return `<p class="tribute-note">今月${escapeHtml(card.personaName)}に貢ぐと、応援欄に書けます。今月の献上額の多い順に並びます。</p>`;
+  const left = Number(myCheer.leftToday || 0);
+  return `<form class="tribute-word-form tribute-cheer-form" data-form="cheer">
+    <div class="tribute-word-input"><input name="cheer" maxlength="${CHEER.length}" autocomplete="off" value="${escapeHtml(myCheer.text || "")}" placeholder="例：今月も一番に貢ぎます" aria-label="応援（${CHEER.length}文字まで）" ${left ? "" : "disabled"} /><button class="button button-ghost button-small" type="submit" ${left && !state.busy ? "" : "disabled"}>${myCheer.text ? "書き直す" : "書く"}</button></div>
+    <small>今月の献上額の多い順に並びます。管理人が「見たよ」を返すと印が付きます。今日あと${left}回（日本時間の0時に戻ります）。連絡先・外部決済・性的な言葉は書けません。${myCheer.text ? ' <button class="tribute-link" type="button" data-t="clear-cheer">消す</button>' : ""}</small>
+    <p class="tribute-form-error" data-form-error role="alert"></p>
+  </form>`;
 }
 
 function renderApply() {
@@ -890,6 +954,8 @@ function renderCardEditor() {
     <label class="tribute-field"><span>紹介（${LIMITS.intro}文字まで）</span><input name="intro" maxlength="${LIMITS.intro}" value="${escapeHtml(card.intro || "")}" /></label>
     <label class="tribute-field"><span>Xのプロフィール（任意）</span><input name="xProfile" maxlength="80" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://x.com/ユーザー名 または @ユーザー名" value="${cardXHandle(card) ? escapeHtml(`https://x.com/${cardXHandle(card)}`) : ""}" />
       <small>管理人カードと掲示板に「自己申告・本人未確認」として表示され、開く前に外部サイトである確認が出ます。空にすると外します。紹介文・ペルソナ名には、SNSのIDやリンクを書けません。</small></label>
+    <label class="tribute-field"><span>番付のひとこと（任意・${RANKING_WORD.length}文字まで）</span><input name="rankingWord" maxlength="${RANKING_WORD.length}" autocomplete="off" placeholder="例：今月も財布を募集中。覚悟して貢ぎな。" value="${escapeHtml(card.rankingWord || "")}" />
+      <small>貢がれ総額の番付で${GROSS_RANKING.limit}位以内に入ると、X のプロフィールと一緒に番付に載ります。連絡先・外部決済・性的な言葉は書けません。</small></label>
     <fieldset><legend>中の人の札</legend><div class="tribute-radio-col">${Object.entries(DISCLOSURE_LABELS).map(([key, label]) => `<label><input type="radio" name="disclosure" value="${key}" ${card.disclosure === key ? "checked" : ""} required /><span>${escapeHtml(label)}</span></label>`).join("")}</div>
       <small>ネカマ貢がせは、男性であることを隠さず行うジャンルです。受け手の性別を女性に限る仕組みはありません。</small></fieldset>
     <fieldset><legend>管理の型</legend><div class="tribute-radio-row">${Object.entries(STYLE_LABELS).map(([key, label]) => `<label><input type="radio" name="style" value="${key}" ${(card.style || "harsh") === key ? "checked" : ""} /><span>${escapeHtml(label)}</span></label>`).join("")}</div></fieldset>
@@ -2420,7 +2486,10 @@ function renderLedger() {
 
 function renderRanking() {
   const ranking = state.ranking;
+  const tabs = `<div class="tribute-role-switch tribute-ranking-tabs" role="group" aria-label="番付の種類">${[["score", "番付加算"], ["gross", "貢がれ総額"]].map(([kind, label]) => `<button type="button" data-t="ranking-kind" data-kind="${kind}" aria-pressed="${ranking.kind === kind ? "true" : "false"}">${label}</button>`).join("")}</div>`;
+  if (ranking.kind === "gross") return frame(`<div class="tribute-ranking">${tabs}${renderGrossRanking(ranking)}</div>`, { title: "番付" });
   return frame(`<div class="tribute-ranking">
+    ${tabs}
     <p class="tribute-note">管理人番付：今月の番付加算（同じ財布から1日500 Payまで）の多い順、同じなら財布の人数で並べます。毎日満額を貢ぐ財布を多く抱える管理人が上に来ます。実際の献上額とレシートは制限しません。</p>
     ${ranking.status === "loading" ? `<p class="tribute-empty">番付を読み込んでいます…</p>` : ranking.managers.length
     ? `<ol class="tribute-manager-ranking">${ranking.managers.map((row) => `<li class="${row.mine ? "is-mine" : ""}"><b>${row.rank}</b>
@@ -2428,6 +2497,21 @@ function renderRanking() {
         <em>${escapeHtml(formatPay(row.rankScore))} ・ 財布${row.payers}人</em></li>`).join("")}</ol>`
     : `<p class="tribute-empty">今月の番付はまだありません。</p>`}
   </div>`, { title: "番付" });
+}
+
+// 貢がれ総額の番付（当月）。財布3人以上から貢がれた管理人だけ、上位10まで。10位以内は X のプロフィールと番付のひとこと、
+// 1〜5位は掲示板のカードにハートの札。
+function renderGrossRanking(ranking) {
+  const note = `<p class="tribute-note">貢がれ総額：今月、財布から貢がれた額の多い順です。財布${GROSS_RANKING.minPayers}人以上から貢がれた管理人だけが載ります（上位${GROSS_RANKING.limit}まで）。${GROSS_RANKING.limit}位以内は X のプロフィールと番付のひとことが載り、1〜${GROSS_RANKING.badgeTop}位は掲示板のカードにハートの札が付きます。番付のひとことはカードの編集で書けます。</p>`;
+  if (ranking.status === "loading") return `${note}<p class="tribute-empty">番付を読み込んでいます…</p>`;
+  if (!ranking.managers.length) return `${note}<p class="tribute-empty">今月の貢がれ総額の番付はまだありません。</p>`;
+  return `${note}<ol class="tribute-manager-ranking tribute-gross-ranking">${ranking.managers.map((row) => `<li class="${row.mine ? "is-mine" : ""}"><b>${Number(row.rank)}</b>
+      <div class="tribute-gross-main">
+        <button type="button" data-t="open-manager" data-id="${escapeHtml(row.publicManagerId)}">${sigil(row)}<span><strong>${escapeHtml(row.personaName)}</strong>${rankHeart(row.rank)}${disclosureTag(row.disclosure)}${vaultTag(row.vault)}</span></button>
+        ${row.rankingWord ? `<span class="tribute-gross-word">${escapeHtml(row.rankingWord)}</span>` : ""}
+        ${xProfileButton(row)}
+      </div>
+      <em>${escapeHtml(formatPay(row.receivedGross))}<small>財布${Number(row.payers || 0)}人</small></em></li>`).join("")}</ol>`;
 }
 
 // ───────────── 金庫 ─────────────
@@ -2679,20 +2763,26 @@ async function openManager(publicManagerId, { invited = false } = {}) {
   if (state.screen === "manager") render();
 }
 
-async function loadList(key, action, mapper) {
+async function loadList(key, action, mapper, payload = {}) {
   const generation = lifecycleGeneration;
   const target = state[key] = { ...state[key], status: "loading", loadingMore: false };
   render();
   try {
-    const payload = await call(action);
+    const result = await call(action, payload);
     if (!isCurrent(generation) || state[key] !== target) return;
-    state[key] = { ...state[key], status: "ready", ...mapper(payload) };
+    state[key] = { ...state[key], status: "ready", ...mapper(result) };
   } catch (error) {
     if (!isCurrent(generation) || state[key] !== target) return;
     state[key].status = "error";
     showToast(friendlyError(error));
   }
   if (state.screen === key) render();
+}
+
+// 番付は「番付加算」と「貢がれ総額」を切り替える。読み込む間は、もう一方の行を出さない。
+function loadRanking(kind = state.ranking.kind || "score") {
+  state.ranking = { ...state.ranking, kind, managers: [] };
+  loadList("ranking", "rankings", (payload) => ({ managers: payload.managers || [], monthKey: payload.monthKey || "" }), kind === "gross" ? { kind } : {});
 }
 
 function navigate(requested, { refresh = true } = {}) {
@@ -2706,7 +2796,7 @@ function navigate(requested, { refresh = true } = {}) {
   if (screen === "board") loadBoard();
   else if (screen === "receipts") loadList("receipts", "receipts", (payload) => ({ items: payload.receipts || [], more: payload.more === true, cursor: payload.nextCursor || null }));
   else if (screen === "ledger") loadList("ledger", "ledger", (payload) => ({ asPayer: payload.asPayer || [], asManager: payload.asManager || [] }));
-  else if (screen === "ranking") loadList("ranking", "rankings", (payload) => ({ managers: payload.managers || [], monthKey: payload.monthKey || "" }));
+  else if (screen === "ranking") loadRanking();
   else if (screen === "vault") loadList("vault", "vault", (payload) => ({ data: payload }));
   else {
     render();
@@ -3045,6 +3135,9 @@ async function handleSubmit(form) {
       if (problem) return setFormError(form, problem);
       const x = normalizeXProfile(data.get("xProfile"));
       if (x.error) return setFormError(form, x.error);
+      const rankingWord = String(data.get("rankingWord") || "");
+      const rankingWordError = rankingWordProblem(rankingWord);
+      if (rankingWordError) return setFormError(form, rankingWordError);
       if (decorationsTried(formDecorations(form)).length) return setFormError(form, "試着中の飾りがあります。買うか、試着をやめてから保存してください。");
       if (vaultDecorationsLocked(formDecorations(form)).length) return setFormError(form, "金庫がまだその段階に届いていない飾りがあります。試着をやめてから保存してください。");
       await mutate("save_profile", {
@@ -3064,6 +3157,7 @@ async function handleSubmit(form) {
           ignoreUnpaid: data.get("ignoreUnpaid") === "on",
           postsScreenshots: data.get("postsScreenshots") === "on",
           showsActivity: data.get("showsActivity") === "on",
+          rankingWord,
         },
         accepting: data.get("accepting") === "on",
       }, {
@@ -3073,6 +3167,17 @@ async function handleSubmit(form) {
           state.profile = result.profile;
           navigate("hub");
         },
+      });
+      return;
+    }
+    case "cheer": {
+      const text = String(form.elements.cheer.value || "");
+      const problem = cheerProblem(text);
+      if (problem) return setFormError(form, problem);
+      await mutate("set_cheer", { publicManagerId: state.manager.publicManagerId, text }, {
+        form,
+        success: "応援を書きました。",
+        after: () => openManager(state.manager.publicManagerId),
       });
       return;
     }
@@ -3522,6 +3627,30 @@ async function handleClick(target) {
       intent.searchParams.set("text", inviteText(card));
       intent.searchParams.set("url", url);
       window.open(intent.href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    case "ranking-kind": {
+      const kind = target.dataset.kind === "gross" ? "gross" : "score";
+      if (kind !== state.ranking.kind) loadRanking(kind);
+      return;
+    }
+    case "clear-cheer":
+      await mutate("set_cheer", { publicManagerId: state.manager.publicManagerId, text: "" }, {
+        success: "応援を消しました。",
+        after: () => openManager(state.manager.publicManagerId),
+      });
+      return;
+    case "cheer-seen":
+    case "cheer-hide":
+    case "cheer-show": {
+      const serverAction = { "cheer-seen": "cheer_seen", "cheer-hide": "cheer_hide", "cheer-show": "cheer_show" }[action];
+      await mutate(serverAction, { cheerId: target.dataset.cheer }, {
+        success: { cheer_seen: "「見たよ」を返しました。", cheer_hide: "応援を隠しました。", cheer_show: "応援を戻しました。" }[serverAction],
+        after: (result) => {
+          if (state.profile && Number.isFinite(Number(result?.cheersUnseen))) state.profile = { ...state.profile, cheersUnseen: Number(result.cheersUnseen) };
+          openManager(state.manager.publicManagerId);
+        },
+      });
       return;
     }
     case "clear-word":
@@ -4121,6 +4250,20 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   lastActiveAt: Date.now(),
 });
 
+// 見本の応援欄。manager は財布として、manager-mine は自分の管理人として見る。画面の上でだけ書き換える。
+const PREVIEW_OWN_MANAGER_ID = "f".repeat(24);
+const previewCheers = [
+  { cheerId: "a1a1a1a1a1a1a1a1", walletName: "しもべ3号", text: "今月も一番に貢ぎます。見ててください。", at: Date.now() - 5 * 3_600_000, seen: true, hidden: false, mine: false },
+  { cheerId: "b2b2b2b2b2b2b2b2", walletName: "ポチ財布", text: "請求、いつでも待ってます", at: Date.now() - 40 * 60_000, seen: false, hidden: false, mine: true },
+  { cheerId: "c3c3c3c3c3c3c3c3", walletName: "名無しの財布", text: "はじめて貢ぎました。よろしくお願いします", at: Date.now() - 26 * 3_600_000, seen: false, hidden: false, mine: false },
+];
+
+function previewCheerView(mine) {
+  return previewCheers
+    .filter((cheer) => mine || !cheer.hidden || cheer.mine)
+    .map((cheer) => ({ ...cheer, mine: !mine && cheer.mine }));
+}
+
 function previewRaw(role, status = "active") {
   const now = previewNow();
   const me = "preview-me";
@@ -4223,6 +4366,7 @@ function previewCall(action, payload) {
           ...(previewScreen === "hub-refund" ? { operatorRefundPending: 90, refundPending: 20 } : {}),
           wordsToday: 1,
           boardUntil: previewBoardUntil(),
+          cheersUnseen: previewCheers.filter((cheer) => !cheer.seen && !cheer.hidden).length,
           // first-steps: 管理人カードも契約もない、はじめての財布（はじめての方へを確かめる）。
           ...(previewScreen.startsWith("first-steps") ? { card: null, accepting: false, counts: { payerOpen: 0, managerActive: 0, managerPending: 0 }, receiptCount: 0, boardUntil: 0 } : {}),
         },
@@ -4245,17 +4389,20 @@ function previewCall(action, payload) {
       return Promise.resolve({
         ok: true,
         managers: [
-          PREVIEW_MANAGER_CARD,
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"], showsActivity: false, lastActiveAt: 0 },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], lastActiveAt: now - 5 * 3_600_000 },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [], showsActivity: false, lastActiveAt: 0 },
-          { ...PREVIEW_MANAGER_CARD, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, vault: { level: 3 }, intro: "毎日決まった額を、決まった時間に。", frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane", achievements: ["battle_total_1"] },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 1 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 5, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"], showsActivity: false, lastActiveAt: 0 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 2, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], lastActiveAt: now - 5 * 3_600_000 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [], showsActivity: false, lastActiveAt: 0 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 4, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, vault: { level: 3 }, intro: "毎日決まった額を、決まった時間に。", frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane", achievements: ["battle_total_1"] },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
       });
-    case "manager":
+    case "manager": {
+      const mine = payload.publicManagerId === PREVIEW_OWN_MANAGER_ID;
       return Promise.resolve({
         ok: true,
-        card: PREVIEW_MANAGER_CARD,
+        card: mine ? { ...(state.profile?.card || PREVIEW_MANAGER_CARD), publicManagerId: PREVIEW_OWN_MANAGER_ID, grossRank: 2, mine: true } : { ...PREVIEW_MANAGER_CARD, grossRank: 1 },
+        cheers: previewCheerView(mine),
+        myCheer: mine ? null : { canWrite: true, text: previewCheers.find((cheer) => cheer.mine)?.text || "", hidden: false, leftToday: 2 },
         month: { payers: 4, tributeCount: 12 },
         openContractId: "",
         myTotal: 210,
@@ -4264,6 +4411,27 @@ function previewCall(action, payload) {
           lifetime: [{ rank: 1, walletName: "しもべ3号", amount: 5_400, mine: false }, { rank: 2, walletName: "ポチ財布", amount: 210, mine: true }],
         },
       });
+    }
+    case "set_cheer": {
+      const text = String(payload.text || "").trim();
+      const index = previewCheers.findIndex((cheer) => cheer.mine);
+      if (!text) {
+        if (index >= 0) previewCheers.splice(index, 1);
+      } else if (index >= 0) {
+        previewCheers[index] = { ...previewCheers[index], text, at: Date.now(), seen: false };
+      } else {
+        previewCheers.splice(1, 0, { cheerId: "d4d4d4d4d4d4d4d4", walletName: "ポチ財布", text, at: Date.now(), seen: false, hidden: false, mine: true });
+      }
+      return Promise.resolve({ ok: true, cheer: { text, hidden: false, leftToday: 1 } });
+    }
+    case "cheer_seen":
+    case "cheer_hide":
+    case "cheer_show": {
+      const cheer = previewCheers.find((entry) => entry.cheerId === payload.cheerId);
+      if (cheer && action === "cheer_seen") cheer.seen = true;
+      if (cheer && action !== "cheer_seen") cheer.hidden = action === "cheer_hide";
+      return Promise.resolve({ ok: true, cheersUnseen: previewCheers.filter((entry) => !entry.seen && !entry.hidden).length });
+    }
     case "receipts":
       return Promise.resolve({
         ok: true,
@@ -4281,8 +4449,24 @@ function previewCall(action, payload) {
         asManager: [{ counterpartName: "しもべ3号", total: 1_200, count: 9, firstAt: now - 9 * 86_400_000, lastAt: now - 3_600_000, openContractId: "2".repeat(40) }],
       });
     case "rankings":
+      if (payload.kind === "gross") {
+        return Promise.resolve({
+          ok: true,
+          kind: "gross",
+          monthKey,
+          managers: [
+            { rank: 1, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, vault: { level: 4 }, payers: 6, receivedGross: 12_400, xHandle: "mio_sama_ranch", rankingWord: "今月も財布を募集中。覚悟して貢ぎな。" },
+            { rank: 2, publicManagerId: PREVIEW_OWN_MANAGER_ID, personaName: "レイ", disclosure: "as_is", sigil: 2, avatar: 5, vault: null, payers: 4, receivedGross: 8_200, xHandle: "", rankingWord: "", mine: true },
+            { rank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", sigil: 2, avatar: 11, vault: { level: 4 }, payers: 5, receivedGross: 6_050, xHandle: "kai_kanri", rankingWord: "" },
+            { rank: 4, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", sigil: 3, avatar: 2, vault: { level: 3 }, payers: 3, receivedGross: 3_300, xHandle: "", rankingWord: "毎日決まった額を、決まった時間に。" },
+            { rank: 5, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", sigil: 1, avatar: 0, vault: { level: 2 }, payers: 3, receivedGross: 1_900, xHandle: "", rankingWord: "" },
+            { rank: 6, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", sigil: 3, avatar: 10, vault: { level: 5 }, payers: 3, receivedGross: 1_200, xHandle: "yuna_amayakashi", rankingWord: "甘やかし担当。無理はさせない。" },
+          ],
+        });
+      }
       return Promise.resolve({
         ok: true,
+        kind: "score",
         monthKey,
         managers: [
           { rank: 1, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, vault: { level: 4 }, payers: 4, rankScore: 1_850 },
@@ -4541,6 +4725,7 @@ function startPreview(screen) {
     newcomer: () => navigate("hub"),
     board: () => navigate("board"),
     manager: () => openManager(PREVIEW_MANAGER_CARD.publicManagerId),
+    "manager-mine": () => openManager(PREVIEW_OWN_MANAGER_ID),
     apply: () => {
       state.applyTarget = { ...PREVIEW_MANAGER_CARD };
       state.screen = "apply";
@@ -4566,6 +4751,10 @@ function startPreview(screen) {
     receipts: () => navigate("receipts"),
     ledger: () => navigate("ledger"),
     ranking: () => navigate("ranking"),
+    "ranking-gross": () => {
+      state.ranking.kind = "gross";
+      navigate("ranking");
+    },
     vault: () => navigate("vault"),
     "vault-new": () => navigate("vault"),
   };

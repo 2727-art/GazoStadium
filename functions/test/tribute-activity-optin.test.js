@@ -43,7 +43,7 @@ test("showing the last activity is an opt-in card setting, off by default", () =
 test("the server hands the time to others only for cards that show it, and keeps it on the manager's own card", () => {
   const card = sourceBlock(service, "function publicCard", "function ownProfileView");
   assert.match(card, /showsActivity: card\.showsActivity === true,\s*lastActiveAt: card\.showsActivity === true \? profile\.lastActiveAt : 0,/);
-  assert.match(sourceBlock(service, "function ownProfileView", "function cardSnapshot"), /card: profile\.card \? \{ \.\.\.publicCard\(profile, monthKey, now\), lastActiveAt: profile\.lastActiveAt \} : null,/);
+  assert.match(sourceBlock(service, "function ownProfileView", "function cardSnapshot"), /card: profile\.card \? \{ \.\.\.publicCard\(profile, monthKey, now\), lastActiveAt: profile\.lastActiveAt[,}]/);
 });
 
 test("the board and the manager detail show 動き only when the card opted in", () => {
@@ -65,7 +65,7 @@ test("the card editor offers the setting unchecked unless saved, previews it and
   assert.match(editor, /出さなくても、掲示板は動いた順に並びます。/);
   const preview = sourceBlock(client, "function updateCardPreview", "// ───────────── スレッド");
   assert.match(preview, /showsActivity: data\.get\("showsActivity"\) === "on",\s*lastActiveAt: state\.profile\?\.card\?\.lastActiveAt \|\| Date\.now\(\),/);
-  assert.match(client, /postsScreenshots: data\.get\("postsScreenshots"\) === "on",\s*showsActivity: data\.get\("showsActivity"\) === "on",\s*\},\s*accepting:/);
+  assert.match(client, /postsScreenshots: data\.get\("postsScreenshots"\) === "on",\s*showsActivity: data\.get\("showsActivity"\) === "on",\s*(?:rankingWord,\s*)?\},\s*accepting:/);
   assert.match(client, /"postsScreenshots", "showsActivity"\]\.includes\(event\.target\.name\)\) updateCardPreview\(cardForm\);/);
 });
 
@@ -76,6 +76,6 @@ test("newcomer hints point at the board order instead of a time most cards do no
 });
 
 test("cache key and the design note record the release", () => {
-  assert.match(html, /tribute\.js\?v=[^"]*-ranch-activity-optin-v1"/);
+  assert.match(html, /tribute\.js\?v=[^"]*-ranch-activity-optin-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /`card\.showsActivity`、初期は出さない/);
 });

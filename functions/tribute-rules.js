@@ -156,6 +156,17 @@ const LIMITS = Object.freeze({
   vaultQualifyReceived: 1_000,
   vaultRankingLimit: 30,
   vaultRecentOps: 20,
+  // 貢がれ総額の番付（当月）。財布3人以上から貢がれた管理人だけ、上位10まで。1〜5位はカードにハートの札。
+  grossRankingLimit: 10,
+  grossRankingMinPayers: 3,
+  grossRankingScan: 60,
+  rankBadgeTop: 5,
+  rankBadgeCacheMs: 10 * 60 * 1_000,
+  // 番付のひとこと（貢がれ総額の10位以内で番付に載る）と、管理人の詳細の応援欄。
+  rankingWord: 40,
+  cheer: 40,
+  cheersPerDay: 3,
+  cheersLimit: 30,
 });
 
 // 管理人の金庫の段階。いま金庫にある額で決まり、外には段階だけを見せる（額は本人だけ）。
@@ -262,6 +273,30 @@ const BOARD_SEXUAL_MESSAGE = "掲示板は同意前の人も見るため、性�
 
 function boardSexualWord(text) {
   return BOARD_SEXUAL_PATTERN.test(String(text ?? "").normalize("NFKC"));
+}
+
+// 番付と応援欄も、同意前の人が見る。掲示板と同じく、連絡先などの禁止表現と性的な言葉は通さない。
+const RANKING_SEXUAL_MESSAGE = "番付は同意前の人も見るため、性的な言葉は番付のひとことに書けません。";
+const CHEER_SEXUAL_MESSAGE = "応援欄は同意前の人も見るため、性的な言葉は書けません。";
+
+// 番付のひとこと。40文字まで、空なら外す。
+function normalizeRankingWord(value) {
+  const text = cleanLine(value, LIMITS.rankingWord);
+  if (!text) return { text: "" };
+  const reason = forbiddenReason(text);
+  if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+  if (boardSexualWord(text)) return { error: RANKING_SEXUAL_MESSAGE };
+  return { text };
+}
+
+// 応援欄のひとこと。40文字まで、空なら消す。
+function normalizeCheer(value) {
+  const text = cleanLine(value, LIMITS.cheer);
+  if (!text) return { text: "" };
+  const reason = forbiddenReason(text);
+  if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+  if (boardSexualWord(text)) return { error: CHEER_SEXUAL_MESSAGE };
+  return { text };
 }
 
 // 今日のひとこと。30文字まで、連絡先などの禁止表現と性的な言葉は通さない。
@@ -440,6 +475,8 @@ function normalizeManagerCard(value) {
   }
   const x = normalizeXProfile(value?.xProfile ?? value?.xHandle);
   if (x.error) return { error: x.error };
+  const rankingWord = normalizeRankingWord(value?.rankingWord);
+  if (rankingWord.error) return { error: rankingWord.error };
   return {
     card: {
       personaName,
@@ -460,6 +497,8 @@ function normalizeManagerCard(value) {
       postsScreenshots: value?.postsScreenshots === true,
       // 掲示板と管理人の詳細に、最後に動いた時を出すか。管理人が選んだ時だけ出す（初期は出さない）。
       showsActivity: value?.showsActivity === true,
+      // 番付のひとこと。貢がれ総額の番付で10位以内に入った時だけ、X のプロフィールと一緒に番付に出す。
+      rankingWord: rankingWord.text,
       xHandle: x.xHandle,
       accepting: value?.accepting === true,
     },
@@ -690,6 +729,8 @@ module.exports = {
   capsAreLowerOrEqual,
   normalizeManagerCard,
   normalizeTodayWord,
+  normalizeRankingWord,
+  normalizeCheer,
   boardSexualWord,
   BOARD_SEXUAL_MESSAGE,
   normalizeSeals,

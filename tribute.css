@@ -1415,3 +1415,70 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .tribute-work-card strong { color: #c9f5cf; }
 .tribute-work-card p { margin: 0; font-size: 0.84rem; overflow-wrap: anywhere; }
 .tribute-event.is-work-confirm .tribute-stamp-seal { position: static; display: block; transform: rotate(-8deg); }
+/* 貢がれ総額の番付（ranch-cheers-v1）: 1〜5位のハートの札。上の順位ほど豪華に（5位は輪郭、4位は塗り、3位は艶、2位はローズゴールドと光、1位は王冠と金）。 */
+.tribute-rank-heart {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 4px 2px 0;
+  padding: 1px 8px 1px 3px;
+  border: 1px solid rgba(255, 122, 184, 0.35);
+  border-radius: 999px;
+  background: rgba(255, 122, 184, 0.1);
+  color: #ffb3d6;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.tribute-rank-heart svg { width: 1.45em; height: 1.45em; overflow: visible; }
+.tribute-rank-heart b { font-weight: 800; }
+.tribute-rank-heart .rim { fill: none; stroke: #ff7ab8; stroke-width: 2.2; }
+.tribute-rank-heart .fill { fill: #ff5fa8; }
+.tribute-rank-heart .inner { fill: #ff8cc4; }
+.tribute-rank-heart .gloss { fill: #fff; opacity: 0.5; }
+.tribute-rank-heart .spark { fill: #fff3c4; }
+.tribute-rank-heart .crown { fill: #ffd166; stroke: #a8761a; stroke-width: 0.8; stroke-linejoin: round; }
+.tribute-rank-heart .jewel { fill: #ff2d7a; }
+.tribute-rank-heart.is-rank-4 { border-color: rgba(255, 95, 168, 0.55); background: rgba(255, 95, 168, 0.18); }
+.tribute-rank-heart.is-rank-3 { border-color: rgba(255, 61, 139, 0.75); background: linear-gradient(135deg, rgba(255, 61, 139, 0.3), rgba(180, 140, 255, 0.24)); color: #ffd6ea; }
+.tribute-rank-heart.is-rank-3 .fill { fill: #ff3d8b; }
+.tribute-rank-heart.is-rank-2 { border-color: #f6c9a8; background: linear-gradient(135deg, #5a2440, #8a4a5c 55%, #c9897a); color: #fff1e8; box-shadow: 0 0 6px rgba(246, 201, 168, 0.45); }
+.tribute-rank-heart.is-rank-2 svg { width: 1.65em; height: 1.65em; }
+.tribute-rank-heart.is-rank-2 .fill { fill: #ff4f9a; stroke: #f6c9a8; stroke-width: 1.4; }
+.tribute-rank-heart.is-rank-1 { border-color: #ffd166; background: linear-gradient(135deg, #6b1d3f, #b0306a 45%, #d4a017); color: #fff8dc; box-shadow: 0 0 10px rgba(255, 209, 102, 0.55); animation: tributeRankGlow 2.6s ease-in-out infinite; }
+.tribute-rank-heart.is-rank-1 { font-size: 0.78rem; }
+.tribute-rank-heart.is-rank-1 svg { width: 2em; height: 2em; filter: drop-shadow(0 0 3px rgba(255, 209, 102, 0.85)); }
+.tribute-rank-heart.is-rank-1 .fill { fill: #ff2d7a; stroke: #ffd166; stroke-width: 1.8; }
+.tribute-rank-heart.is-rank-1 .inner { fill: #ff79b3; }
+.tribute-rank-heart.is-large { font-size: 0.9rem; }
+@keyframes tributeRankGlow {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 209, 102, 0.45); }
+  50% { box-shadow: 0 0 16px rgba(255, 209, 102, 0.85); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tribute-rank-heart.is-rank-1 { animation: none; }
+}
+
+/* 番付の切り替えと、貢がれ総額の行（10位以内は X と番付のひとこと）。 */
+.tribute-ranking-tabs { max-width: 420px; }
+.tribute-gross-ranking li { align-items: start; }
+.tribute-gross-main { display: grid; gap: 6px; min-width: 0; }
+.tribute-gross-word { justify-self: start; max-width: 100%; padding: 5px 11px; border: 1px solid rgba(232, 194, 122, 0.45); border-radius: 14px 14px 14px 4px; background: rgba(232, 194, 122, 0.12); font-size: 0.84rem; font-weight: 700; line-height: 1.5; overflow-wrap: anywhere; }
+.tribute-gross-ranking .tribute-x-link button { font-size: 0.78rem; }
+.tribute-gross-ranking em { display: grid; justify-items: end; gap: 2px; }
+.tribute-gross-ranking em small { color: var(--tr-mist); font-weight: 600; font-size: 0.7rem; }
+
+/* 応援欄: 今月貢いだ財布だけが書け、今月の献上額の順に並ぶ。管理人は「見たよ」と、隠す・戻す。 */
+.tribute-cheers { display: grid; gap: 10px; }
+.tribute-cheer-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.tribute-cheer-list li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--tr-line); border-radius: 12px; background: rgba(255, 255, 255, 0.03); }
+.tribute-cheer-list li.is-mine { border-color: rgba(255, 79, 163, 0.5); }
+.tribute-cheer-list li.is-hidden { opacity: 0.55; border-style: dashed; }
+.tribute-cheer-name { color: var(--tr-gold); font-size: 0.78rem; font-weight: 800; overflow-wrap: anywhere; }
+.tribute-cheer-list p { margin: 0; font-size: 0.9rem; font-weight: 700; line-height: 1.55; overflow-wrap: anywhere; }
+.tribute-cheer-list small { color: var(--tr-mist); font-size: 0.7rem; }
+.tribute-cheer-seen { display: inline-block; margin-left: 4px; padding: 0 7px; border: 1.5px solid #ff4f7a; border-radius: 4px; color: #ff8fa8; font-size: 0.7rem; font-weight: 800; transform: rotate(-4deg); }
+.tribute-cheer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.tribute-todo-chip.is-cheer { border-color: rgba(255, 122, 184, 0.55); background: rgba(255, 122, 184, 0.14); }

@@ -619,6 +619,52 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "tributeManagerMonths",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "monthKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "receivedGross",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "managerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "cheerMonthKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "monthTotal",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "managerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "cheerId",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

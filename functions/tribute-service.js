@@ -20,6 +20,7 @@ const {
   capsAreLowerOrEqual,
   normalizeManagerCard,
   normalizeTodayWord,
+  normalizeCheer,
   normalizeSeals,
   sealFor,
   SEAL_IDS,
@@ -108,6 +109,10 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "receipts",
   "ledger",
   "rankings",
+  "set_cheer",
+  "cheer_seen",
+  "cheer_hide",
+  "cheer_show",
   "vault",
   "vault_deposit",
   "vault_withdraw",
@@ -228,6 +233,11 @@ function readProfile(snapshot) {
       .filter(([payerUid, name]) => payerUid && name)),
     severeReportMonthKey: String(data.severeReportMonthKey || ""),
     severeReportCount: integer(data.severeReportCount, 0, 1_000_000, 0),
+    // 応援欄の「見たよ」を押していない応援の数（その月の分だけ）。管理人のやることに出す。
+    cheerInbox: {
+      monthKey: String(object(data.cheerInbox).monthKey || ""),
+      unseen: integer(object(data.cheerInbox).unseen, 0, 1_000_000, 0),
+    },
   };
 }
 
@@ -299,7 +309,8 @@ function ownProfileView(profile, monthKey, now) {
   return {
     walletName: profile.walletName,
     // 自分のカードには、出さない設定でも自分の最後に動いた時を入れる（カードの見え方と掲示板に出ていられる期限）。
-    card: profile.card ? { ...publicCard(profile, monthKey, now), lastActiveAt: profile.lastActiveAt } : null,
+    // 番付のひとことも自分にだけ返す（ほかの人には、貢がれ総額の番付で10位以内の時だけ番付に出る）。
+    card: profile.card ? { ...publicCard(profile, monthKey, now), lastActiveAt: profile.lastActiveAt, rankingWord: cleanLine(profile.card.rankingWord, LIMITS.rankingWord) } : null,
     accepting: profile.accepting,
     publicManagerId: profile.publicManagerId,
     hidden: profileIsHidden(profile, monthKey),
@@ -311,6 +322,7 @@ function ownProfileView(profile, monthKey, now) {
       bestTier: profile.vaultBestTier,
     },
     counts: profile.counts,
+    cheersUnseen: profile.cheerInbox.monthKey === monthKey ? profile.cheerInbox.unseen : 0,
     receiptCount: profile.receiptCount,
     refundPending: profile.refundPending,
     operatorRefundPending: profile.operatorRefundPending,
@@ -1554,10 +1566,11 @@ function createTributeService(deps) {
         && row.profile.ageConfirmedVersion === TRIBUTE_AGE_VERSION
         && !profileIsHidden(row.profile, monthKey));
     const nekamaOnly = data?.nekamaOnly === true;
+    const badges = await rankBadges(monthKey, now);
     const board = (await visibleRows(uid, toRows(boardSnapshot).filter((row) => row.profile.lastActiveAt >= activeSince)))
       .filter((row) => !nekamaOnly || row.profile.card?.disclosure === "nekama")
       .slice(0, LIMITS.boardLimit)
-      .map((row) => ({ ...publicCard(row.profile, monthKey, now), mine: row.uid === uid }));
+      .map((row) => ({ ...publicCard(row.profile, monthKey, now), grossRank: badges.get(row.uid) || 0, mine: row.uid === uid }));
     return { ok: true, nekamaOnly, managers: board };
   }
 
@@ -1600,16 +1613,20 @@ function createTributeService(deps) {
     const now = currentTime();
     const monthKey = jstMonthKey(now);
     if (managerUid !== uid && profileIsHidden(profile, monthKey)) fail("not-found", "この管理人は見つかりません。");
-    const [monthSnapshot, pairSnapshot, ranking] = await Promise.all([
+    const [monthSnapshot, pairSnapshot, ranking, badges, cheers] = await Promise.all([
       managerMonthRef(monthKey, managerUid).get(),
       managerUid === uid ? Promise.resolve(null) : pairRef(managerUid, uid).get(),
       managerRanking(managerUid, monthKey, uid),
+      rankBadges(monthKey, now),
+      cheerList(managerUid, monthKey, uid),
     ]);
     const month = object(monthSnapshot.data());
     const pair = pairSnapshot?.exists ? object(pairSnapshot.data()) : {};
     return {
       ok: true,
-      card: { ...publicCard(profile, monthKey, now), mine: managerUid === uid },
+      card: { ...publicCard(profile, monthKey, now), grossRank: badges.get(managerUid) || 0, mine: managerUid === uid },
+      cheers,
+      myCheer: managerUid === uid ? null : myCheerView(pair, monthKey, now),
       month: {
         payers: integer(month.payers, 0, Number.MAX_SAFE_INTEGER, 0),
         tributeCount: integer(month.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -2604,10 +2621,224 @@ function createTributeService(deps) {
     };
   }
 
+  // ───────────── 貢がれ総額の番付と、1〜5位の札 ─────────────
+  // 当月に貢がれた額（手数料を引く前）の多い順。財布3人以上から貢がれた管理人だけ（別アカウントでの水増しを避ける）。
+  // 順位は見る人のブロックで詰めない（掲示板の札と同じ順位にする）。
+  async function grossRanking(monthKey) {
+    const snapshot = await firestore.collection("tributeManagerMonths")
+      .where("monthKey", "==", monthKey)
+      .orderBy("receivedGross", "desc")
+      .limit(LIMITS.grossRankingScan)
+      .get();
+    const candidates = snapshot.docs
+      .map((document) => ({ uid: String(document.get("managerUid") || ""), value: object(document.data()) }))
+      .filter((row) => row.uid
+        && integer(row.value.payers, 0, Number.MAX_SAFE_INTEGER, 0) >= LIMITS.grossRankingMinPayers
+        && integer(row.value.receivedGross, 0, Number.MAX_SAFE_INTEGER, 0) > 0)
+      .slice(0, LIMITS.grossRankingLimit + 5);
+    const profiles = await Promise.all(candidates.map((row) => profileRef(row.uid).get()));
+    return candidates
+      .map((row, index) => ({ ...row, profile: readProfile(profiles[index]) }))
+      .filter((row) => row.profile.publicManagerId && !profileIsHidden(row.profile, monthKey))
+      .slice(0, LIMITS.grossRankingLimit)
+      .map((row, index) => ({ ...row, rank: index + 1 }));
+  }
+
+  const rankCacheRef = (monthKey) => firestore.collection("tributeRankCache").doc(`gross-${monthKey}`);
+
+  async function saveRankBadges(monthKey, now, rows) {
+    const top = rows.filter((row) => row.rank <= LIMITS.rankBadgeTop).map((row) => ({ managerUid: row.uid, rank: row.rank }));
+    await rankCacheRef(monthKey).set({ monthKey, computedAt: now, top });
+    return new Map(top.map((entry) => [entry.managerUid, entry.rank]));
+  }
+
+  // 掲示板と管理人の詳細の札。毎回数えると重いので、10分まで前の順位を使う（番付を開くと数え直す）。
+  // 数えられない時（インデックスの作成中など）は札を出さず、掲示板は止めない。
+  async function rankBadges(monthKey, now) {
+    try {
+      const cached = object((await rankCacheRef(monthKey).get()).data());
+      if (cached.monthKey === monthKey && now - integer(cached.computedAt, 0, Number.MAX_SAFE_INTEGER, 0) < LIMITS.rankBadgeCacheMs) {
+        return new Map((Array.isArray(cached.top) ? cached.top : [])
+          .map((entry) => [String(object(entry).managerUid || ""), integer(object(entry).rank, 0, LIMITS.rankBadgeTop, 0)])
+          .filter(([managerUid, rank]) => managerUid && rank > 0));
+      }
+      return await saveRankBadges(monthKey, now, await grossRanking(monthKey));
+    } catch (error) {
+      console.error("tribute rank badges failed", error);
+      return new Map();
+    }
+  }
+
+  async function grossRankingsAction(uid, monthKey, now) {
+    const rows = await grossRanking(monthKey);
+    await saveRankBadges(monthKey, now, rows).catch((error) => console.error("tribute rank badge cache failed", error));
+    const managers = (await visibleRows(uid, rows)).map((row) => {
+      const card = object(row.profile.card);
+      return {
+        rank: row.rank,
+        publicManagerId: row.profile.publicManagerId,
+        personaName: cleanLine(card.personaName || row.value.personaName, LIMITS.personaName) || "管理人",
+        disclosure: String(card.disclosure || row.value.disclosure || "undisclosed"),
+        sigil: integer(card.sigil ?? row.value.sigil, 0, 5, 0),
+        avatar: normalizeAvatar(card.avatar ?? row.value.avatar),
+        vault: vaultBadge(row.profile),
+        payers: integer(row.value.payers, 0, Number.MAX_SAFE_INTEGER, 0),
+        receivedGross: integer(row.value.receivedGross, 0, Number.MAX_SAFE_INTEGER, 0),
+        // 10位以内の特典: X のプロフィール（カードの自己申告）と番付のひとこと。
+        xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
+        rankingWord: cleanLine(card.rankingWord, LIMITS.rankingWord),
+        mine: row.uid === uid,
+      };
+    });
+    return { ok: true, kind: "gross", monthKey, managers };
+  }
+
+  // ───────────── 応援欄 ─────────────
+  // 管理人の詳細に、今月その管理人に貢いだ財布だけが書ける。今月の献上額の多い順に並ぶ（額は出さない）。
+  // 管理人は「見たよ」の印を返し、隠せる。隠した応援は、管理人と書いた財布にだけ見える（その月のあいだ）。
+  const CHEER_ID_PATTERN = /^[0-9a-f]{16}$/;
+
+  function cheerState(pair, monthKey) {
+    const text = pair.cheerMonthKey === monthKey ? cleanLine(pair.cheerText, LIMITS.cheer) : "";
+    const at = text ? integer(pair.cheerAt, 0, Number.MAX_SAFE_INTEGER, 0) : 0;
+    const seenAt = text ? integer(pair.cheerSeenAt, 0, Number.MAX_SAFE_INTEGER, 0) : 0;
+    const hidden = Boolean(text) && pair.cheerHidden === monthKey;
+    return { text, at, seenAt, seen: Boolean(text) && seenAt >= at, hidden, unseen: Boolean(text) && !hidden && seenAt < at };
+  }
+
+  async function cheerList(managerUid, monthKey, uid) {
+    try {
+      const snapshot = await firestore.collection("tributePairs")
+        .where("managerUid", "==", managerUid)
+        .where("cheerMonthKey", "==", monthKey)
+        .orderBy("monthTotal", "desc")
+        .limit(LIMITS.cheersLimit)
+        .get();
+      const rows = snapshot.docs
+        .map((document) => object(document.data()))
+        .map((pair) => ({ uid: String(pair.payerUid || ""), pair, cheer: cheerState(pair, monthKey) }))
+        .filter((row) => row.uid && row.cheer.text && CHEER_ID_PATTERN.test(String(row.pair.cheerId || "")))
+        .filter((row) => !row.cheer.hidden || managerUid === uid || row.uid === uid);
+      return (await visibleRows(uid, rows)).map((row) => ({
+        cheerId: row.pair.cheerId,
+        walletName: normalizeWalletName(row.pair.walletName),
+        text: row.cheer.text,
+        at: row.cheer.at,
+        seen: row.cheer.seen,
+        hidden: row.cheer.hidden,
+        mine: row.uid === uid,
+      }));
+    } catch (error) {
+      console.error("tribute cheers failed", error);
+      return [];
+    }
+  }
+
+  // 詳細を開いた財布が、応援欄に書けるか。今月この管理人に貢いでいれば書ける。
+  function myCheerView(pair, monthKey, now) {
+    const cheer = cheerState(pair, monthKey);
+    const usedToday = pair.cheerDayKey === jstDateKey(now) ? integer(pair.cheerDayCount, 0, 1_000, 0) : 0;
+    return {
+      canWrite: pair.monthKey === monthKey && integer(pair.monthTotal, 0, Number.MAX_SAFE_INTEGER, 0) > 0,
+      text: cheer.text,
+      hidden: cheer.hidden,
+      leftToday: Math.max(0, LIMITS.cheersPerDay - usedToday),
+    };
+  }
+
+  // 管理人のやることに出す「見たよ」待ちの数を、応援が変わった分だけ動かす。
+  function cheerInboxPatch(managerProfile, monthKey, delta) {
+    const current = managerProfile.cheerInbox.monthKey === monthKey ? managerProfile.cheerInbox.unseen : 0;
+    return { cheerInbox: { monthKey, unseen: Math.max(0, current + delta) } };
+  }
+
+  async function setCheerAction(uid, data) {
+    requireAge(await readOwnProfile(uid));
+    const publicManagerId = requirePublicManagerId(data?.publicManagerId);
+    const { uid: managerUid } = await findManagerByPublicId(publicManagerId);
+    if (managerUid === uid) fail("failed-precondition", "自分の応援欄には書けません。");
+    if (playerSafety && await playerSafety.isBlocked(uid, managerUid)) fail("not-found", "この管理人は見つかりません。");
+    const normalized = normalizeCheer(data?.text);
+    if (normalized.error) fail("invalid-argument", normalized.error);
+    let cheer = null;
+    await firestore.runTransaction(async (transaction) => {
+      const now = currentTime();
+      const monthKey = jstMonthKey(now);
+      const dateKey = jstDateKey(now);
+      const [pairSnapshot, managerSnapshot] = await Promise.all([
+        transaction.get(pairRef(managerUid, uid)),
+        transaction.get(profileRef(managerUid)),
+      ]);
+      const pair = pairSnapshot.exists ? object(pairSnapshot.data()) : {};
+      if (pair.monthKey !== monthKey || integer(pair.monthTotal, 0, Number.MAX_SAFE_INTEGER, 0) <= 0) {
+        fail("failed-precondition", "応援欄に書けるのは、今月この管理人に貢いだ財布だけです。");
+      }
+      const before = cheerState(pair, monthKey);
+      const usedToday = pair.cheerDayKey === dateKey ? integer(pair.cheerDayCount, 0, 1_000, 0) : 0;
+      let patch;
+      if (!normalized.text) {
+        patch = { cheerMonthKey: "", cheerText: "", cheerAt: 0, cheerSeenAt: 0 };
+      } else {
+        if (usedToday >= LIMITS.cheersPerDay) fail("resource-exhausted", `応援は1日${LIMITS.cheersPerDay}回まで書けます。日本時間の0時に戻ります。`);
+        patch = {
+          cheerId: CHEER_ID_PATTERN.test(String(pair.cheerId || "")) ? pair.cheerId : randomHex(8),
+          cheerMonthKey: monthKey,
+          cheerText: normalized.text,
+          cheerAt: now,
+          // 書き直した応援は、もう一度「見たよ」を待つ。
+          cheerSeenAt: 0,
+          cheerDayKey: dateKey,
+          cheerDayCount: usedToday + 1,
+        };
+      }
+      const after = cheerState({ ...pair, ...patch }, monthKey);
+      const delta = Number(after.unseen) - Number(before.unseen);
+      transaction.set(pairRef(managerUid, uid), { ...patch, updatedAt: now }, { merge: true });
+      if (delta) transaction.set(profileRef(managerUid), cheerInboxPatch(readProfile(managerSnapshot), monthKey, delta), { merge: true });
+      cheer = { text: after.text, hidden: after.hidden, leftToday: Math.max(0, LIMITS.cheersPerDay - (patch.cheerDayCount ?? usedToday)) };
+    });
+    return { ok: true, cheer };
+  }
+
+  // 管理人の操作: 「見たよ」・隠す・戻す。応援は cheerId で選ぶ（財布の UID は返さない）。
+  async function markCheerAction(uid, data, operation) {
+    requireAge(await readOwnProfile(uid));
+    const cheerId = String(data?.cheerId || "");
+    if (!CHEER_ID_PATTERN.test(cheerId)) fail("invalid-argument", "応援を選び直してください。");
+    const found = await firestore.collection("tributePairs")
+      .where("managerUid", "==", uid)
+      .where("cheerId", "==", cheerId)
+      .limit(1)
+      .get();
+    if (found.empty) fail("not-found", "この応援は見つかりません。");
+    const reference = found.docs[0].ref;
+    let unseen = 0;
+    await firestore.runTransaction(async (transaction) => {
+      const now = currentTime();
+      const monthKey = jstMonthKey(now);
+      const [pairSnapshot, managerSnapshot] = await Promise.all([transaction.get(reference), transaction.get(profileRef(uid))]);
+      const pair = pairSnapshot.exists ? object(pairSnapshot.data()) : {};
+      const before = cheerState(pair, monthKey);
+      if (pair.managerUid !== uid || pair.cheerId !== cheerId || !before.text) fail("not-found", "この応援は見つかりません。");
+      const patch = operation === "seen"
+        ? { cheerSeenAt: Math.max(now, before.at) }
+        : { cheerHidden: operation === "hide" ? monthKey : "" };
+      const after = cheerState({ ...pair, ...patch }, monthKey);
+      const managerProfile = readProfile(managerSnapshot);
+      const inbox = cheerInboxPatch(managerProfile, monthKey, Number(after.unseen) - Number(before.unseen));
+      transaction.set(reference, patch, { merge: true });
+      // 「見たよ」は管理人の返事なので、掲示板の並び（最後に動いた時）にも数える。
+      transaction.set(profileRef(uid), { ...inbox, ...(operation === "seen" ? { lastActiveAt: now } : {}) }, { merge: true });
+      unseen = inbox.cheerInbox.unseen;
+    });
+    return { ok: true, cheersUnseen: unseen };
+  }
+
   async function rankingsAction(uid, data) {
     requireAge(await readOwnProfile(uid));
     const now = currentTime();
     const monthKey = jstMonthKey(now);
+    if (data?.kind === "gross") return grossRankingsAction(uid, monthKey, now);
     // 番付加算（同じ組で1日500 Payまで）の多い順、同じなら財布の人数。毎日満額を貢ぐ財布を多く抱える管理人が上に来る。
     const snapshot = await firestore.collection("tributeManagerMonths")
       .where("monthKey", "==", monthKey)
@@ -2639,7 +2870,7 @@ function createTributeService(deps) {
       const { uid: managerUid } = await findManagerByPublicId(requirePublicManagerId(data.publicManagerId));
       managerBoard = await managerRanking(managerUid, monthKey, uid);
     }
-    return { ok: true, monthKey, managers: visible, managerBoard };
+    return { ok: true, kind: "score", monthKey, managers: visible, managerBoard };
   }
 
   // ───────────── 金庫 ─────────────
@@ -2911,6 +3142,10 @@ function createTributeService(deps) {
       case "set_word": return setWordAction(uid, data);
       case "ledger": return ledgerAction(uid);
       case "rankings": return rankingsAction(uid, data);
+      case "set_cheer": return setCheerAction(uid, data);
+      case "cheer_seen": return markCheerAction(uid, data, "seen");
+      case "cheer_hide": return markCheerAction(uid, data, "hide");
+      case "cheer_show": return markCheerAction(uid, data, "show");
       case "vault": return vaultAction(uid);
       case "vault_deposit": return vaultMoveAction(uid, data, "deposit");
       case "vault_withdraw": return vaultMoveAction(uid, data, "withdraw");

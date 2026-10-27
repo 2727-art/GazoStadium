@@ -782,6 +782,30 @@ export function todayWordProblem(value) {
   return "";
 }
 
+// 貢がれ総額の番付（当月）と、管理人の詳細の応援欄。サーバーの LIMITS・normalizeRankingWord・normalizeCheer と同じ判定。
+export const GROSS_RANKING = Object.freeze({ limit: 10, minPayers: 3, badgeTop: 5 });
+export const RANKING_WORD = Object.freeze({ length: 40 });
+export const CHEER = Object.freeze({ length: 40, perDay: 3 });
+
+function publicLineProblem(value, length, label, sexualMessage) {
+  const text = String(value ?? "").normalize("NFKC").trim();
+  if (!text) return "";
+  if (textLength(text) > length) return `${label}は${length}文字までです。`;
+  const reason = forbiddenReason(text);
+  if (reason) return FORBIDDEN_MESSAGES[reason];
+  if (BOARD_SEXUAL_PATTERN.test(text)) return sexualMessage;
+  return "";
+}
+
+export function rankingWordProblem(value) {
+  return publicLineProblem(value, RANKING_WORD.length, "番付のひとこと", "番付は同意前の人も見るため、性的な言葉は番付のひとことに書けません。");
+}
+
+export function cheerProblem(value) {
+  if (!String(value ?? "").trim()) return "応援を入力してください。";
+  return publicLineProblem(value, CHEER.length, "応援", "応援欄は同意前の人も見るため、性的な言葉は書けません。");
+}
+
 export function wordAgeLabel(at, now = Date.now()) {
   const minutes = Math.max(0, Math.floor((now - Number(at || 0)) / 60_000));
   if (minutes < 1) return "たった今";

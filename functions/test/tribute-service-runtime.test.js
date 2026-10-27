@@ -1608,3 +1608,116 @@ test("a manager's last activity reaches others only when the manager chose to sh
   assert.equal(saved.profile.card.showsActivity, false);
   assert.deepEqual((await harness.act("payer", "board")).managers.map((card) => card.personaName), ["シズ", "ミオ様"]);
 });
+
+test("the monthly gross ranking counts only managers tributed by 3+ wallets, carries X and the ranking word, and badges the top 5 on the board", async () => {
+  const { jstMonthKey } = require("../tribute-rules");
+  const harness = createHarness();
+  const monthKey = jstMonthKey(harness.now());
+  const ids = {};
+  const managers = [
+    ["m1", { personaName: "ミオ様", xProfile: "@mio_sama", rankingWord: "今月も財布を募集中" }, 6, 9_000],
+    ["m2", { personaName: "サキ" }, 3, 7_000],
+    ["m3", { personaName: "カイ" }, 2, 20_000],
+    ["m4", { personaName: "ユナ" }, 4, 3_000],
+  ];
+  for (const [uid, card, payers, receivedGross] of managers) {
+    ids[uid] = await openManager(harness, uid, card);
+    harness.firestore.write(`tributeManagerMonths/${monthKey}__${uid}`, { monthKey, managerUid: uid, payers, receivedGross, rankScore: 0 });
+  }
+  await confirmAge(harness, "viewer");
+
+  // 財布2人のカイは、総額が一番でも載らない（別アカウントでの水増しを避ける）。
+  const gross = await harness.act("viewer", "rankings", { kind: "gross" });
+  assert.equal(gross.kind, "gross");
+  assert.deepEqual(gross.managers.map((row) => [row.rank, row.personaName, row.receivedGross, row.payers]), [[1, "ミオ様", 9_000, 6], [2, "サキ", 7_000, 3], [3, "ユナ", 3_000, 4]]);
+  assert.equal(gross.managers[0].xHandle, "mio_sama");
+  assert.equal(gross.managers[0].rankingWord, "今月も財布を募集中");
+  assert.equal(gross.managers[1].xHandle, "");
+  assert.equal("managerUid" in gross.managers[0] || "uid" in gross.managers[0], false, "no UIDs");
+  assert.equal((await harness.act("viewer", "rankings", {})).kind, "score", "the old ranking stays the default");
+
+  // 掲示板と詳細には1〜5位の札。番付のひとことは掲示板のカードには載せない。
+  const board = (await harness.act("viewer", "board")).managers;
+  const rankOf = (name) => board.find((card) => card.personaName === name).grossRank;
+  assert.deepEqual(["ミオ様", "サキ", "ユナ", "カイ"].map(rankOf), [1, 2, 3, 0]);
+  assert.equal(board.find((card) => card.personaName === "ミオ様").rankingWord, undefined);
+  assert.equal((await harness.act("viewer", "manager", { publicManagerId: ids.m2 })).card.grossRank, 2);
+  // 自分のカードには番付のひとことが返る（カードの編集で直せる）。
+  assert.equal((await harness.act("m1", "state")).profile.card.rankingWord, "今月も財布を募集中");
+
+  // 札は10分まで前の順位を使い、過ぎると数え直す。
+  harness.firestore.write(`tributeManagerMonths/${monthKey}__m4`, { monthKey, managerUid: "m4", payers: 4, receivedGross: 50_000, rankScore: 0 });
+  assert.equal((await harness.act("viewer", "board")).managers.find((card) => card.personaName === "ユナ").grossRank, 3, "cached");
+  harness.advance(10 * 60_000 + 1);
+  assert.equal((await harness.act("viewer", "board")).managers.find((card) => card.personaName === "ユナ").grossRank, 1, "recounted");
+
+  // 番付のひとことも、掲示板と同じく連絡先・性的な言葉は通さない。
+  harness.advance(2_100);
+  await rejects(harness.act("m2", "save_profile", { card: { personaName: "サキ", intro: "", disclosure: "nekama", style: "harsh", entryFee: 10, rankingWord: "エロい財布募集" }, accepting: true }), /性的な言葉/);
+});
+
+test("only wallets that tributed this month write in a manager's cheer column; managers mark them seen or hide them", async () => {
+  const { jstMonthKey } = require("../tribute-rules");
+  const harness = createHarness({ balances: { manager: 0, big: 2_000, small: 1_000, stranger: 1_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const bigContract = await startContract(harness, "manager", "big", publicManagerId, { walletName: "太い財布" });
+  await startContract(harness, "manager", "small", publicManagerId, { walletName: "細い財布" });
+  await harness.act("big", "tribute", { contractId: bigContract, kind: "silent", amount: 100, clientRequestId: nextRequestId() });
+  await confirmAge(harness, "stranger");
+  const detail = (uid) => harness.act(uid, "manager", { publicManagerId });
+  const unseen = async () => (await harness.act("manager", "state")).profile.cheersUnseen;
+
+  // 貢いでいない財布は書けない。貢いだ財布（入場料も献上）は書ける。
+  assert.equal((await detail("stranger")).myCheer.canWrite, false);
+  await rejects(harness.act("stranger", "set_cheer", { publicManagerId, text: "応援してます" }), /今月この管理人に貢いだ財布だけ/);
+  await rejects(harness.act("manager", "set_cheer", { publicManagerId, text: "自分で" }), /自分の応援欄/);
+  assert.equal((await detail("small")).myCheer.canWrite, true);
+  await rejects(harness.act("small", "set_cheer", { publicManagerId, text: "LINE教えて 090-1234-5678" }), /./);
+  await harness.act("small", "set_cheer", { publicManagerId, text: "毎日見てます" });
+  await harness.act("big", "set_cheer", { publicManagerId, text: "今月も一番に貢ぎます" });
+
+  // 今月の献上額の多い順。額と UID は返さない。
+  const cheers = (await detail("stranger")).cheers;
+  assert.deepEqual(cheers.map((cheer) => [cheer.walletName, cheer.text, cheer.seen]), [["太い財布", "今月も一番に貢ぎます", false], ["細い財布", "毎日見てます", false]]);
+  assert.equal(cheers.some((cheer) => "payerUid" in cheer || "amount" in cheer), false);
+  assert.equal(await unseen(), 2);
+
+  // 見たよ: 誰にでも印が見え、やることの数が減る。書き直すと、また見たよ待ち。
+  const bigCheer = cheers[0].cheerId;
+  assert.equal((await harness.act("manager", "cheer_seen", { cheerId: bigCheer })).cheersUnseen, 1);
+  assert.equal((await detail("stranger")).cheers[0].seen, true);
+  await rejects(harness.act("small", "cheer_seen", { cheerId: bigCheer }), /見つかりません/);
+  await harness.act("big", "set_cheer", { publicManagerId, text: "書き直しました" });
+  assert.equal((await detail("stranger")).cheers[0].seen, false);
+  assert.equal(await unseen(), 2);
+
+  // 隠す: 管理人と書いた財布にだけ見える。戻すと、また誰にでも見える。
+  const smallCheer = (await detail("manager")).cheers.find((cheer) => cheer.walletName === "細い財布").cheerId;
+  assert.equal((await harness.act("manager", "cheer_hide", { cheerId: smallCheer })).cheersUnseen, 1);
+  assert.deepEqual((await detail("stranger")).cheers.map((cheer) => cheer.walletName), ["太い財布"]);
+  assert.equal((await detail("small")).cheers.find((cheer) => cheer.mine).hidden, true);
+  assert.equal((await detail("manager")).cheers.find((cheer) => cheer.cheerId === smallCheer).hidden, true);
+  // 隠した応援は、書き直しても隠れたまま（その月のあいだ）。
+  await harness.act("small", "set_cheer", { publicManagerId, text: "もう一度" });
+  assert.deepEqual((await detail("stranger")).cheers.map((cheer) => cheer.walletName), ["太い財布"]);
+  assert.equal(await unseen(), 1);
+  await harness.act("manager", "cheer_show", { cheerId: smallCheer });
+  assert.equal((await detail("stranger")).cheers.length, 2);
+  assert.equal(await unseen(), 2);
+
+  // 1日3回まで（日本時間の0時に戻る）。消すのは数えない。
+  await harness.act("small", "set_cheer", { publicManagerId, text: "3回目" });
+  assert.equal((await detail("small")).myCheer.leftToday, 0);
+  await rejects(harness.act("small", "set_cheer", { publicManagerId, text: "4回目" }), /1日3回まで/);
+  await harness.act("small", "set_cheer", { publicManagerId, text: "" });
+  assert.equal((await detail("stranger")).cheers.length, 1);
+  assert.equal(await unseen(), 1);
+
+  // 月が変わると応援欄は空になり、その月に貢ぐまで書けない。やることの数も0に戻る。
+  const before = jstMonthKey(harness.now());
+  harness.advance(32 * 24 * 60 * 60 * 1_000);
+  assert.notEqual(jstMonthKey(harness.now()), before);
+  assert.deepEqual((await detail("stranger")).cheers, []);
+  assert.equal((await detail("big")).myCheer.canWrite, false);
+  assert.equal(await unseen(), 0);
+});
