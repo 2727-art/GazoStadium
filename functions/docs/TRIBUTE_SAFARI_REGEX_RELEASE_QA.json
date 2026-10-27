@@ -1,0 +1,394 @@
+{
+  "checkedAt": "2026-10-27T11:35:30.079Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "47e088d",
+  "baseCommit": "c7179ab",
+  "alsoPushed": [
+    "f7c1864 (report marks release record)"
+  ],
+  "report": {
+    "receivedAt": "2026-10-27T00:08+09:00",
+    "device": "iPhone",
+    "symptom": "ranch stays on the loading toast; other features open; reload does not help",
+    "iosVersion": "not yet confirmed"
+  },
+  "cause": {
+    "file": "tribute-core.mjs",
+    "what": "negative lookbehind in the meeting pattern (since 2026-10-01)",
+    "effect": "Safari before iOS 16.4 cannot parse the module, so tribute.js never sets window.HariaiTribute and app.js keeps the loading toast",
+    "appCheck403Related": false,
+    "confidence": "likely; matches every symptom, iOS version of the reporter unconfirmed"
+  },
+  "fix": {
+    "pattern": "previous character instead of lookbehind, same test() result as the server",
+    "server": "unchanged (Node supports lookbehind)",
+    "guardTest": "functions/test/browser-regex-compat.test.js scans root *.js and *.mjs for lookbehind and checks meeting parity on 10 texts"
+  },
+  "scope": {
+    "functions": [],
+    "firestoreRules": false,
+    "firestoreIndexes": [],
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute-core.mjs"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2277,
+    "passed": 2244,
+    "failed": 0,
+    "skipped": 33
+  },
+  "preRelease": {
+    "deliveryCheckedAt": "2026-10-27T11:22:04.446Z",
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute-core.mjs"
+    ]
+  },
+  "push": "c7179ab..47e088d",
+  "functions": {
+    "listed": 37,
+    "changed": []
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "commit": "47e088d",
+    "conclusion": "success",
+    "completedAt": "2026-10-27T11:35:18Z"
+  },
+  "delivery": {
+    "checkedAt": "2026-10-27T11:35:30.079Z",
+    "readOnly": true,
+    "marker": "ranch-safari-regex-v1",
+    "commit": "47e088dfcc738ab128a71d51567d6140fff84fb6",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-safari-regex-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/browser-regex-compat.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-safari-regex-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/browser-regex-compat.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-safari-regex-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/browser-regex-compat.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-safari-regex-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/browser-regex-compat.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCoreCacheKey": true,
+    "lookbehindInServedCore": false,
+    "ranchModuleReady": true,
+    "storedAuthRecords": 0,
+    "oldSafariTested": false
+  },
+  "open": [
+    "ask the reporter to reload (HTML may be cached up to an hour) and share the iOS version"
+  ]
+}
