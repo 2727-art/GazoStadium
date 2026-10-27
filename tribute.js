@@ -100,27 +100,30 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
   renderExcerptImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1";
+} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1";
 import {
   CARD_FRAMES,
   FRAME_PALETTES,
+  PREMIUM_AVATARS,
   SEAL_INKS,
   SEAL_SHAPES,
   VAULT_DECORATION_ITEMS,
   decorationChoice,
   frameAttr,
+  isPremiumAvatar,
   normalizeDecorations,
+  premiumAvatar,
   requiredDecorationProducts,
   requiredVaultTier,
   sealSvg,
-} from "./tribute-deco.mjs?v=ranch-vault-v1";
+} from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1";
 
 const appRoot = document.querySelector("#app");
 // 確認シートとレシートは画面の外側に置く。画面要素の入場アニメーションが transform を使うため、
@@ -285,11 +288,12 @@ function sigilColor(card) {
 }
 
 // 管理人の印。アイコンを選んでいればその絵を印の色の縁で囲み、選んでいなければペルソナ名の1文字を出す。
+// 有料アイコンは丸く切らず、四角に金の縁で出す。
 function sigil(card, size = "") {
   const name = String(card?.personaName || "管").trim();
   const avatar = avatarId(card?.avatar);
   if (avatar) {
-    return `<span class="tribute-sigil has-avatar ${size}" style="--sigil:${sigilColor(card)}" aria-hidden="true"><img src="${escapeHtml(avatarUrl(avatar))}" alt="" width="112" height="112" decoding="async" draggable="false" /></span>`;
+    return `<span class="tribute-sigil has-avatar${isPremiumAvatar(avatar) ? " is-premium" : ""} ${size}" style="--sigil:${sigilColor(card)}" aria-hidden="true"><img src="${escapeHtml(avatarUrl(avatar))}" alt="" width="112" height="112" decoding="async" draggable="false" /></span>`;
   }
   return `<span class="tribute-sigil ${size}" style="--sigil:${sigilColor(card)}" aria-hidden="true">${escapeHtml(Array.from(name)[0] || "管")}</span>`;
 }
@@ -960,9 +964,10 @@ function renderCardEditor() {
     <div class="tribute-editor-preview"><small>掲示板での見え方</small><div class="tribute-card-grid" data-card-preview>${renderCardPreview(card)}</div></div>
     <label class="tribute-field"><span>ペルソナ名（1〜${LIMITS.personaName}文字）</span><input name="personaName" maxlength="${LIMITS.personaName}" required value="${escapeHtml(card.personaName || "")}" /></label>
     <fieldset><legend>印のアイコン</legend><div class="tribute-avatar-picker" data-avatar-picker style="--sigil:${sigilColor(card)}">${renderAvatarChoices(card)}</div>
-      <small>用意した${AVATARS.length}種から選びます（画像のアップロードはできません）。イラストは、ゆるめと大人びた絵を用意しています。</small></fieldset>
+      <div data-avatar-trial>${renderAvatarTrial({ avatar: card.avatar })}</div>
+      <small>用意した${AVATARS.length}種から選びます（画像のアップロードはできません）。イラストは、ゆるめと大人びた絵を用意しています。有料の四角いアイコンは試着でき、買うと保存できます（1枚 ${escapeHtml(formatPay(PREMIUM_AVATARS[0]?.price))} の買い切り）。</small></fieldset>
     <fieldset><legend>印の色</legend><div class="tribute-swatches">${SIGIL_COLORS.map((color, index) => `<label style="--sigil:${color}"><input type="radio" name="sigil" value="${index}" ${Number(card.sigil || 0) === index ? "checked" : ""} /><span aria-label="色${index + 1}"></span></label>`).join("")}</div>
-      <small>アイコンの縁と、掲示板のカードの色になります。</small></fieldset>
+      <small>アイコンの縁（有料アイコンは金の縁）と、掲示板のカードの色になります。</small></fieldset>
     ${renderSealSettings(card)}
     <div data-deco-section>${renderDecorationSettings(card)}</div>
     <div data-achievement-section>${renderCardAchievementPicker(card)}</div>
@@ -1029,8 +1034,10 @@ function decorationsTried(decorations) {
 }
 
 function decorationByProduct(productId) {
-  return [...CARD_FRAMES, ...SEAL_SHAPES, ...SEAL_INKS].find((entry) => entry.productId === productId) || null;
+  return [...CARD_FRAMES, ...SEAL_SHAPES, ...SEAL_INKS, ...PREMIUM_AVATARS].find((entry) => entry.productId === productId) || null;
 }
+
+const isAvatarProduct = (productId) => PREMIUM_AVATARS.some((entry) => entry.productId === productId);
 
 // 金庫のいちばん高く届いた段階（その段階までの金庫の飾りを使える）。
 function vaultBestTier() {
@@ -1050,7 +1057,7 @@ function formDecorations(form) {
   const card = state.profile?.card || {};
   const data = new FormData(form);
   const pick = (name) => (data.has(name) ? String(data.get(name)) : card[name]);
-  return normalizeDecorations({ frame: pick("frame"), frameColor: pick("frameColor"), sealShape: pick("sealShape"), sealInk: pick("sealInk") });
+  return { ...normalizeDecorations({ frame: pick("frame"), frameColor: pick("frameColor"), sealShape: pick("sealShape"), sealInk: pick("sealInk") }), avatar: avatarId(pick("avatar")) };
 }
 
 function decorationStatus(entry, selected) {
@@ -1125,8 +1132,16 @@ function refreshFrameColors(form) {
 }
 
 function renderDecorationTrial(look) {
-  const tried = decorationsTried(look).map(decorationByProduct).filter(Boolean);
-  const locked = vaultDecorationsLocked(look);
+  const tried = decorationsTried(look).filter((productId) => !isAvatarProduct(productId)).map(decorationByProduct).filter(Boolean);
+  return trialBox(tried, vaultDecorationsLocked(look));
+}
+
+// 有料アイコンの試着。飾りの試着とは分けて、アイコンの欄のすぐ下に出す。
+function renderAvatarTrial(look) {
+  return trialBox(decorationsTried(look).filter(isAvatarProduct).map(decorationByProduct).filter(Boolean), []);
+}
+
+function trialBox(tried, locked) {
   if (!tried.length && !locked.length) return "";
   const balance = state.walletBalance;
   const total = tried.reduce((sum, entry) => sum + entry.price, 0);
@@ -1159,8 +1174,19 @@ function updateDecorations(form) {
     if (art && slot === "sealShape") art.innerHTML = shapeArt(entry.id, look, form.elements.personaName?.value);
     if (art && slot === "frame") art.innerHTML = frameSwatch(entry.id, look);
   }
+  for (const tile of form.querySelectorAll("[data-avatar-premium]")) {
+    const entry = premiumAvatar(tile.dataset.avatarPremium);
+    if (!entry) continue;
+    const status = avatarStatus(entry, entry.id === look.avatar);
+    tile.classList.remove("is-free", "is-owned", "is-trying", "is-locked");
+    tile.classList.add(`is-${status.key}`);
+    const label = tile.querySelector("[data-avatar-status]");
+    if (label) label.textContent = status.label;
+  }
   const trial = form.querySelector("[data-deco-trial]");
   if (trial) trial.innerHTML = renderDecorationTrial(look);
+  const avatarTrial = form.querySelector("[data-avatar-trial]");
+  if (avatarTrial) avatarTrial.innerHTML = renderAvatarTrial(look);
   const save = form.querySelector("[data-card-save]");
   if (save) save.disabled = Boolean(state.busy) || decorationsTried(look).length > 0 || vaultDecorationsLocked(look).length > 0;
 }
@@ -1288,16 +1314,31 @@ function stopDecorationTrial(form) {
     if (slot === "frame") frameReset = true;
   }
   if (frameReset) refreshFrameColors(form);
+  const avatar = premiumAvatar(look.avatar);
+  if (avatar && !owned.has(avatar.productId)) {
+    const input = form.querySelector(`input[name="avatar"][value="${avatarId(state.profile?.card?.avatar)}"]`);
+    if (input) input.checked = true;
+  }
   updateDecorations(form);
   updateCardPreview(form);
   updateSealPreview(form);
 }
 
+// 有料アイコンの札。スマホでは絵の幅が36px ほどなので、「持っている」は短く「購入済」にする。
+function avatarStatus(entry, selected) {
+  const status = decorationStatus(entry, selected);
+  return status.key === "owned" ? { ...status, label: "購入済" } : status;
+}
+
 function renderAvatarChoices(card) {
   const selected = avatarId(card.avatar);
   const letter = Array.from(String(card.personaName || "管").trim())[0] || "管";
-  const icon = (avatar) => `<label title="${escapeHtml(avatar.label)}"><input type="radio" name="avatar" value="${avatar.id}" aria-label="印：${escapeHtml(avatar.label)}" ${selected === avatar.id ? "checked" : ""} /><span class="tribute-avatar-choice"><img src="${escapeHtml(avatarUrl(avatar.id))}" alt="" width="112" height="112" decoding="async" draggable="false" /></span></label>`;
-  // イラスト・写真の地雷系・写真の夜ギャルの段に分けて並べる。
+  const icon = (avatar) => {
+    const paid = premiumAvatar(avatar.id);
+    const status = paid ? avatarStatus(paid, selected === avatar.id) : null;
+    return `<label title="${escapeHtml(avatar.label)}"${paid ? ` class="is-premium is-${status.key}" data-avatar-premium="${paid.id}"` : ""}><input type="radio" name="avatar" value="${avatar.id}" aria-label="印：${escapeHtml(avatar.label)}${paid ? `（${escapeHtml(formatPay(paid.price))}）` : ""}" ${selected === avatar.id ? "checked" : ""} /><span class="tribute-avatar-choice${paid ? " is-premium" : ""}"><img src="${escapeHtml(avatarUrl(avatar.id))}" alt="" width="112" height="112" decoding="async" draggable="false" /></span>${paid ? `<small data-avatar-status>${escapeHtml(status.label)}</small>` : ""}</label>`;
+  };
+  // 有料・イラスト・写真の地雷系・写真の夜ギャルの段に分けて並べる。有料は持っていなくても試着できる。
   const groups = AVATAR_GROUPS.map((group) => {
     const icons = AVATARS.filter((avatar) => avatar.group === group.id).map(icon).join("");
     return icons ? `<span class="tribute-avatar-group">${escapeHtml(group.label)}</span><div class="tribute-avatar-grid">${icons}</div>` : "";
@@ -2355,6 +2396,7 @@ function shareManager(info) {
   return {
     personaName: manager.personaName,
     avatarUrl: avatarUrl(manager.avatar),
+    premiumAvatar: isPremiumAvatar(manager.avatar),
     color: SIGIL_COLORS[Number(manager.sigil) || 0] || SIGIL_COLORS[0],
     disclosureKey,
     disclosureLabel: DISCLOSURE_LABELS[disclosureKey],
@@ -2531,6 +2573,7 @@ function recruitData(card, month) {
     manager: {
       personaName: card.personaName,
       avatarUrl: avatarUrl(card.avatar),
+      premiumAvatar: isPremiumAvatar(card.avatar),
       color: sigilColor(card),
       disclosureKey,
       disclosureLabel: DISCLOSURE_LABELS[disclosureKey],
@@ -4211,6 +4254,7 @@ function bindRoot(root) {
     if (target) handleClick(target);
     const cardForm = event.target.closest?.('form[data-form="card"]');
     if (cardForm && ["avatar", "sigil", "disclosure", "style", "entryFee", "ignoreUnpaid", "postsScreenshots", "showsActivity"].includes(event.target.name)) updateCardPreview(cardForm);
+    if (cardForm && event.target.name === "avatar") updateDecorations(cardForm);
     if (cardForm && ["frame", "frameColor", "sealShape", "sealInk"].includes(event.target.name)) {
       if (event.target.name === "frame") refreshFrameColors(cardForm);
       updateDecorations(cardForm);
@@ -4565,7 +4609,7 @@ function previewThreadChange(change) {
   return thread.view;
 }
 
-const previewOwnedDecorations = new Set(["ranch_frame_kurokawa", "ranch_seal_heart", "ranch_ink_sakura"]);
+const previewOwnedDecorations = new Set(["ranch_frame_kurokawa", "ranch_seal_heart", "ranch_ink_sakura", "ranch_avatar_41"]);
 // 見本の金庫（vault-new はまだ金庫を作れない管理人）。
 const previewVault = { qualified: previewScreen !== "vault-new", amount: previewScreen === "vault-new" ? 0 : 12_400, tier: 0, bestTier: 0 };
 previewVault.tier = vaultTierFor(previewVault.amount);
@@ -4762,7 +4806,7 @@ function previewCall(action, payload) {
         managers: [
           { ...PREVIEW_MANAGER_CARD, grossRank: 1 },
           { ...PREVIEW_MANAGER_CARD, grossRank: 5, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", style: "cold", entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"], showsActivity: false, lastActiveAt: 0 },
-          { ...PREVIEW_MANAGER_CARD, grossRank: 2, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 10, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], lastActiveAt: now - 5 * 3_600_000 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 2, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", style: "sweet", entryFee: 5, sigil: 3, avatar: 38, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], lastActiveAt: now - 5 * 3_600_000 },
           { ...PREVIEW_MANAGER_CARD, grossRank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", style: "harsh", entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [], showsActivity: false, lastActiveAt: 0 },
           { ...PREVIEW_MANAGER_CARD, grossRank: 4, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", style: "cold", entryFee: 5, sigil: 3, avatar: 2, word: null, vault: { level: 3 }, intro: "毎日決まった額を、決まった時間に。", frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane", achievements: ["battle_total_1"] },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
@@ -4831,7 +4875,7 @@ function previewCall(action, payload) {
             { rank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", sigil: 2, avatar: 11, vault: { level: 4 }, payers: 5, receivedGross: 6_050, xHandle: "kai_kanri", rankingWord: "" },
             { rank: 4, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", sigil: 3, avatar: 2, vault: { level: 3 }, payers: 3, receivedGross: 3_300, xHandle: "", rankingWord: "毎日決まった額を、決まった時間に。" },
             { rank: 5, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", sigil: 1, avatar: 0, vault: { level: 2 }, payers: 3, receivedGross: 1_900, xHandle: "", rankingWord: "" },
-            { rank: 6, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", sigil: 3, avatar: 10, vault: { level: 5 }, payers: 3, receivedGross: 1_200, xHandle: "yuna_amayakashi", rankingWord: "甘やかし担当。無理はさせない。" },
+            { rank: 6, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", sigil: 3, avatar: 38, vault: { level: 5 }, payers: 3, receivedGross: 1_200, xHandle: "yuna_amayakashi", rankingWord: "甘やかし担当。無理はさせない。" },
           ],
         });
       }
@@ -4850,7 +4894,7 @@ function previewCall(action, payload) {
         ok: true,
         vault: previewVaultView(),
         ranking: [
-          { rank: 1, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", sigil: 3, avatar: 10, vault: { level: 5 } },
+          { rank: 1, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", sigil: 3, avatar: 38, vault: { level: 5 } },
           { rank: 2, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, vault: { level: 4 } },
           { rank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", sigil: 2, avatar: 11, vault: { level: 4 } },
           ...(previewVault.tier ? [{ rank: 4, publicManagerId: "f".repeat(24), personaName: "レイ", disclosure: "as_is", sigil: 2, avatar: 5, vault: { level: previewVault.tier }, mine: true }] : []),

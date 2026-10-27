@@ -35,7 +35,7 @@ test("the landing replaces the market tile with お貢ぎ牧場 and keeps old ma
   assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-activity-optin-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1-ranch-screenshot-v1(?:-[a-z0-9-]+)?"/);
-  assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1"/);
+  assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1-ranch-premium-icons-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
   assert.doesNotMatch(app, /id="valueMarketButton"/);
@@ -170,22 +170,23 @@ test("client filters and contract views mirror the server", async () => {
   assert.equal(core.viewContract(contract, "p", now).collarNo, 3);
   assert.equal(core.viewContract(contract, "p", now).peerReadSeq, 4, "the payer sees how far the manager has read");
   assert.equal(core.viewContract(contract, "m", now).peerReadSeq, 9);
-  for (const avatar of [undefined, 36, -2, "x"]) {
+  for (const avatar of [undefined, 43, -2, "x"]) {
     const odd = { ...contract, managerCard: { ...contract.managerCard, avatar } };
     assert.equal(core.viewContract(odd, "p", now).manager.avatar, serverView(odd, "p", now).manager.avatar, String(avatar));
     assert.equal(core.viewContract(odd, "p", now).manager.avatar, 0, String(avatar));
   }
 });
 
-test("manager icons are 35 prepared WebP files (24 drawings, 11 photos) chosen in the card editor, never uploads", async () => {
+test("manager icons are 42 prepared WebP files (24 drawings, 11 photos, 7 paid squares) chosen in the card editor, never uploads", async () => {
   const core = await loadCore();
   assert.deepEqual(core.AVATARS.map((avatar) => avatar.id), rules.AVATAR_IDS.filter((id) => id > 0));
   assert.equal(core.AVATAR_MAX, rules.AVATAR_MAX);
-  assert.equal(core.AVATAR_MAX, 35);
-  // イラスト24・写真の地雷系4・写真の夜ギャル7。ブランドやキャラクターが写った3枚は入れていない。
+  assert.equal(core.AVATAR_MAX, 42);
+  // 有料7・イラスト24・写真の地雷系4・写真の夜ギャル7。ブランドやキャラクターが写った3枚は入れていない。
   const groupOf = (id) => core.AVATARS.find((avatar) => avatar.id === id).group;
-  assert.deepEqual(core.AVATAR_GROUPS.map((group) => group.id), ["illust", "jirai", "gal"]);
-  assert.deepEqual(core.AVATAR_GROUPS.map((group) => core.AVATARS.filter((avatar) => avatar.group === group.id).length), [24, 4, 7]);
+  assert.deepEqual(core.AVATAR_GROUPS.map((group) => group.id), ["premium", "illust", "jirai", "gal"]);
+  assert.deepEqual(core.AVATAR_GROUPS.map((group) => core.AVATARS.filter((avatar) => avatar.group === group.id).length), [7, 24, 4, 7]);
+  assert.deepEqual(core.AVATARS.filter((avatar) => avatar.group === "premium").map((avatar) => avatar.id), [...rules.PREMIUM_AVATAR_IDS]);
   assert.equal(groupOf(12), "illust");
   assert.equal(groupOf(13), "jirai");
   assert.equal(groupOf(17), "gal");
@@ -199,7 +200,7 @@ test("manager icons are 35 prepared WebP files (24 drawings, 11 photos) chosen i
     assert.equal(file.subarray(8, 12).toString("latin1"), "WEBP", `avatar ${id}`);
     assert.ok(file.length < 20_000, `avatar ${id} stays small`);
   }
-  for (const value of [0, 36, -1, "1; background:url(x)", null]) {
+  for (const value of [0, 43, -1, "1; background:url(x)", null]) {
     assert.equal(core.avatarId(value), 0, String(value));
     assert.equal(core.avatarUrl(value), "", String(value));
   }
@@ -209,7 +210,7 @@ test("manager icons are 35 prepared WebP files (24 drawings, 11 photos) chosen i
 
   const sigilSource = sourceBlock(client, "function sigil(card", "function disclosureTag");
   assert.match(sigilSource, /avatarId\(card\?\.avatar\)/);
-  assert.match(sigilSource, /class="tribute-sigil has-avatar \$\{size\}"[^>]*aria-hidden="true"><img src="\$\{escapeHtml\(avatarUrl\(avatar\)\)\}" alt=""/);
+  assert.match(sigilSource, /class="tribute-sigil has-avatar\$\{isPremiumAvatar\(avatar\) \? " is-premium" : ""\} \$\{size\}"[^>]*aria-hidden="true"><img src="\$\{escapeHtml\(avatarUrl\(avatar\)\)\}" alt=""/);
   const editor = sourceBlock(client, "function renderCardEditor", "// ───────────── スレッド ─────────────");
   assert.match(editor, /<legend>印のアイコン<\/legend>/);
   assert.match(editor, /name="avatar" value="\$\{avatar\.id\}"/);
@@ -225,7 +226,10 @@ test("manager icons are 35 prepared WebP files (24 drawings, 11 photos) chosen i
   assert.match(styles, /\.tribute-avatar-group \{/);
   assert.match(styles, /\.tribute-sigil\.has-avatar img \{/);
   assert.match(styles, /\.tribute-avatar-grid \{ display: grid; grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
-  assert.match(design, /管理人の印は、用意した35種のアイコン/);
+  assert.match(design, /管理人の印は、用意した42種のアイコン/);
+  // 有料アイコンは四角に金の縁。画面とシェア画像の両方で丸く切らない。
+  assert.match(styles, /\.tribute-sigil\.has-avatar\.is-premium,\r?\n\.tribute-avatar-choice\.is-premium \{\r?\n  border-radius: 6px;/);
+  assert.match(read("tribute-share.mjs"), /if \(image && manager\?\.premiumAvatar\) \{\s*paintPremiumAvatar\(/);
 });
 
 test("templates are harsh but never cross the stated lines, and lowering or leaving is never blamed", async () => {
