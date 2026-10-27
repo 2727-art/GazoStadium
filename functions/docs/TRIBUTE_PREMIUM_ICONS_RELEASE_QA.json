@@ -55,7 +55,13 @@
     "cloudflareUnresolvedIncidents": 0,
     "localDryRun": "wrangler 4.153.0 deploy --dry-run --assets=. on the exported commit read 735 files without error",
     "logs": "Cloudflare dashboard only (not readable from this session)",
-    "retry": "the merge of this release record rebuilds workers.dev"
+    "retry": "the merge of this release record rebuilds workers.dev",
+    "retryResult": {
+      "commit": "e0abc8e522f48b7167987012d13c939a54cd6c08",
+      "buildId": "3568dd52-cef2-4863-8158-ab6aa81b41db",
+      "conclusion": "success",
+      "completedAt": "2026-10-27T09:51:44Z"
+    }
   },
   "deliveryCheck": {
     "script": "functions/scripts/verify-tribute-premium-icons-release.cjs",
@@ -418,5 +424,56 @@
   "notVerified": [
     "a real AnjuPay purchase and card save in production"
   ],
-  "productionDataWrites": "none"
+  "productionDataWrites": "none",
+  "finalDeliveryCheck": {
+    "checkedAt": "2026-10-27T09:52:35.047Z",
+    "commit": "e0abc8e522f48b7167987012d13c939a54cd6c08",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": 15,
+        "filesOk": true,
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": 15,
+        "filesOk": true,
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": 15,
+        "filesOk": true,
+        "privateStatuses": [
+          404
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexOk": true,
+        "previousMarkers": true,
+        "files": 15,
+        "filesOk": true,
+        "privateStatuses": [
+          404
+        ]
+      }
+    ]
+  }
 }
