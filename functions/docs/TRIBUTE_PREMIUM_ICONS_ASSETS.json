@@ -1,0 +1,124 @@
+{
+  "method": "Crop, colour grade, edge tint, sheen and sparkle overlay, resize, WebP encoding. No generative redraw. The gold frame is drawn by CSS and canvas, not baked in.",
+  "icons": [
+    {
+      "id": 36,
+      "file": "assets/tribute-avatars/avatar-36.webp",
+      "sourceFile": "9.webp",
+      "sourceSha256": "35b24b77b5262aac37b680a5e984ac3d1b31ea1241c4c7f523de07eca7b96bf6",
+      "crop": {
+        "left": 70,
+        "top": 110,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 90,
+      "bytes": 19026,
+      "sha256": "de14c518686ac1f09808966ce52b493c8ea8cf807ebe93bebfbbc51448895418"
+    },
+    {
+      "id": 37,
+      "file": "assets/tribute-avatars/avatar-37.webp",
+      "sourceFile": "13.webp",
+      "sourceSha256": "43a2030ec3f3c0946fc53d249668c1f57c7fdd04b700be99ad1294669aa2bba6",
+      "crop": {
+        "left": 70,
+        "top": 90,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 86,
+      "bytes": 18616,
+      "sha256": "44a442f65bf3aec337325588f155d988b59da2c1b549844026fa852891bdbae8"
+    },
+    {
+      "id": 38,
+      "file": "assets/tribute-avatars/avatar-38.webp",
+      "sourceFile": "8.webp",
+      "sourceSha256": "0f462174f19992c3371e7cd1b5000679dfd2520726f65354edd85ac0c0997db3",
+      "crop": {
+        "left": 110,
+        "top": 90,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 84,
+      "bytes": 18678,
+      "sha256": "10bfb7ffb5d09b604dc444db06a516aa0991f1e9e11683eded35e3ccdb3c64b0"
+    },
+    {
+      "id": 39,
+      "file": "assets/tribute-avatars/avatar-39.webp",
+      "sourceFile": "11.webp",
+      "sourceSha256": "6272596a2e2d9583ddcfa901c25c63bd593bdd8045a0213b121e8c3b1a0ab67d",
+      "crop": {
+        "left": 124,
+        "top": 110,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 86,
+      "bytes": 19124,
+      "sha256": "da9e598e81f8506b0abfb664c66d94f2f2f947c4fbfbf0b127975512deff616c"
+    },
+    {
+      "id": 40,
+      "file": "assets/tribute-avatars/avatar-40.webp",
+      "sourceFile": "10.webp",
+      "sourceSha256": "5eeae915d1436a0c2297b30c04abaa9d41cdc5d0c3395af91bd07876d7452154",
+      "crop": {
+        "left": 70,
+        "top": 90,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 90,
+      "bytes": 12114,
+      "sha256": "46d9e1ee6f5d874cddbfe3039612e968b828f5861e5b1100e211ac9db2083422"
+    },
+    {
+      "id": 41,
+      "file": "assets/tribute-avatars/avatar-41.webp",
+      "sourceFile": "14.webp",
+      "sourceSha256": "5cbf1bd62fdd553a85b84df330e401153659d2f4add18728dea7bd1a7a0e5e2d",
+      "crop": {
+        "left": 50,
+        "top": 30,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 86,
+      "bytes": 19808,
+      "sha256": "04d1f50de32e5cccebcc03ea6c8165519f58363d1a86b672cb2ec6409362c3e0"
+    },
+    {
+      "id": 42,
+      "file": "assets/tribute-avatars/avatar-42.webp",
+      "sourceFile": "12.webp",
+      "sourceSha256": "80f62932377086835347bb4653a2b5e4269fb68fa72fa275b664776e9b7902aa",
+      "crop": {
+        "left": 70,
+        "top": 70,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 90,
+      "bytes": 19728,
+      "sha256": "83810ff660c3c84bf8c307efa4e29d7545e8676e1152fa8c36dd91f4c9e51e8c"
+    }
+  ]
+}

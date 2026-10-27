@@ -65,10 +65,12 @@ export const DISCLOSURE_LABELS = Object.freeze({
 export const DISCLOSURE_SHORT = Object.freeze({ nekama: "ネカマ", as_is: "素", undisclosed: "非開示" });
 export const STYLE_LABELS = Object.freeze({ harsh: "罵倒", cold: "事務的", sweet: "甘やかし" });
 export const SIGIL_COLORS = Object.freeze(["#ff4fa3", "#b48cff", "#5fd4ff", "#ffd166", "#7ee08a", "#ff7a59"]);
-// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある35種から選ぶ。
+// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある42種から選ぶ。
 // 1〜6 はゆるめの絵、7〜12 は同じ6人の大人びた絵。13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（無料）。
 // 24〜29 はパステル調のミニイラスト、30〜35 は同じ6人の等身イラスト。既存の番号は変えない。
+// 36〜42 は有料（1枚 500 Pay の買い切り。四角に金の縁で出す）。商品は tribute-deco.mjs の PREMIUM_AVATARS。
 export const AVATAR_GROUPS = Object.freeze([
+  Object.freeze({ id: "premium", label: "有料・四角（各500 Pay）" }),
   Object.freeze({ id: "illust", label: "イラスト" }),
   Object.freeze({ id: "jirai", label: "写真・地雷系" }),
   Object.freeze({ id: "gal", label: "写真・夜ギャル" }),
@@ -109,6 +111,13 @@ export const AVATARS = Object.freeze([
   Object.freeze({ id: 33, group: "illust", label: "パステル・青髪ショート（等身）" }),
   Object.freeze({ id: 34, group: "illust", label: "パステル・茶髪ツイン（等身）" }),
   Object.freeze({ id: 35, group: "illust", label: "パステル・紫髪リボン（等身）" }),
+  Object.freeze({ id: 36, group: "premium", label: "有料・桜色" }),
+  Object.freeze({ id: 37, group: "premium", label: "有料・珊瑚色" }),
+  Object.freeze({ id: 38, group: "premium", label: "有料・シャンパン" }),
+  Object.freeze({ id: 39, group: "premium", label: "有料・抹茶" }),
+  Object.freeze({ id: 40, group: "premium", label: "有料・白桃" }),
+  Object.freeze({ id: 41, group: "premium", label: "有料・藤色" }),
+  Object.freeze({ id: 42, group: "premium", label: "有料・空色" }),
 ]);
 export const AVATAR_MAX = AVATARS.length;
 
