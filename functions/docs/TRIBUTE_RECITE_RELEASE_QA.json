@@ -1,0 +1,477 @@
+{
+  "checkedAt": "2026-10-27T10:21:08.856Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "0097972",
+  "implementationCommit": "7ae3b34",
+  "baseCommit": "f958b78",
+  "worktree": ".claude/worktrees/ranch-photo-icons (branch design/ranch-wallet-moves)",
+  "decisions": {
+    "thisRelease": "stage 3 of design section 14",
+    "sealWords": "seal words live in the card seals as word:<text>, not in ownWords.seals",
+    "extension": "only the payer asks; the manager accepts or declines",
+    "decidedBy": "user, 2026-10-27 JST"
+  },
+  "mechanism": {
+    "wordOffering": "payer offer_words, up to 400 characters, contract text rules, 3 per contract per JST day; no Pay moves; received like a tribute with a seal and reward; no receipt; not counted in rankings, gross, cheers, achievements or caps",
+    "recitation": "manager recite_order (60 characters, request note rules, NG words, sexual words only with the payer's permission) and a count of 1/3/5; one at a time; payer recite must match after NFKC, trimming and collapsing spaces; manager recite_confirm once with a seal and reward; not reciting has no consequence",
+    "ownWords": "set_own_words: up to 10 lines (60 characters) and 5 rewards (12 characters) with a tone tag; manager-only; offered only when the tag is within the ceiling, no NG words, sexual words only with permission; checked on the server for rewards",
+    "sealWords": "up to 7 characters, combined with list seals up to 3; today's-word forbidden lines and no sexual words; stored as word:<text> on events and receipts",
+    "extension": "payer extend_request 1/3/7/14/30 days, one at a time, extend_withdraw; manager extend_accept extends from the current end, extend_decline; no entry fee"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "newActions": [
+      "offer_words",
+      "recite_order",
+      "recite",
+      "recite_withdraw",
+      "recite_confirm",
+      "extend_request",
+      "extend_withdraw",
+      "extend_accept",
+      "extend_decline",
+      "set_own_words"
+    ],
+    "firestoreIndexes": [],
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2272,
+    "passed": 2240,
+    "failed": 0,
+    "skipped": 32,
+    "beforeAndAfterMerge": true
+  },
+  "preRelease": {
+    "deliveryCheckedAt": "2026-10-27T10:09:15.281Z",
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "otherSessionChangesIncluded": "ranch paid icons (PR #10-#13) merged into 0097972 before the final deploy"
+  },
+  "overlapWithPaidIcons": {
+    "iconRelease": {
+      "functions": [
+        "economyAction",
+        "tributeAction"
+      ],
+      "sourceHash": "bc650ccea2e17fcff5eb262cf835c0992e780cc5",
+      "hosting": "f161881"
+    },
+    "stage3OnlyFunctionsDeploy": {
+      "commit": "7ae3b34",
+      "tributeActionHash": "004816d6bc58f5567d32a9fd3acc9bcf88b6a5b2",
+      "lackedPaidIcons": true
+    },
+    "rejectedPush": "non-fast-forward (main had moved to f958b78)",
+    "effect": "tributeAction treated icons 36-42 as the letter sigil (AVATAR_MAX 35); cards saved in the window would store the letter sigil; purchases stayed in the inventory; economyAction and hosting were unaffected",
+    "window": {
+      "startedAfter": "2026-10-27T09:47:38Z",
+      "observedBy": "2026-10-27T10:07:13Z",
+      "endedBy": "2026-10-27T10:18:20Z"
+    },
+    "affectedCards": "unknown (production data is not readable from this session)",
+    "fix": "merged origin/main f958b78 into the branch (0097972), kept both cache markers, the 42-icon line and the seal-word line, re-ran tests and preview, then redeployed Functions, pushed and deployed Hosting",
+    "tributeActionBeforeIcons": "9396efbaaeb1c566c8149c398b7561f2decf3877"
+  },
+  "push": "f958b78..0097972",
+  "functions": {
+    "listed": 37,
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "004816d6bc58f5567d32a9fd3acc9bcf88b6a5b2",
+        "sourceHash": "24e598f25e8d748e60a63bb20b99acfeb2a9c14e"
+      }
+    ],
+    "othersUnchanged": true,
+    "economyActionKeptFromIconRelease": true,
+    "deployedSourceHas": {
+      "avatarMax": 42,
+      "premiumAvatarIds": [
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42
+      ],
+      "reciteTargets": [
+        1,
+        3,
+        5
+      ]
+    }
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "commit": "0097972",
+    "conclusion": "success",
+    "completedAt": "2026-10-27T10:18:20Z"
+  },
+  "delivery": {
+    "checkedAt": "2026-10-27T10:21:08.856Z",
+    "readOnly": true,
+    "marker": "ranch-recite-v1",
+    "commit": "009797220e4c77183943d898c6265be53e995fe3",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-recite-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-recite.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-recite-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-recite.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-recite-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-recite.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-recite-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-recite.test.js",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ],
+    "paidIconFiles": {
+      "avatar-36.webp": 200,
+      "avatar-42.webp": 200,
+      "routes": 4
+    }
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": {
+      "tribute.js": true,
+      "tribute.css": true,
+      "tribute-core.mjs": true
+    },
+    "servedClientHas": {
+      "offerWordsSheet": true,
+      "reciteOrderSheet": true,
+      "reciteExactCheck": true,
+      "reciteConfirm": true,
+      "extendRequest": true,
+      "extendAccept": true,
+      "ownWordsEditor": true,
+      "sealWords": true,
+      "letterStyle": true,
+      "recitePanelStyle": true
+    },
+    "consoleErrors": 1,
+    "consoleErrorNote": "App Check reCAPTCHA Enterprise token exchange answered 403 in the check browser; App Check files and settings were not changed by this release",
+    "storedAuthRecords": 0
+  },
+  "open": [
+    "word offerings, recitation, extensions and own words were not exercised in production (tests and preview)",
+    "whether any card was saved with a paid icon during the overlap window is unknown"
+  ]
+}
