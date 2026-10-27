@@ -188,6 +188,15 @@ import {
   orderedThreadEntries,
   scoreWord,
 } from "./normal-dm-thread.mjs?v=normal-dm-thread-v1";
+import {
+  canGaze,
+  clampGazeZoom,
+  gazeLineOpacity,
+  nextGazeRound,
+  recentGazeChatIds,
+  toggleGazeZoom,
+  zoomGazeAt,
+} from "./normal-dm-gaze.mjs?v=normal-dm-gaze-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -201,6 +210,7 @@ const FINISH_LINE_KEY = "hariai-stadium-online-finish-line-v1";
 const FINISH_REPLY_LINE_KEY = "hariai-stadium-online-finish-reply-line-v1";
 const ROLEPLAY_VOICE_SET_KEY = "hariai-stadium-online-roleplay-voice-v1";
 const OPPONENT_CUSTOM_FINISH_KEY = "hariai-stadium-online-opponent-custom-finish-v1";
+const GAZE_AUTO_OPEN_KEY = "hariai-stadium-online-gaze-auto-v1";
 const IMAGE_PREFERENCE_KEY = "hariai-stadium-online-image-preference-v1";
 const SOLO_REUNION_PREFERENCE_KEY = "hariai-stadium-solo-reunion-preference-v1";
 const MAX_PURSUIT_LINE_LENGTH = 40;
@@ -512,6 +522,13 @@ const DM_THREAD_FOLLOW_SLACK_PX = 80;
 let dmThreadFollow = true;
 let dmThreadScrollTop = 0;
 let dmToolsOpen = false;
+// 見つめるモード：相手の1枚を画面いっぱいに出し、チャットと採点を半透明で重ねる。
+// 文字を隠して画像だけを見ている間だけ、ピンチとダブルタップで拡大できる。
+let gazeChromeHidden = false;
+let gazeZoom = { scale: 1, x: 0, y: 0 };
+let gazeTapTimer = 0;
+let gazeLayoutObserver = null;
+let gazeScrollPending = false;
 let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
 let pendingSampleMatchmakingLaunch = null;
@@ -627,6 +644,7 @@ function createOnlineState() {
     roleplayVoiceSetId: savedVoiceSetId === inferredVoiceSetId ? savedVoiceSetId : inferredVoiceSetId,
     roleplayVoiceFallbackId: inferredVoiceSetId || savedVoiceSetId || ROLEPLAY_VOICE_SETS[0].id,
     showOpponentCustomFinish: localStorage.getItem(OPPONENT_CUSTOM_FINISH_KEY) !== "0",
+    gazeAutoOpen: localStorage.getItem(GAZE_AUTO_OPEN_KEY) !== "0",
     imagePreference,
     soloFamiliarStage: "engawa_only",
     soloFamiliarReady: false,
@@ -675,6 +693,8 @@ function createOnlineState() {
     roundCaptionChoice: "",
     sentCaptions: new Map(),
     threadLog: [],
+    gazeRound: null,
+    gazeAutoOpenedRounds: [],
     remoteImages: new Map(),
     remoteAvatar: null,
     avatarSent: false,
@@ -2023,6 +2043,10 @@ const BATTLE_PREVIEW_STEPS = [
   ["waitingImage", "画像転送"],
   ["reveal", "届く・採点"],
   ["waitingScore", "採点待ち"],
+  ["gaze:score", "見つめる・採点"],
+  ["gaze:clean", "画像だけ"],
+  ["gaze:waiting", "見つめる・待つ"],
+  ["gaze:past", "前の1枚"],
   ["result:local", "点数 効かせた"],
   ["result:remote", "点数 効かされた"],
   ["result:draw", "点数 引き分け"],
@@ -2143,12 +2167,20 @@ function previewRoundResult(round, scorePlayerOne, scorePlayerTwo, localCardId) 
 
 function showBattlePreviewStep(step) {
   if (!active || !useOfflineBattlePreview) return;
-  const [screen, variant = ""] = String(step || "connecting").split(":");
+  let [screen, variant = ""] = String(step || "connecting").split(":");
+  // 見つめるモードの場面：届いた直後（採点）・画像だけ・採点を待つ間・前のラウンドの1枚
+  const gazeVariant = screen === "gaze" ? variant : "";
+  if (gazeVariant) screen = { waiting: "waitingScore", past: "score" }[gazeVariant] || "reveal";
   const round = BATTLE_PREVIEW_ROUND;
   battlePreview.lastStep = step;
   battlePreview.run += 1;
   clearFinishCutIn({ restoreFocus: false });
   resetSelectionTimerState();
+  // 毎回、その場面に入ったところから見せる（届いた時に見つめるモードで開く設定も、そのまま確かめられる）。
+  lastRenderedScreen = "";
+  state.gazeRound = gazeVariant ? (gazeVariant === "past" ? 1 : round) : null;
+  state.gazeAutoOpenedRounds = [];
+  resetGazeView();
   // 毎回別の部屋として扱い、同じ画面でも演出を最初から再生する。
   state.roomId = `preview-velvet-stage-${battlePreview.run}`;
   state.round = round;
@@ -2238,6 +2270,7 @@ function showBattlePreviewStep(step) {
   }
   state.screen = screen;
   render();
+  if (gazeVariant === "clean") setGazeChromeHidden(true);
 }
 
 function openDailyMissions() {
@@ -4680,6 +4713,7 @@ function render() {
   const screenChanged = lastRenderedScreen !== state.screen;
   const chatFocus = captureDmChatFocus();
   const threadNodes = collectDmThreadNodes(appRoot);
+  syncGazeWithScreen(lastRenderedScreen);
   const renderers = {
     setup: renderSetup,
     familiarBook: renderSoloFamiliarBook,
@@ -4713,6 +4747,7 @@ function render() {
   bindScreenEvents();
   if (screenChanged) {
     window.scrollTo(0, 0);
+    gazeScrollPending = true;
     if (!chatFocus) appRoot.focus({ preventScroll: true });
   }
   restoreDmChatFocus(chatFocus);
@@ -4729,7 +4764,7 @@ function captureDmChatFocus() {
 
 function restoreDmChatFocus(focus) {
   if (!focus) return;
-  const input = document.querySelector("[data-dm-thread] ~ .vb-dm-composer #onlineChatInput");
+  const input = document.querySelector(".vb-dm .vb-dm-composer #onlineChatInput");
   if (!input) return;
   input.focus({ preventScroll: true });
   if (Number.isInteger(focus.start) && Number.isInteger(focus.end)) {
@@ -4738,13 +4773,24 @@ function restoreDmChatFocus(focus) {
 }
 
 // DMは画面の高さに収め、スレッドだけを内側でスクロールさせる。
-function settleDmLayout({ follow = false } = {}) {
+function settleDmLayout({ follow = false, keepScroll = false } = {}) {
   const screen = appRoot.querySelector(".vb-dm");
-  const thread = screen?.querySelector("[data-dm-thread]");
-  if (!screen || !thread) return;
+  if (!screen) return;
   const top = Math.max(0, Math.round(screen.getBoundingClientRect().top + window.scrollY));
+  if (screen.matches("[data-gaze]")) {
+    // 見つめるモードは画面の高さいっぱいを使い、開いた時と場面が進んだ時にページをそこまで送る。
+    // 上へ戻せば見出しと安全の欄があるので、それ以外の描き直しや画面の大きさの変化では送り直さない。
+    screen.style.setProperty("--vb-dm-top", "0px");
+    if (gazeScrollPending && !keepScroll && Math.abs(window.scrollY - top) > 1) window.scrollTo(0, top);
+    gazeScrollPending = false;
+    if (follow) dmThreadFollow = true;
+    syncGazeKeyboard();
+    return;
+  }
   screen.style.setProperty("--vb-dm-top", `${top}px`);
   if (follow) dmThreadFollow = true;
+  const thread = screen.querySelector("[data-dm-thread]");
+  if (!thread) return;
   if (dmThreadFollow) thread.scrollTop = thread.scrollHeight;
   else thread.scrollTop = dmThreadScrollTop;
 }
@@ -4761,6 +4807,9 @@ function stickDmThreadIfFollowing() {
 }
 
 function bindDmThreadEvents() {
+  document.querySelector("[data-dm-tools]")?.addEventListener("toggle", (event) => {
+    dmToolsOpen = event.currentTarget.open;
+  });
   const thread = document.querySelector("[data-dm-thread]");
   if (!thread) return;
   const jump = document.querySelector("[data-dm-jump]");
@@ -4777,9 +4826,6 @@ function bindDmThreadEvents() {
     dmThreadFollow = true;
     thread.scrollTop = thread.scrollHeight;
     jump.hidden = true;
-  });
-  document.querySelector("[data-dm-tools]")?.addEventListener("toggle", (event) => {
-    dmToolsOpen = event.currentTarget.open;
   });
 }
 
@@ -4798,13 +4844,15 @@ function playBattleSceneFx() {
     return;
   }
   if (state.screen === "reveal") {
-    // 相手の1枚が、DMのメッセージとしてスレッドに届く。画像の読み込みを待ってから見せる。
+    // 相手の1枚が、DMのメッセージとしてスレッドに届く（見つめるモードなら画面いっぱいに届く）。
+    // 画像の読み込みを待ってから見せる。
     const key = battleFxKey("reveal");
     const start = () => {
       if (!root.isConnected || state.screen !== "reveal") return;
       fx.play(root, key, [
         [0, (ctx) => {
           root.querySelector(".vb-dm-item.is-arriving")?.classList.add("is-in");
+          if (root.matches(".vb-gaze.is-arriving")) root.classList.add("is-in");
           stickDmThreadIfFollowing();
           ctx.sound(() => audio()?.playReveal?.(), { essential: true });
         }],
@@ -4815,7 +4863,7 @@ function playBattleSceneFx() {
       start();
       return;
     }
-    const images = Array.from(root.querySelectorAll(".vb-dm-item.is-arriving img")).map((image) => image.src);
+    const images = Array.from(root.querySelectorAll(".vb-dm-item.is-arriving img, .vb-gaze.is-arriving [data-gaze-image]")).map((image) => image.src);
     Promise.race([fx.decode(images), new Promise((resolve) => window.setTimeout(resolve, 1500))]).then(start);
     return;
   }
@@ -5712,8 +5760,9 @@ function isDmScene(screen = state.screen) {
   上から DMヘッダー → スレッド（全ラウンドの出来事とチャット）→ その時の操作枠 → チャットの入力欄。
   主役は相手が貼ってきた画像と言葉。自分の画像は「貼った」印だけにする。
 */
-function renderDmScreen(scene, { dock = "", tail = "", fxScene = "", hpOverride = null, menuItems = BATTLE_MENU_DESTROY } = {}) {
+function renderDmScreen(scene, { dock = "", tail = "", gazeTail = tail, fxScene = "", hpOverride = null, menuItems = BATTLE_MENU_DESTROY } = {}) {
   syncThreadLog();
+  if (state.gazeRound !== null && canGaze(state.screen)) return renderGazeScreen(scene, { dock, tail: gazeTail, fxScene, hpOverride });
   const pending = fxScene && battleFxPending(fxScene);
   const typing = activeRemoteTyping();
   const opponentName = getOpponent()?.name || "相手";
@@ -5728,6 +5777,294 @@ function renderDmScreen(scene, { dock = "", tail = "", fxScene = "", hpOverride 
     ${dock ? `<div class="vb-dm-dock">${dock}</div>` : ""}
     ${renderDmComposer()}
   </section>`;
+}
+
+const GAZE_ICON_CLOSE = '<svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
+const GAZE_ICON_IMAGE_ONLY = '<svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>';
+
+/*
+  見つめるモード：相手の1枚を画面いっぱいに出し、ひとこと・直近のチャット・採点・入力欄を半透明で重ねる。
+  画像をタップすると文字と操作が消えて画像だけになり、その間だけピンチとダブルタップで拡大できる。
+  開閉の判断と拡大の計算は normal-dm-gaze.mjs。スレッドの代わりに描き、閉じるとスレッドへ戻る。
+*/
+function renderGazeScreen(scene, { dock = "", tail = "", fxScene = "", hpOverride = null } = {}) {
+  const round = state.gazeRound;
+  const item = state.remoteImages.get(round);
+  const name = getOpponent()?.name || "相手";
+  const persona = normalizeChatPersonaId(item?.voiceSetId) || opponentPersonaId();
+  const personaLabel = persona ? getRoleplayVoiceSet(persona)?.label : "";
+  const current = round === state.round;
+  const pending = fxScene && battleFxPending(fxScene);
+  const arriving = current && scene === "reveal" && battleFxPending("reveal");
+  const typing = activeRemoteTyping();
+  const fx = window.HariaiBattleFx;
+  fx?.prepareFill?.(item.url);
+  const fill = fx?.fillSource?.(item.url) || "";
+  const remoteIndex = state.playerIndex === 0 ? 1 : 0;
+  const gauge = (index) => {
+    const player = state.players[index] || {};
+    const local = index === state.playerIndex;
+    const maxHp = Number(player.maxHp || player.startingHp || MAX_HP);
+    const hp = Math.max(0, Number(hpOverride?.[index] ?? player.hp) || 0);
+    const label = local ? "あなたの理性" : `${player.name || name}の理性`;
+    return `<div class="vb-gaze-gauge ${local ? "is-local" : "is-remote"}">
+      <span><span>${escapeHtml(label)}</span><b>${hp}/${maxHp}</b></span>
+      <i role="img" aria-label="${escapeHtml(label)} ${hp}/${maxHp}" style="--hp:${Math.max(0, Math.min(1, hp / maxHp)).toFixed(3)}"></i>
+    </div>`;
+  };
+  // 前のラウンドの1枚を見ている時は、採点の代わりに今の1枚へ移るボタンを出す。
+  const scoring = scene === "reveal" || scene === "score";
+  const dockContent = scoring && !current
+    ? `<button type="button" class="button button-primary vb-gaze-current" data-gaze-current>ROUND ${state.round}の1枚を見て採点する</button>`
+    : dock;
+  const roundLabel = current ? `ROUND ${round}/${MAX_ROUNDS}` : `ROUND ${round}の1枚 · いまはROUND ${state.round}`;
+  const caption = renderCardCaption(item, { personaId: persona });
+  const hidden = gazeChromeHidden;
+  return `<section class="screen vb-screen vb-dm vb-gaze vb-${scene}${hidden ? " is-clean" : ""}${gazeZoom.scale > 1 ? " is-zoomed" : ""}${arriving ? " is-arriving" : ""}" data-battle-scene="${scene}" data-gaze${pending ? ' data-fx="pending"' : ""} aria-label="${escapeHtml(`${name}の1枚を見つめる`)}">
+    <img class="vb-gaze-backdrop${fill ? " is-small" : ""}" src="${escapeHtml(fill || item.url)}" data-fill-for="${escapeHtml(item.url)}" alt="" aria-hidden="true" draggable="false" />
+    <div class="vb-gaze-stage" data-gaze-stage>
+      <img class="vb-gaze-image" data-gaze-image src="${escapeHtml(item.url)}" alt="${escapeHtml(`ROUND ${round}に${name}が貼った画像`)}" draggable="false" style="--gaze-scale:${gazeZoom.scale};--gaze-x:${gazeZoom.x}px;--gaze-y:${gazeZoom.y}px" />
+      <span class="vb-gaze-tip" aria-hidden="true">タップで画像だけ</span>
+    </div>
+    <header class="vb-gaze-head" data-gaze-chrome-part${hidden ? " inert" : ""}>
+      <div class="vb-gaze-bar">
+        <button type="button" class="vb-gaze-icon-button" data-gaze-close aria-label="見つめるモードを閉じて、スレッドに戻る">${GAZE_ICON_CLOSE}</button>
+        <div class="vb-gaze-who"><b>${renderChatPersonaMark(persona)}${escapeHtml(name)}</b><small>${personaLabel ? `${escapeHtml(personaLabel)} · ` : ""}${roundLabel}<span class="connection-pill vb-gaze-presence ${state.opponentOnline ? "connected" : "warning"}" data-online-opponent-presence>${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span></small></div>
+        <button type="button" class="vb-gaze-icon-button" data-gaze-chrome aria-pressed="false" aria-label="文字と操作を隠して、画像だけを見る">${GAZE_ICON_IMAGE_ONLY}</button>
+      </div>
+      <div class="vb-gaze-gauges">${gauge(remoteIndex)}${gauge(state.playerIndex)}</div>
+    </header>
+    <div class="vb-gaze-bottom" data-gaze-bottom data-gaze-chrome-part${hidden ? " inert" : ""}>
+      ${caption ? `<div class="vb-gaze-caption">${caption}</div>` : ""}
+      <div class="vb-gaze-chat" id="onlineChatMessages" data-gaze-chat role="log" aria-live="polite" aria-label="${escapeHtml(name)}とのやりとり（直近）">${renderGazeChatLines()}</div>
+      ${tail}
+      <p class="chat-typing vb-dm-typing" id="onlineChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderChatTypingContent(typing) : ""}</p>
+      ${dockContent ? `<div class="vb-dm-dock vb-gaze-dock">${dockContent}</div>` : ""}
+      ${renderDmComposer({ placeholder: "見つめながら、ひとこと…" })}
+    </div>
+    <div class="vb-gaze-restore" data-gaze-restore${hidden ? "" : " hidden"}>
+      <small>ピンチ・ダブルタップで拡大</small>
+      <button type="button" data-gaze-chrome aria-pressed="true">文字と操作を戻す</button>
+    </div>
+  </section>`;
+}
+
+// 重ねるのは直近のチャットだけ。新しい吹き出しほど濃く出す。
+function renderGazeChatLines() {
+  const chats = new Map(state.chatMessages.map((message) => [String(message.id || ""), message]));
+  const entries = orderedThreadEntries(state.threadLog, { chatIds: [...chats.keys()] });
+  const keys = new Map(entries.filter((entry) => entry.kind === "chat").map((entry) => [entry.chatId, entry.key]));
+  const ids = recentGazeChatIds(entries);
+  return ids.map((id, index) => `<div class="vb-gaze-line" style="--gaze-line:${gazeLineOpacity(ids.length - 1 - index)}">${renderOnlineChatMessage(chats.get(id), { threadKey: keys.get(id) })}</div>`).join("");
+}
+
+// 画面が進んだ時に、見つめるモードを開く・閉じる。届いた時に自動で開くのは、ラウンドごとに1回だけ。
+function syncGazeWithScreen(previousScreen) {
+  const next = nextGazeRound({
+    previousScreen,
+    screen: state.screen,
+    gazeRound: state.gazeRound,
+    round: state.round,
+    autoOpen: state.gazeAutoOpen,
+    autoOpenedRounds: state.gazeAutoOpenedRounds,
+    hasImage: (round) => Boolean(state.remoteImages.get(round)?.url),
+  });
+  if (next.autoOpened) state.gazeAutoOpenedRounds.push(state.round);
+  setGazeRound(next.gazeRound);
+}
+
+function setGazeRound(round) {
+  if (state.gazeRound === round) return;
+  state.gazeRound = round;
+  gazeScrollPending = round !== null;
+  resetGazeView();
+}
+
+function resetGazeView() {
+  window.clearTimeout(gazeTapTimer);
+  gazeChromeHidden = false;
+  gazeZoom = { scale: 1, x: 0, y: 0 };
+}
+
+function openGaze(round) {
+  if (!canGaze(state.screen) || !state.remoteImages.get(round)?.url) return;
+  setGazeRound(round);
+  render();
+  if (document.activeElement?.id !== "onlineChatInput") document.querySelector("[data-gaze-close]")?.focus({ preventScroll: true });
+}
+
+function closeGaze() {
+  const round = state.gazeRound;
+  if (round === null) return;
+  setGazeRound(null);
+  render();
+  if (document.activeElement?.id !== "onlineChatInput") document.querySelector(`[data-dm-gaze-open="${round}"]`)?.focus({ preventScroll: true });
+}
+
+// 文字と操作を隠す・戻す。作り直さずにクラスだけを切り替え、拡大は戻す時に等倍へ戻す。
+function setGazeChromeHidden(hidden, { focus = false } = {}) {
+  window.clearTimeout(gazeTapTimer);
+  gazeChromeHidden = hidden;
+  if (!hidden) gazeZoom = { scale: 1, x: 0, y: 0 };
+  const screen = document.querySelector("[data-gaze]");
+  if (!screen) return;
+  screen.classList.toggle("is-clean", hidden);
+  screen.querySelectorAll("[data-gaze-chrome-part]").forEach((part) => { part.inert = hidden; });
+  const restore = screen.querySelector("[data-gaze-restore]");
+  if (restore) restore.hidden = !hidden;
+  applyGazeZoom(screen);
+  if (focus) screen.querySelector(hidden ? "[data-gaze-restore] [data-gaze-chrome]" : ".vb-gaze-head [data-gaze-chrome]")?.focus({ preventScroll: true });
+}
+
+function applyGazeZoom(screen = document.querySelector("[data-gaze]")) {
+  const image = screen?.querySelector("[data-gaze-image]");
+  if (!image) return;
+  image.style.setProperty("--gaze-scale", String(gazeZoom.scale));
+  image.style.setProperty("--gaze-x", `${gazeZoom.x}px`);
+  image.style.setProperty("--gaze-y", `${gazeZoom.y}px`);
+  screen.classList.toggle("is-zoomed", gazeZoom.scale > 1);
+}
+
+function toggleGazeAutoOpen(event) {
+  state.gazeAutoOpen = !state.gazeAutoOpen;
+  localStorage.setItem(GAZE_AUTO_OPEN_KEY, state.gazeAutoOpen ? "1" : "0");
+  event.currentTarget.setAttribute("aria-checked", String(state.gazeAutoOpen));
+  showToast(state.gazeAutoOpen
+    ? "相手の1枚が届いたら、見つめるモードで開きます。この端末に保存します。"
+    : "相手の1枚は、スレッドの中に届きます。画像を押すと見つめるモードで開けます。");
+}
+
+function bindGazeEvents() {
+  gazeLayoutObserver?.disconnect();
+  gazeLayoutObserver = null;
+  document.querySelectorAll("[data-dm-gaze-open]").forEach((button) => button.addEventListener("click", () => openGaze(Number(button.dataset.dmGazeOpen))));
+  document.querySelector("[data-gaze-auto]")?.addEventListener("click", toggleGazeAutoOpen);
+  const screen = document.querySelector("[data-gaze]");
+  if (!screen) return;
+  screen.querySelector("[data-gaze-close]")?.addEventListener("click", closeGaze);
+  screen.querySelectorAll("[data-gaze-chrome]").forEach((button) => button.addEventListener("click", () => setGazeChromeHidden(!gazeChromeHidden, { focus: true })));
+  screen.querySelector("[data-gaze-current]")?.addEventListener("click", () => openGaze(state.round));
+  screen.querySelector("[data-gaze-bottom]")?.addEventListener("focusin", syncGazeKeyboard);
+  screen.querySelector("[data-gaze-bottom]")?.addEventListener("focusout", () => window.setTimeout(syncGazeKeyboard, 0));
+  bindGazeStage(screen);
+  observeGazeLayout(screen);
+}
+
+// 画像のタップ・ピンチ・ダブルタップ。拡大は文字と操作を隠している間だけ。
+function bindGazeStage(screen) {
+  const stage = screen.querySelector("[data-gaze-stage]");
+  const image = screen.querySelector("[data-gaze-image]");
+  if (!stage || !image) return;
+  const pointers = new Map();
+  let gesture = null;
+  let lastTap = null;
+  const size = () => ({ width: image.offsetWidth, height: image.offsetHeight });
+  // 画像の中心（拡大前の位置）からの、指の位置
+  const fromCenter = (point) => {
+    const rect = stage.getBoundingClientRect();
+    return {
+      x: point.x - (rect.left + image.offsetLeft + image.offsetWidth / 2),
+      y: point.y - (rect.top + image.offsetTop + image.offsetHeight / 2),
+    };
+  };
+  const midpoint = () => {
+    const [first, second] = [...pointers.values()];
+    return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+  };
+  const distance = () => {
+    const [first, second] = [...pointers.values()];
+    return Math.hypot(first.x - second.x, first.y - second.y) || 1;
+  };
+  stage.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    try {
+      stage.setPointerCapture(event.pointerId);
+    } catch {
+      // 指がすでに離れている時は、つかまえずに続ける。
+    }
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 1) {
+      gesture = { kind: "tap", start: { x: event.clientX, y: event.clientY }, zoom: { ...gazeZoom }, time: Date.now() };
+    } else if (pointers.size === 2 && gazeChromeHidden) {
+      window.clearTimeout(gazeTapTimer);
+      gesture = { kind: "pinch", distance: distance(), mid: midpoint(), zoom: { ...gazeZoom } };
+    } else {
+      gesture = null;
+    }
+  });
+  stage.addEventListener("pointermove", (event) => {
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (!gesture) return;
+    if (gesture.kind === "pinch" && pointers.size === 2) {
+      const mid = midpoint();
+      const next = zoomGazeAt(gesture.zoom, gesture.zoom.scale * (distance() / gesture.distance), fromCenter(gesture.mid), size());
+      gazeZoom = clampGazeZoom({ ...next, x: next.x + mid.x - gesture.mid.x, y: next.y + mid.y - gesture.mid.y }, size());
+      applyGazeZoom(screen);
+      return;
+    }
+    const dx = event.clientX - gesture.start.x;
+    const dy = event.clientY - gesture.start.y;
+    if (gesture.kind === "tap" && Math.hypot(dx, dy) > 10) gesture.kind = gazeChromeHidden && gesture.zoom.scale > 1 ? "pan" : "drag";
+    if (gesture.kind === "pan") {
+      gazeZoom = clampGazeZoom({ ...gesture.zoom, x: gesture.zoom.x + dx, y: gesture.zoom.y + dy }, size());
+      applyGazeZoom(screen);
+    }
+  });
+  const release = (event) => {
+    if (!pointers.delete(event.pointerId)) return;
+    const tapped = event.type === "pointerup" && gesture?.kind === "tap" && pointers.size === 0 && Date.now() - gesture.time < 500;
+    if (pointers.size === 0 || gesture?.kind === "pinch") gesture = null;
+    if (!tapped) return;
+    if (!gazeChromeHidden) {
+      setGazeChromeHidden(true);
+      return;
+    }
+    const point = { x: event.clientX, y: event.clientY };
+    if (lastTap && Date.now() - lastTap.time < 320 && Math.hypot(point.x - lastTap.x, point.y - lastTap.y) < 40) {
+      window.clearTimeout(gazeTapTimer);
+      lastTap = null;
+      gazeZoom = toggleGazeZoom(gazeZoom, fromCenter(point), size());
+      applyGazeZoom(screen);
+      return;
+    }
+    lastTap = { ...point, time: Date.now() };
+    gazeTapTimer = window.setTimeout(() => setGazeChromeHidden(false), 320);
+  };
+  stage.addEventListener("pointerup", release);
+  stage.addEventListener("pointercancel", release);
+  // Safari の画面全体の拡大を止め、画像だけを拡大する。
+  stage.addEventListener("gesturestart", (event) => event.preventDefault());
+}
+
+// 上の帯と、下の重なりのうち採点・入力欄の高さを測り、画像をその間に置く。
+// 相手のひとことと直近のチャットは、画像の下の方に半透明で重ねる。キーボードで持ち上げた分（transform）は測らない。
+function observeGazeLayout(screen) {
+  const head = screen.querySelector(".vb-gaze-head");
+  const bottom = screen.querySelector("[data-gaze-bottom]");
+  if (!head || !bottom) return;
+  const measure = () => {
+    const solid = bottom.querySelector(":scope > .vb-gaze-dock, :scope > .vb-dm-composer");
+    const reserve = solid ? bottom.offsetHeight - solid.offsetTop : 0;
+    screen.style.setProperty("--vb-gaze-head", `${Math.round(head.offsetHeight)}px`);
+    screen.style.setProperty("--vb-gaze-bottom", `${Math.round(reserve)}px`);
+  };
+  measure();
+  if (!window.ResizeObserver) return;
+  gazeLayoutObserver = new ResizeObserver(measure);
+  [head, bottom].forEach((node) => gazeLayoutObserver.observe(node));
+}
+
+// キーボードが開いた時は、下の重なり（入力欄・採点・チャット）だけを持ち上げ、画像は動かさない。
+function syncGazeKeyboard() {
+  const screen = document.querySelector("[data-gaze]");
+  const viewport = window.visualViewport;
+  if (!screen || !viewport) return;
+  const typing = screen.querySelector("[data-gaze-bottom]")?.contains(document.activeElement)
+    && document.activeElement?.matches?.("input, textarea");
+  const covered = typing ? screen.getBoundingClientRect().bottom - (viewport.offsetTop + viewport.height) : 0;
+  const lift = Math.max(0, Math.min(Math.round(covered), Math.round(screen.clientHeight * 0.6)));
+  screen.style.setProperty("--vb-gaze-keyboard", `${lift}px`);
 }
 
 // 状態から分かる出来事のうち、まだスレッドに積んでいないものを末尾へ足す。
@@ -5756,8 +6093,8 @@ function dmThreadVersion() {
   return `${state.hideOpponentAvatar ? 1 : 0}:${state.showOpponentCustomFinish ? 1 : 0}:${state.remoteAvatar?.url || ""}`;
 }
 
-function dmThreadItemAttributes(key, { arriving = false } = {}) {
-  return `data-thread-key="${escapeHtml(key)}" data-thread-static data-thread-version="${escapeHtml(dmThreadVersion())}"${arriving ? ' data-thread-arriving' : ""}`;
+function dmThreadItemAttributes(key, { arriving = false, variant = "" } = {}) {
+  return `data-thread-key="${escapeHtml(key)}" data-thread-static data-thread-version="${escapeHtml(`${dmThreadVersion()}${variant ? `:${variant}` : ""}`)}"${arriving ? ' data-thread-arriving' : ""}`;
 }
 
 function collectDmThreadNodes(root = document) {
@@ -5851,10 +6188,15 @@ function renderThreadRemotePost(round, key) {
   const name = getOpponent()?.name || "相手";
   const persona = normalizeChatPersonaId(item?.voiceSetId) || opponentPersonaId();
   const arriving = round === state.round && state.screen === "reveal" && battleFxPending("reveal");
+  // 押すと見つめるモードで開く。次の1枚を選んでいる間（10秒）だけは、これまで通りの拡大表示にする。
+  const gaze = canGaze(state.screen);
+  const open = gaze
+    ? `data-dm-gaze-open="${round}" aria-label="${escapeHtml(`${name}が貼った画像を見つめる`)}"`
+    : `data-zoom-src="${escapeHtml(item?.url || "")}" data-zoom-alt="${escapeHtml(`${name}が貼った画像`)}" aria-label="${escapeHtml(`${name}が貼った画像を拡大`)}"`;
   const image = item?.url
-    ? `<button type="button" class="vb-dm-photo" data-zoom-src="${escapeHtml(item.url)}" data-zoom-alt="${escapeHtml(`${name}が貼った画像`)}" aria-label="${escapeHtml(`${name}が貼った画像を拡大`)}"><img src="${escapeHtml(item.url)}" alt="${escapeHtml(`ROUND ${round}に${name}が貼った画像`)}" draggable="false" /></button>`
+    ? `<button type="button" class="vb-dm-photo" ${open}><img src="${escapeHtml(item.url)}" alt="${escapeHtml(`ROUND ${round}に${name}が貼った画像`)}" draggable="false" /></button>`
     : '<p class="vb-dm-photo is-gone">画像は閉じました</p>';
-  return `<div class="vb-dm-item is-remote-post${arriving ? " is-arriving" : ""}" ${dmThreadItemAttributes(key, { arriving })}>
+  return `<div class="vb-dm-item is-remote-post${arriving ? " is-arriving" : ""}" ${dmThreadItemAttributes(key, { arriving, variant: gaze ? "gaze" : "zoom" })}>
     <p class="ha-divider">ROUND ${round} · ふたりとも貼りました</p>
     <div class="ha-msg is-theirs">${renderThreadAvatar()}<div class="ha-msg-body">
       <small class="vb-dm-from">${renderChatPersonaMark(persona)}${escapeHtml(name)}が貼ってきた</small>
@@ -5931,7 +6273,7 @@ function renderDmOpponentStatus() {
   return `<p class="vb-dm-status" role="status">${renderChatPersonaMark(opponentPersonaId())}<span>${escapeHtml(text)}</span>${detail}</p>`;
 }
 
-function renderDmComposer() {
+function renderDmComposer({ placeholder = "ひとこと送る…" } = {}) {
   const effect = normalizeChatEffect(state.chatEffect);
   const reactions = [
     ...DEFAULT_REACTIONS,
@@ -5945,7 +6287,7 @@ function renderDmComposer() {
         ${renderChatTools({ id: "online", textReactions: reactions, stamps: getAvailableStamps(state.economy), textAttribute: "data-online-reaction", stampAttribute: "data-online-stamp" })}
       </div>
     </details>
-    <form class="chat-form${effect ? " has-effect" : ""}" id="onlineChatForm"><input class="chat-input" id="onlineChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="ひとこと送る…" autocomplete="off" aria-label="チャットメッセージ" />
+    <form class="chat-form${effect ? " has-effect" : ""}" id="onlineChatForm"><input class="chat-input" id="onlineChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" aria-label="チャットメッセージ" />
       <button class="button button-primary button-small" type="submit"${state.chatSendInFlight ? " disabled" : ""}>送信</button></form>
   </div>`;
 }
@@ -6036,6 +6378,8 @@ function renderBattleMenu(extraItems = "") {
     <div class="vb-menu-panel">
       <button class="avatar-visibility-toggle" type="button" data-online-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
       ${window.HariaiBattleFx ? `<button type="button" data-battle-fx-speed>演出の速さ<span>${fxSpeed}</span></button>` : ""}
+      <p class="vb-menu-label">見つめるモード</p>
+      <div class="vb-menu-switch"><span id="onlineGazeAutoLabel">相手の1枚が届いたら、見つめるモードで開く</span><button type="button" role="switch" aria-checked="${state.gazeAutoOpen}" aria-labelledby="onlineGazeAutoLabel" data-gaze-auto><i aria-hidden="true"></i></button></div>
       ${extraItems}
       <p class="vb-menu-room">ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())} · ${state.channelReady ? "P2P接続中" : "再接続待ち"}</p>
     </div></details>`;
@@ -6153,6 +6497,8 @@ function renderScore() {
   return renderDmScreen(scene, {
     fxScene: scene === "reveal" ? "reveal" : "",
     tail: draft,
+    // 見つめるモードでは、選んでいる点数は採点枠の色と「◯点で返す」で分かるので、送信前の吹き出しは重ねない。
+    gazeTail: "",
     dock: `<section class="vb-composer" aria-labelledby="onlineScoreTitle">
       <div class="vb-composer-head"><h1 class="vb-composer-title" id="onlineScoreTitle">${escapeHtml(opponent?.name || "相手")}の1枚、何点刺さった？</h1>${band ? `<span class="vb-band-chip is-${band}">${SCORE_BAND_LABELS[band]}</span>` : '<span class="vb-dm-hint">ふたりが返すまで見えない</span>'}</div>
       <div class="vb-score-pad" role="group" aria-label="点数を選ぶ（1〜10点）">${buttons}</div>
@@ -6653,6 +6999,7 @@ function bindScreenEvents() {
   document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", openDestroyDialog));
   document.querySelector("[data-online-avatar-visibility]")?.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); });
   bindDmThreadEvents();
+  bindGazeEvents();
   document.querySelector("[data-battle-fx-speed]")?.addEventListener("click", (event) => {
     const fx = window.HariaiBattleFx;
     if (!fx) return;
@@ -12640,6 +12987,12 @@ function scrollChat() {
 
 // DMでは、チャットが届いてもスレッドの画像を作り直さず、変わった吹き出しだけを入れ替える。
 function refreshDmThread({ preserveScroll = false } = {}) {
+  const gazeChat = document.querySelector("[data-gaze-chat]");
+  if (gazeChat) {
+    syncThreadLog();
+    gazeChat.innerHTML = renderGazeChatLines();
+    return true;
+  }
   const thread = document.querySelector("[data-dm-thread]");
   const list = thread?.querySelector("#onlineChatMessages");
   if (!list) return false;
@@ -13880,9 +14233,25 @@ document.addEventListener("keydown", (event) => {
   document.querySelector("#onlineChatInput")?.focus({ preventScroll: true });
 });
 
+// 見つめるモードは Escape で閉じる（画像だけを見ている時は、先に文字と操作を戻す）。
+// 拡大表示・対戦メニュー・ことばのトレイ・リアクションが開いている時は、そちらを先に閉じる。
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !active || !document.querySelector("[data-gaze]")) return;
+  if (document.querySelector(".vb-lightbox, .vb-menu[open], [data-dm-tools][open], [data-chat-react-picker]")) return;
+  if (finishCutInDialog?.open) return;
+  if (gazeChromeHidden) {
+    setGazeChromeHidden(false, { focus: true });
+    return;
+  }
+  closeGaze();
+}, true);
+
 window.addEventListener("resize", () => {
-  if (active && isDmScene()) settleDmLayout();
+  if (active && isDmScene()) settleDmLayout({ keepScroll: true });
 });
+
+window.visualViewport?.addEventListener("resize", syncGazeKeyboard);
+window.visualViewport?.addEventListener("scroll", syncGazeKeyboard);
 
 if (!useOfflineMarketPreview) watchLobbyStats();
 watchDailyDateRollover();

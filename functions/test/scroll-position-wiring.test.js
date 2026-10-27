@@ -6,7 +6,8 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..", "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const modes = {
-  solo: { file: "online.js", stateFactory: "createOnlineState" },
+  // 通常型は、見つめるモードを開いた時と場面が進んだ時だけ、ページをその画面まで送る（同じ画面の描き直しでは送らない）。
+  solo: { file: "online.js", stateFactory: "createOnlineState", gazeScroll: true },
   strategy: { file: "strategy.js", stateFactory: "createState" },
 };
 
@@ -18,7 +19,7 @@ function renderSource(source) {
 }
 
 test("same-screen rerenders preserve scroll in every online battle mode", () => {
-  for (const [mode, { file }] of Object.entries(modes)) {
+  for (const [mode, { file, gazeScroll = false }] of Object.entries(modes)) {
     const source = read(file);
     const render = renderSource(source);
 
@@ -35,9 +36,14 @@ test("same-screen rerenders preserve scroll in every online battle mode", () => 
     );
     assert.equal(
       (source.match(/window\.scrollTo\(/g) || []).length,
-      1,
+      gazeScroll ? 2 : 1,
       `${mode} must not retain another forced page scroll`,
     );
+    if (gazeScroll) {
+      assert.match(source, /if \(gazeScrollPending && !keepScroll && Math\.abs\(window\.scrollY - top\) > 1\) window\.scrollTo\(0, top\);\s*gazeScrollPending = false;/);
+      assert.match(render, /if \(screenChanged\) \{\s*window\.scrollTo\(0, 0\);\s*gazeScrollPending = true;/);
+      assert.match(source, /settleDmLayout\(\{ keepScroll: true \}\)/);
+    }
     assert.doesNotMatch(
       source,
       /window\.scrollTo\(\{ top: 0, behavior: "smooth" \}\);/,
