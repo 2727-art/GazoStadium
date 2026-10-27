@@ -858,6 +858,44 @@ body.tribute-shot-mode .site-footer { display: none; }
   cursor: pointer;
 }
 .tribute-template-group button:hover { border-color: var(--tr-accent); }
+/* 管理人が選ぶ定型文の強さ（契約の強さまで） */
+.tribute-tone-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tribute-tone-tabs button {
+  padding: 4px 12px;
+  border: 1px solid var(--tr-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--tr-mist);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tribute-tone-tabs button[aria-pressed="true"] { border-color: var(--tr-accent); background: rgba(255, 79, 163, 0.16); color: var(--tr-text); }
+
+/* 財布の言われたい言葉（管理人のスレッドの札・入力欄の上・ご褒美） */
+.tribute-want { font-size: 0.78rem; color: var(--tr-mist); }
+.tribute-want span { display: inline-block; margin: 0 4px; padding: 0 6px; border-radius: 4px; background: rgba(255, 79, 163, 0.16); color: #ffd1e6; }
+.tribute-want-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tribute-want-chips:empty { display: none; }
+.tribute-want-chips small { color: var(--tr-mist); font-size: 0.7rem; }
+.tribute-want-chips button {
+  padding: 3px 10px;
+  border: 1px dashed rgba(255, 79, 163, 0.6);
+  border-radius: 999px;
+  background: rgba(255, 79, 163, 0.08);
+  color: #ffd1e6;
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+.tribute-reward-chips button.is-want { border-style: dashed; }
+#tributeWantChips:empty { display: none; }
+
+/* 終わった契約から、同じ条件で申し込み直す */
+.tribute-again { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(255, 79, 163, 0.4); background: rgba(255, 79, 163, 0.07); }
+.tribute-again p { margin: 0; font-size: 0.86rem; }
+.tribute-prefill-note { color: #ffd1e6; }
 
 /* シート */
 .tribute-sheet-backdrop { position: fixed; inset: 0; z-index: 26; background: rgba(5, 2, 8, 0.66); }

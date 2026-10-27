@@ -37,11 +37,13 @@ import {
   PURPOSES,
   RECEIVABLE_KINDS,
   REQUEST_NOTES,
+  REWARD_WORD,
   REPORT_REASON_LABELS,
   SEALS,
   SEXUAL_PURPOSE_SUMMARY,
   SIGIL_COLORS,
   STYLE_LABELS,
+  TONE_CEILING_LABELS,
   TONE_LABELS,
   INVITE_QUERY_KEY,
   RANCH_OPEN_QUERY,
@@ -71,13 +73,14 @@ import {
   messageProblem,
   nextTodoContract,
   normalizeCaps,
+  normalizeWantWords,
   normalizeXProfile,
   purposeLabel,
   purposesFor,
   ranchOpenUrl,
   rankingWordProblem,
   remainingLabel,
-  rewardLabel,
+  rewardText,
   rewardsFor,
   sealLabel,
   wantsRanchOpen,
@@ -85,6 +88,7 @@ import {
   templatesFor,
   textLength,
   todayWordProblem,
+  tonesUpTo,
   trialCaps,
   tributeFee,
   vaultTierFor,
@@ -93,14 +97,14 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
   renderExcerptImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1";
+} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1";
 import {
   CARD_FRAMES,
   FRAME_PALETTES,
@@ -175,6 +179,8 @@ function createState() {
     board: { status: "idle", managers: [], nekamaOnly: false, feeZeroOnly: false },
     manager: { status: "idle", publicManagerId: "", data: null },
     applyTarget: null,
+    // 終わった契約の「同じ条件で申し込む」で写す設定（その管理人の申し込みでだけ使う）。
+    applyPrefill: null,
     thread: { contractId: "", raw: null, view: null, events: [], status: "idle" },
     receipts: { status: "idle", items: [], more: false, cursor: null, loadingMore: false },
     ledger: { status: "idle", asPayer: [], asManager: [] },
@@ -810,7 +816,9 @@ function renderManagerDetail() {
     : openContractId
       ? `<button class="button button-primary" type="button" data-t="open-thread" data-contract="${escapeHtml(openContractId)}">契約のスレッドを開く</button>`
       : card.accepting
-        ? `<button class="button button-primary" type="button" data-t="open-apply">この管理人に申し込む</button>`
+        ? state.applyPrefill?.publicManagerId === card.publicManagerId
+          ? `<button class="button button-primary" type="button" data-t="open-apply">同じ条件で申し込む</button><small class="tribute-note">前の契約と同じ設定で、申し込みの画面を開きます。</small>`
+          : `<button class="button button-primary" type="button" data-t="open-apply">この管理人に申し込む</button>`
         : `<p class="tribute-note">この管理人は受付を止めています。</p>`;
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
@@ -883,16 +891,26 @@ function renderApply() {
   const profile = state.profile || {};
   const minPerTribute = PER_TRIBUTE_OPTIONS.find((value) => value >= target.entryFee) || PER_TRIBUTE_OPTIONS[0];
   const trial = trialCaps(target.entryFee);
+  // 終わった契約の「同じ条件で申し込む」から来た時は、前の契約の設定を写す。請求は断れないことの確認と、
+  // 性的な名目・スクショ掲載の許可（既定は許さない同意）は写さず、申し込みのたびに財布が選ぶ。
+  const prefill = state.applyPrefill?.publicManagerId === target.publicManagerId ? state.applyPrefill : null;
+  const prefillCaps = prefill?.caps && normalizeCaps(prefill.caps);
   // 初めての申し込みは、お試しの設定から始める。
-  const firstTime = isNewWallet();
-  const defaults = firstTime ? trial : { perTribute: Math.max(30, minPerTribute), perDay: 100, total: 300 };
+  const firstTime = !prefill && isNewWallet();
+  const defaults = prefillCaps && prefillCaps.perTribute >= target.entryFee
+    ? prefillCaps
+    : firstTime ? trial : { perTribute: Math.max(30, minPerTribute), perDay: 100, total: 300 };
   const perTribute = defaults.perTribute;
+  const durationDays = DURATION_DAYS_OPTIONS.includes(Number(prefill?.durationDays)) ? Number(prefill.durationDays) : DURATION_DAYS_OPTIONS[0];
+  const tone = TONE_CEILING_LABELS[prefill?.tone] ? prefill.tone : "normal";
+  const checked = (key, fallback = false) => ((prefill ? prefill[key] === true : fallback) ? "checked" : "");
   // 入場料が今の財布より多いと、受理の時に払えず、管理人は受理できない（申し込みは48時間で失効する）。先に知らせる。
   const balance = state.walletBalance;
   const feeShort = target.entryFee > 0 && balance !== null && balance < target.entryFee;
   return frame(`<form class="tribute-panel tribute-apply" data-form="apply">
     <div class="tribute-apply-head">${sigil(target)}<div><span class="tribute-eyebrow">管理を申し込む</span><h1>${escapeHtml(target.personaName)}</h1>${disclosureTag(target.disclosure)}${declarationTags(target)}</div></div>
     <p class="tribute-note">${target.ignoreUnpaid ? `${escapeHtml(target.personaName)}は「未払いは既読無視」を宣言しています。` : ""}${target.postsScreenshots ? `${escapeHtml(target.personaName)}は「スクショを載せる」管理人です。` : ""}請求は断れません。払うか、解約するかです。</p>
+    ${prefill ? `<p class="tribute-note tribute-prefill-note">前の契約と同じ設定にしています。変えてから申し込めます。請求は断れないことの確認と、性的な名目・スクショ掲載の許可は、もう一度選んでください。</p>` : ""}
     ${feeShort ? `<p class="tribute-fee-warning" role="status"><b>入場料 ${escapeHtml(formatPay(target.entryFee))} ／ いまの財布 ${escapeHtml(formatPay(balance))}</b>受理される時に入場料を払えないと、管理人は受理できず、申し込みは48時間で失効します。先に Pay を貯めるか、入場料0の管理人を選んでください。<button class="tribute-link" type="button" data-t="board-free">入場料0の管理人を見る</button></p>` : ""}
     <fieldset><legend>あなたの限度額（管理人には見えません・1回 ≦ 1日 ≦ 契約合計）</legend>
       <div class="tribute-three">
@@ -904,13 +922,16 @@ function renderApply() {
         ${firstTime ? "<small>初めての申し込みなので、お試しの設定にしています。</small>" : ""}</div>
       <small>下げる変更はいつでも即時。上げる変更は日本時間の翌日0時から効きます。1回の限度額を${escapeHtml(formatPay(LIMITS.googleCapThreshold))}以上にできるのは、AnjuPayウォレットを Google で保護したアカウントだけです。</small>
     </fieldset>
-    <fieldset><legend>期間</legend><div class="tribute-radio-row">${DURATION_DAYS_OPTIONS.map((days, index) => `<label><input type="radio" name="durationDays" value="${days}" ${index === 0 ? "checked" : ""} /><span>${days}日</span></label>`).join("")}</div></fieldset>
-    <fieldset><legend>言葉の強さ</legend><div class="tribute-radio-row">${Object.entries(TONE_LABELS).map(([tone, label]) => `<label><input type="radio" name="tone" value="${tone}" ${tone === "normal" ? "checked" : ""} /><span>${escapeHtml(label)}</span></label>`).join("")}</div>
-      <small>辛口は徹底して辛く罵られます。自傷や死をすすめる言葉・脅し・差別語・晒しは、どの強さでもありません。</small></fieldset>
-    <label class="tribute-field"><span>言われたくない言葉（最大${LIMITS.ngWordCount}語・各${LIMITS.ngWordLength}文字、読点区切り）</span><input name="ngWords" maxlength="80" placeholder="例：ブス、デブ" /></label>
-    <label class="tribute-check"><input type="checkbox" name="allowReportRequests" /><span>残高報告を求められてもよい</span></label>
-    <label class="tribute-check is-work"><input type="checkbox" name="allowWorkOrders" checked /><span>出稼ぎ命令を受ける<small>管理人が「1on1を○回完走して稼いでこい」と命じられます。命令ではPayは動かず、期限も罰もありません。命令の後に完走した数を、あなたが報告します。契約の「出稼ぎの設定」でいつでも外せます。</small></span></label>
-    <label class="tribute-check"><input type="checkbox" name="rankOptIn" /><span>この管理人の番付に財布名で載る</span></label>
+    <fieldset><legend>期間</legend><div class="tribute-radio-row">${DURATION_DAYS_OPTIONS.map((days) => `<label><input type="radio" name="durationDays" value="${days}" ${days === durationDays ? "checked" : ""} /><span>${days}日</span></label>`).join("")}</div>
+      <small>続けたい時は、終わった契約から「同じ条件で申し込む」で、前と同じ設定のまま申し込めます。</small></fieldset>
+    <fieldset><legend>言われてもいい強さ（ここまで）</legend><div class="tribute-radio-row">${Object.entries(TONE_CEILING_LABELS).map(([key, label]) => `<label><input type="radio" name="tone" value="${key}" ${key === tone ? "checked" : ""} /><span>${escapeHtml(label)}</span></label>`).join("")}</div>
+      <small>管理人は、この強さまでの言葉から選びます。辛口までにすると、甘い言葉も辛い言葉も来ます。辛口は徹底して辛く罵られます。自傷や死をすすめる言葉・脅し・差別語・晒しは、どの強さでもありません。</small></fieldset>
+    <label class="tribute-field"><span>言われたくない言葉（最大${LIMITS.ngWordCount}語・各${LIMITS.ngWordLength}文字、読点区切り）</span><input name="ngWords" maxlength="80" placeholder="例：ブス、デブ" value="${escapeHtml((prefill?.ngWords || []).join("、"))}" /></label>
+    <label class="tribute-field is-want"><span>言われたい言葉（任意・最大${LIMITS.wantWordCount}語・各${LIMITS.wantWordLength}文字、読点区切り）</span><input name="wantWords" maxlength="80" placeholder="例：ざこ、養分、いい子" value="${escapeHtml((prefill?.wantWords || []).join("、"))}" />
+      <small>管理人のスレッドに出て、言葉選びの手がかりになります。ご褒美にも使われます。契約の「言われたい言葉」でいつでも変えられます。</small></label>
+    <label class="tribute-check"><input type="checkbox" name="allowReportRequests" ${checked("allowReportRequests")} /><span>残高報告を求められてもよい</span></label>
+    <label class="tribute-check is-work"><input type="checkbox" name="allowWorkOrders" ${checked("allowWorkOrders", true)} /><span>出稼ぎ命令を受ける<small>管理人が「1on1を○回完走して稼いでこい」と命じられます。命令ではPayは動かず、期限も罰もありません。命令の後に完走した数を、あなたが報告します。契約の「出稼ぎの設定」でいつでも外せます。</small></span></label>
+    <label class="tribute-check"><input type="checkbox" name="rankOptIn" ${checked("rankOptIn")} /><span>この管理人の番付に財布名で載る</span></label>
     <label class="tribute-check is-consent"><input type="checkbox" name="acceptNoDecline" required /><span>請求は断れず、払うか解約するかであることを確かめました<small>限度額を超える請求は、払えないまま残ります。限度額と解約は、いつでも自分で設定できます。</small></span></label>
     <label class="tribute-check is-sexual"><input type="checkbox" name="allowSexualPurposes" /><span>性的な名目（${escapeHtml(SEXUAL_PURPOSE_SUMMARY)}）で請求されてもよい<small>許すと、管理人はこの名目で請求でき、あなたも無言の献上に付けられます。契約の「名目の設定」でいつでも外せます。</small></span></label>
     <label class="tribute-check is-shot"><input type="checkbox" name="allowScreenshots" /><span>管理人のXに、スクショを載せられてもいい<small>スレッドや献上レシートなど、あなたが写る画面です。財布名や会話が写ることがあります。管理人のスレッドに「スクショ掲載 可」の札が出るので、会話で頼まれることはありません。契約の「スクショの設定」でいつでも外せますが、すでに載ったものはアプリでは消せません。</small></span></label>
@@ -954,7 +975,7 @@ function renderCardEditor() {
     <label class="tribute-field"><span>紹介（${LIMITS.intro}文字まで）</span><input name="intro" maxlength="${LIMITS.intro}" value="${escapeHtml(card.intro || "")}" /></label>
     <label class="tribute-field"><span>Xのプロフィール（任意）</span><input name="xProfile" maxlength="80" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://x.com/ユーザー名 または @ユーザー名" value="${cardXHandle(card) ? escapeHtml(`https://x.com/${cardXHandle(card)}`) : ""}" />
       <small>管理人カードと掲示板に「自己申告・本人未確認」として表示され、開く前に外部サイトである確認が出ます。空にすると外します。紹介文・ペルソナ名には、SNSのIDやリンクを書けません。</small></label>
-    <label class="tribute-field"><span>番付のひとこと（任意・${RANKING_WORD.length}文字まで）</span><input name="rankingWord" maxlength="${RANKING_WORD.length}" autocomplete="off" placeholder="例：今月も財布を募集中。覚悟して貢ぎな。" value="${escapeHtml(card.rankingWord || "")}" />
+    <label class="tribute-field"><span>番付のひとこと（任意・${RANKING_WORD.length}文字まで）</span><input name="rankingWord" maxlength="${RANKING_WORD.length}" autocomplete="off" placeholder="例：今月も財布を受付中。覚悟して貢ぎな。" value="${escapeHtml(card.rankingWord || "")}" />
       <small>貢がれ総額の番付で${GROSS_RANKING.limit}位以内に入ると、X のプロフィールと一緒に番付に載ります。連絡先・外部決済・性的な言葉は書けません。</small></label>
     <fieldset><legend>中の人の札</legend><div class="tribute-radio-col">${Object.entries(DISCLOSURE_LABELS).map(([key, label]) => `<label><input type="radio" name="disclosure" value="${key}" ${card.disclosure === key ? "checked" : ""} required /><span>${escapeHtml(label)}</span></label>`).join("")}</div>
       <small>ネカマ貢がせは、男性であることを隠さず行うジャンルです。受け手の性別を女性に限る仕組みはありません。</small></fieldset>
@@ -1358,16 +1379,16 @@ const sealChoices = new Map();
 
 // 財布から差し出された献上に、管理人が押す受取印とご褒美。押すのは毎回管理人。
 function renderReceiveControls(event, view) {
-  const rewards = rewardsFor(view.tone, view.ngWords);
   const seals = sealsFor(state.profile?.card?.seals, view.ngWords);
   const seq = Number(event.seq);
+  const chips = rewardChips(view, "receive", ` data-seq="${seq}"`);
   const chosen = seals.includes(sealChoices.get(seq)) ? sealChoices.get(seq) : seals[0];
   // いまのカードの形と朱肉で押す（押した時の見た目が、その献上に残る）。
   const look = normalizeDecorations(state.profile?.card);
   return `<div class="tribute-receive">
     <div class="tribute-seal-pick" role="radiogroup" aria-label="押す印">${seals.map((id) => `<label><input type="radio" name="seal-${seq}" value="${id}" ${id === chosen ? "checked" : ""} /><span>${sealSvg({ label: sealLabel(id), name: view.manager.personaName, at: Date.now(), size: 52, shape: look.sealShape, ink: look.sealInk, rough: false })}<small>${escapeHtml(sealLabel(id))}</small></span></label>`).join("")}</div>
     <button class="button button-primary button-small" type="button" data-t="receive" data-seq="${seq}">印を押して受け取る</button>
-    ${rewards.length ? `<div class="tribute-reward-chips" role="group" aria-label="ご褒美を添えて受け取る">${rewards.map((reward) => `<button type="button" data-t="receive" data-seq="${seq}" data-reward="${escapeHtml(reward.id)}">${escapeHtml(reward.label)}</button>`).join("")}</div>` : ""}
+    ${chips ? `<div class="tribute-reward-chips" role="group" aria-label="ご褒美を添えて受け取る">${chips}</div>` : ""}
   </div>`;
 }
 
@@ -1407,7 +1428,7 @@ function renderEvent(event, view, statuses) {
         <span class="tribute-bubble">${escapeHtml(event.text)}</span>${mine && view.role === "payer" && view.peerReadSeq >= Number(event.seq) ? '<span class="tribute-read">既読</span>' : ""}${time}</li>`;
     case "applied":
       // 限度額は出さない（管理人も読む出来事のため）。
-      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_LABELS[event.tone] || "普通")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}${event.allowWorkOrders ? " ・ 出稼ぎ命令 可" : ""}`);
+      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_CEILING_LABELS[event.tone] || "普通まで")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}${event.allowWorkOrders ? " ・ 出稼ぎ命令 可" : ""}`);
     case "accepted": {
       const collarNo = Number(event.collarNo) || 0;
       const collar = collarNo
@@ -1448,7 +1469,7 @@ function renderEvent(event, view, statuses) {
       return `<li class="tribute-event is-tribute${receivedAt ? " is-received" : ""}"><div class="tribute-stamp">${purposeTag(event.purpose, view)}<span>${escapeHtml(KIND_LABELS[event.kind] || "献上")}</span><strong>${escapeHtml(formatPay(event.amount))}</strong><small>${escapeHtml(payerName)} → ${escapeHtml(managerName)}</small>${receipt}${seal}</div>${controls}${save}${time}</li>`;
     }
     case "received": {
-      const reward = rewardLabel(event.reward);
+      const reward = rewardText(event);
       if (reward) {
         return `<li class="tribute-event is-message is-reward ${mine ? "is-mine" : "is-theirs"} is-manager"><span class="tribute-bubble"><span class="tribute-visually-hidden">${escapeHtml(managerName)}からのご褒美：</span>${escapeHtml(reward)}</span>${time}</li>`;
       }
@@ -1462,7 +1483,7 @@ function renderEvent(event, view, statuses) {
       const seal = sealLabel(event.seal)
         ? `<span class="tribute-stamp-seal">${sealSvg({ label: sealLabel(event.seal), name: managerName, at: event.createdAt, size: 64, shape: event.sealShape, ink: event.sealInk, rough: false })}</span>`
         : "";
-      const reward = rewardLabel(event.reward);
+      const reward = rewardText(event);
       return `<li class="tribute-event is-system is-work-confirm"><p>${escapeHtml(managerName)}が出稼ぎ（${Number(event.count)} / ${Number(event.target)}回）を確かめました。</p>${seal}${time}</li>${reward
         ? `<li class="tribute-event is-message is-reward ${mine ? "is-mine" : "is-theirs"} is-manager"><span class="tribute-bubble"><span class="tribute-visually-hidden">${escapeHtml(managerName)}から出稼ぎへのご褒美：</span>${escapeHtml(reward)}</span>${time}</li>`
         : ""}`;
@@ -1471,6 +1492,10 @@ function renderEvent(event, view, statuses) {
       return system(event.reason === "setting"
         ? `${escapeHtml(payerName)}が出稼ぎ命令を受けるのをやめたので、命令は消えました。`
         : `${escapeHtml(managerName)}が出稼ぎ命令を取り下げました。`);
+    case "want_words_changed":
+      return system(Number(event.count) > 0
+        ? `${escapeHtml(payerName)}が言われたい言葉を変えました（${Number(event.count)}語）。`
+        : `${escapeHtml(payerName)}が言われたい言葉を外しました。`, "is-caps");
     case "work_orders_changed":
       return system(event.allowWorkOrders
         ? `${escapeHtml(payerName)}が出稼ぎ命令を受けるようにしました。`
@@ -1541,7 +1566,7 @@ function renderThreadHead(view) {
     : "";
   return `<div class="tribute-thread-title">${sigil(counterpart.card)}<div><span class="tribute-contract-line"><strong>${escapeHtml(counterpart.name)}</strong>${nickname}
       ${view.role === "payer" ? disclosureTag(view.manager.disclosure) : '<span class="tribute-tag">あなたが管理</span>'}${statusChip(view)}</span>
-      <small>${view.status === "active" ? `${escapeHtml(remainingLabel(view.expiresAt))} ・ 言葉は${escapeHtml(TONE_LABELS[view.tone] || "普通")}` : view.status === "pending" ? `申し込みの期限 ${escapeHtml(formatDateTime(view.expiresAt))}` : escapeHtml(view.endReasonLabel)}</small></div>
+      <small>${view.status === "active" ? `${escapeHtml(remainingLabel(view.expiresAt))} ・ 言葉は${escapeHtml(TONE_CEILING_LABELS[view.tone] || "普通まで")}` : view.status === "pending" ? `申し込みの期限 ${escapeHtml(formatDateTime(view.expiresAt))}` : escapeHtml(view.endReasonLabel)}</small></div>
       <div class="tribute-thread-end">${endButton}</div></div>
     ${renderThreadNext()}
     ${renderTally(view)}
@@ -1555,7 +1580,8 @@ function renderThreadHead(view) {
       ? `<div class="tribute-meters"><div class="tribute-meter is-plain"><span>管理口座</span><b>${escapeHtml(formatPay(view.escrowBalance))}</b></div></div>`
       : ""}
     ${view.pendingCaps ? `<p class="tribute-caps-pending">限度額を上げる予約：${escapeHtml(capsText(view.pendingCaps))}（${escapeHtml(view.pendingCapsEffectiveDateKey)} 0時から）${view.role === "payer" ? ' <button class="button button-ghost button-small" type="button" data-t="cancel-raise">予約を取り消す</button>' : ""}</p>` : ""}
-    ${view.ngWords.length && view.role === "manager" ? `<p class="tribute-ng">言われたくない言葉：${view.ngWords.map((word) => `<span>${escapeHtml(word)}</span>`).join("")}</p>` : ""}`;
+    ${view.ngWords.length && view.role === "manager" ? `<p class="tribute-ng">言われたくない言葉：${view.ngWords.map((word) => `<span>${escapeHtml(word)}</span>`).join("")}</p>` : ""}
+    ${view.wantWords.length && view.role === "manager" ? `<p class="tribute-want">言われたい言葉：${view.wantWords.map((word) => `<span>${escapeHtml(word)}</span>`).join("")}</p>` : ""}`;
 }
 
 // 「次へ」。一覧に戻らずに、やることのある次の契約（未読・申し込み・受け取り待ちなど）を開く。見学の見本では出さない。
@@ -1647,14 +1673,18 @@ function renderThreadActionButtons(view) {
     return view.role === "manager"
       ? `<div class="tribute-actions"><button class="button button-primary" type="button" data-t="accept">受理する${view.entryFee ? `（入場料 ${escapeHtml(formatPay(view.entryFee))}）` : ""}</button><button class="button button-ghost" type="button" data-t="decline">断る</button></div>`
       : `<p class="tribute-note">受理されると管理が始まります。${view.entryFee ? `入場料 ${escapeHtml(formatPay(view.entryFee))} は受理の時に移ります。` : ""}</p>
-        <div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button></div>`;
+        <div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="want-words">言われたい言葉</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button></div>`;
   }
   if (view.status !== "active") {
     // 受理されなかった申し込みには、掲示板の上のほう（最近動いた管理人）・入場料0の管理人へ案内し直す。
     const retry = view.role === "payer" && retryReasonText(view.endReason)
       ? `<div class="tribute-retry"><p>この申し込みは${retryReasonText(view.endReason)}。掲示板は最近動いた管理人から並んでいます。上のほうの管理人や、入場料0の管理人に申し込めます。</p><div class="tribute-actions"><button class="button button-primary button-small" type="button" data-t="nav" data-screen="board">管理人を探す</button><button class="button button-ghost button-small" type="button" data-t="board-free">入場料0の管理人を見る</button></div></div>`
       : "";
-    return `${retry}<div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button></div>`;
+    // 受理された契約が終わった後は、同じ管理人に同じ条件で申し込み直せる（受理と入場料はこれまでどおり）。
+    const again = view.role === "payer" && view.accepted && view.managerPublicId
+      ? `<div class="tribute-again"><p>${escapeHtml(view.manager.personaName)}の管理を続けたい時は、前と同じ設定のまま申し込めます。</p><div class="tribute-actions"><button class="button button-primary button-small" type="button" data-t="reapply">同じ条件で申し込む</button></div></div>`
+      : "";
+    return `${retry}${again}<div class="tribute-actions"><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="report">通報</button></div>`;
   }
   const withdraw = view.escrowWithdrawRequest;
   if (view.role === "payer") {
@@ -1662,6 +1692,7 @@ function renderThreadActionButtons(view) {
       <button class="button button-primary tribute-give-button" type="button" data-t="sheet" data-sheet="give" ${view.allowance ? "" : "disabled"}>差し出す${view.allowance ? "" : "（今日の枠なし）"}</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="escrow">管理口座</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="caps">限度額を変える</button>
+      <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="want-words">言われたい言葉</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button>
@@ -1682,16 +1713,43 @@ function renderThreadActionButtons(view) {
   ${withdraw ? `<div class="tribute-withdraw-ask"><p>${escapeHtml(contractCounterpart(view).name)}が管理口座から ${escapeHtml(formatPay(withdraw.amount))} の使用許可を求めています。</p><div class="tribute-row"><button class="button button-primary button-small" type="button" data-t="escrow-decision" data-approve="1">許可する</button><button class="button button-ghost button-small" type="button" data-t="escrow-decision" data-approve="0">却下する</button></div></div>` : ""}`;
 }
 
+// 管理人の定型文は、契約の強さ（財布が決めた上限）までの中から、管理人が強さを選んで出す。財布は契約の強さのまま。
+function templateTone(view) {
+  const allowed = tonesUpTo(view.tone);
+  if (view.role !== "manager") return { tone: view.tone, allowed: [] };
+  const chosen = state.thread.templateTone;
+  return { tone: allowed.includes(chosen) ? chosen : allowed.at(-1), allowed };
+}
+
 function renderTemplates(view) {
-  const groups = templatesFor(view.role, view.tone, {
+  const { tone, allowed } = templateTone(view);
+  const groups = templatesFor(view.role, tone, {
     disclosure: view.manager.disclosure,
     ngWords: view.ngWords,
     allowSexual: view.allowSexualPurposes,
     collarNo: view.collarNo,
   });
-  return `<details class="tribute-templates"><summary>定型文（${escapeHtml(TONE_LABELS[view.tone] || "普通")}）</summary>
+  const tabs = allowed.length > 1
+    ? `<div class="tribute-tone-tabs" role="group" aria-label="定型文の強さ">${[...allowed].reverse().map((key) => `<button type="button" data-t="template-tone" data-tone="${key}" aria-pressed="${key === tone}">${escapeHtml(TONE_LABELS[key])}</button>`).join("")}</div>`
+    : "";
+  const summary = view.role === "manager" ? `定型文（${TONE_CEILING_LABELS[view.tone] || "普通まで"}）` : `定型文（${TONE_LABELS[view.tone] || "普通"}）`;
+  return `<details class="tribute-templates"${state.thread.templatesOpen ? " open" : ""}><summary>${escapeHtml(summary)}</summary>${tabs}
     ${groups.map((group) => `<div class="tribute-template-group"><span>${escapeHtml(group.label)}</span><div>${group.lines.map((line) => `<button type="button" data-t="template" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div></div>`).join("")}
   </details>`;
+}
+
+// 管理人の入力欄の上に、財布の言われたい言葉を札で並べる。押すと入力欄に入る。
+function renderWantChips(view) {
+  if (view.role !== "manager" || !view.wantWords.length) return "";
+  return `<div class="tribute-want-chips" role="group" aria-label="言われたい言葉を入れる"><small>言われたい言葉</small>${view.wantWords.map((word) => `<button type="button" data-t="want-insert" data-text="${escapeHtml(word)}">${escapeHtml(word)}</button>`).join("")}</div>`;
+}
+
+// 受け取り・出稼ぎの確認に添えるご褒美の札。一覧は契約の強さまで、続けて財布の言われたい言葉。
+function rewardChips(view, action, extra = "") {
+  const rewards = rewardsFor(view.tone, view.ngWords);
+  const words = view.wantWords.filter((word) => !rewards.some((reward) => reward.label === word));
+  if (!rewards.length && !words.length) return "";
+  return `${rewards.map((reward) => `<button type="button" data-t="${action}"${extra} data-reward="${escapeHtml(reward.id)}">${escapeHtml(reward.label)}</button>`).join("")}${words.map((word) => `<button class="is-want" type="button" data-t="${action}"${extra} data-reward="${REWARD_WORD}" data-text="${escapeHtml(word)}">${escapeHtml(word)}</button>`).join("")}`;
 }
 
 function renderPendingRequests(view) {
@@ -1741,14 +1799,14 @@ function renderWorkOrder(view) {
 
 // 果たした出稼ぎに、管理人が押す受取印とご褒美（受け取りと同じ一覧）。押すのは毎回管理人。
 function renderWorkConfirmControls(view) {
-  const rewards = rewardsFor(view.tone, view.ngWords);
   const seals = sealsFor(state.profile?.card?.seals, view.ngWords);
+  const chips = rewardChips(view, "work-confirm");
   const chosen = seals.includes(sealChoices.get("work")) ? sealChoices.get("work") : seals[0];
   const look = normalizeDecorations(state.profile?.card);
   return `<div class="tribute-receive tribute-work-confirm">
     <div class="tribute-seal-pick" role="radiogroup" aria-label="押す印">${seals.map((id) => `<label><input type="radio" name="seal-work" value="${id}" ${id === chosen ? "checked" : ""} /><span>${sealSvg({ label: sealLabel(id), name: view.manager.personaName, at: Date.now(), size: 52, shape: look.sealShape, ink: look.sealInk, rough: false })}<small>${escapeHtml(sealLabel(id))}</small></span></label>`).join("")}</div>
     <button class="button button-primary button-small" type="button" data-t="work-confirm">印を押して確かめる</button>
-    ${rewards.length ? `<div class="tribute-reward-chips" role="group" aria-label="ご褒美を添えて確かめる">${rewards.map((reward) => `<button type="button" data-t="work-confirm" data-reward="${escapeHtml(reward.id)}">${escapeHtml(reward.label)}</button>`).join("")}</div>` : ""}
+    ${chips ? `<div class="tribute-reward-chips" role="group" aria-label="ご褒美を添えて確かめる">${chips}</div>` : ""}
   </div>`;
 }
 
@@ -1834,6 +1892,7 @@ function renderThread() {
     <div id="tributeThreadHistory">${renderThreadHistory()}</div>
     <ol class="tribute-events" id="tributeThreadEvents" aria-live="polite">${renderThreadEvents(view)}</ol>
     ${view.status === "active" && !thread.demo ? `<form class="tribute-composer" data-form="message">
+      <div id="tributeWantChips">${renderWantChips(view)}</div>
       <textarea name="text" maxlength="${LIMITS.message}" rows="2" placeholder="${view.role === "manager" ? "管理の言葉（相手の「言われたくない言葉」は送れません）" : "返事・報告・止める言葉"}"></textarea>
       <div class="tribute-composer-foot"><small data-composer-count>0 / ${LIMITS.message}</small><span class="tribute-form-error" data-form-error role="alert"></span><button class="button button-primary button-small" type="submit">送る</button></div>
       ${renderTemplates(view)}
@@ -1870,6 +1929,8 @@ function updateThreadParts() {
   if (pending) pending.innerHTML = renderPendingRequests(view);
   const work = document.querySelector("#tributeWorkOrder");
   if (work) work.innerHTML = renderWorkOrder(view);
+  const wantChips = document.querySelector("#tributeWantChips");
+  if (wantChips) wantChips.innerHTML = renderWantChips(view);
   if (history) history.innerHTML = renderThreadHistory();
   list.innerHTML = renderThreadEvents(view);
   actions.innerHTML = renderThreadActions(view);
@@ -2027,6 +2088,16 @@ function renderSheet() {
         <button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>命令する</button>
       </form>`);
     }
+    case "want-words": {
+      if (view.role !== "payer") return "";
+      return wrap("言われたい言葉", `<form class="tribute-sheet-form" data-form="want-words">
+        <p>${escapeHtml(view.manager.personaName)}のスレッドに出る「言われたい言葉」です。管理人の言葉選びの手がかりになり、ご褒美にも使われます。決めるのはあなただけで、いつでも変えられます。</p>
+        <label class="tribute-field"><span>言われたい言葉（最大${LIMITS.wantWordCount}語・各${LIMITS.wantWordLength}文字、読点区切り・空にすると外します）</span><input name="wantWords" maxlength="80" value="${escapeHtml(view.wantWords.join("、"))}" placeholder="例：ざこ、養分、いい子" /></label>
+        <p class="tribute-note">「言われたくない言葉」を含む言葉は登録できません。外部の決済や現実の金額は書けません。</p>
+        <p class="tribute-form-error" data-form-error role="alert"></p>
+        <button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>保存する</button>
+      </form>`);
+    }
     case "work-settings": {
       if (view.role !== "payer") return "";
       const allow = view.allowWorkOrders;
@@ -2169,7 +2240,7 @@ function shareReceiptData(sheet) {
     // 管理人を伏せる時は標準の印にする（飾りから管理人が分からないように）。
     sealShape: info.consent ? source.sealShape : "",
     sealInk: info.consent ? source.sealInk : "",
-    rewardLabel: rewardLabel(source.reward),
+    rewardLabel: rewardText(source),
     pairCount: stored?.pairCount || 0,
     collarNo: Number(info.collarNo) || 0,
     walletLabel: shareWalletLabel(sheet),
@@ -2211,7 +2282,7 @@ function shareExcerptData(sheet) {
       at: tribute.createdAt,
     });
     const received = events.find((event) => event.type === "received" && Number(event.tributeSeq) === Number(tribute.seq));
-    if (rewardLabel(received?.reward)) items.push({ type: "reward", label: rewardLabel(received.reward), at: received.createdAt });
+    if (rewardText(received)) items.push({ type: "reward", label: rewardText(received), at: received.createdAt });
   }
   const counts = view?.purposeCounts || {};
   const top = PURPOSES.filter((purpose) => counts[purpose.id]).sort((left, right) => counts[right.id] - counts[left.id])[0];
@@ -2367,7 +2438,7 @@ function renderRecruitSheet(sheet, wrap) {
   return wrap("財布募集の画像", `<div class="tribute-share">
     <div class="tribute-share-body">
       <div class="tribute-share-preview" data-share-preview>${sharePreviewMarkup(sheet)}</div>
-      <div class="tribute-share-options"><p class="tribute-note">あなたの管理人カード（枠・中の人の札・入場料・管理中の人数・今日のひとこと・実績）を1枚の画像にします。受取印の形と朱肉で「募集中」を押します。</p>
+      <div class="tribute-share-options"><p class="tribute-note">あなたの管理人カード（枠・中の人の札・入場料・管理中の人数・今日のひとこと・実績）を1枚の画像にします。受取印の形と朱肉で「受付中」を押します。</p>
         ${state.profile?.accepting ? "" : '<p class="tribute-note">いまは受付を止めています。受付を始めてから告知してください。</p>'}</div>
     </div>
     <p class="tribute-note">画像にURLは入りません。招待リンクは投稿の文に付き、文には中の人の札が必ず入ります。「AnjuPayだけ・現金なし」の表記も必ず入ります。</p>
@@ -2462,7 +2533,7 @@ function renderReceipts() {
         <p class="tribute-receipt-to">${sigil(receipt)} ${escapeHtml(receipt.personaName)} ${disclosureTag(receipt.disclosure)}</p>
         ${purposeLabel(receipt.purpose, { allowSexual: true }) ? `<p class="tribute-receipt-purpose">${escapeHtml(purposeLabel(receipt.purpose, { allowSexual: true }))}</p>` : ""}
         <strong class="tribute-receipt-amount">${escapeHtml(formatPay(receipt.amount))}</strong>
-        ${Number(receipt.receivedAt || 0) ? `<p class="tribute-receipt-received">受け取り済み ${escapeHtml(formatDateTime(receipt.receivedAt))}${rewardLabel(receipt.reward) ? `<b>「${escapeHtml(rewardLabel(receipt.reward))}」</b>` : ""}</p>` : ""}
+        ${Number(receipt.receivedAt || 0) ? `<p class="tribute-receipt-received">受け取り済み ${escapeHtml(formatDateTime(receipt.receivedAt))}${rewardText(receipt) ? `<b>「${escapeHtml(rewardText(receipt))}」</b>` : ""}</p>` : ""}
         ${Number(receipt.collarNo || 0) ? `<p class="tribute-receipt-collar">${escapeHtml(receipt.personaName)}の財布 ${Number(receipt.collarNo)}号</p>` : ""}
         ${Number(receipt.receivedAt || 0) && sealLabel(receipt.seal) ? `<span class="tribute-receipt-seal">${sealSvg({ label: sealLabel(receipt.seal), name: receipt.personaName, at: receipt.receivedAt, size: 88, shape: receipt.sealShape, ink: receipt.sealInk, surface: "paper", rough: false })}</span>` : ""}
         <footer>${escapeHtml(formatDateTime(receipt.createdAt))} ・ ${Number(receipt.pairCount)}回目</footer>
@@ -3201,6 +3272,9 @@ async function handleSubmit(form) {
       const caps = normalizeCaps({ perTribute: data.get("perTribute"), perDay: data.get("perDay"), total: data.get("total") });
       if (!caps) return setFormError(form, "限度額は「1回 ≦ 1日 ≦ 合計」になるように選んでください。");
       if (target.entryFee > caps.perTribute) return setFormError(form, "入場料が1回の限度額を超えています。1回の限度額を上げてください。");
+      const ngWords = String(data.get("ngWords") || "");
+      const want = normalizeWantWords(String(data.get("wantWords") || ""), { ngWords: ngWords.split(/[\n,、]/u).map((word) => word.trim()).filter(Boolean) });
+      if (want.error) return setFormError(form, want.error);
       const result = await mutate("apply", {
         publicManagerId: target.publicManagerId,
         expectedEntryFee: target.entryFee,
@@ -3208,7 +3282,8 @@ async function handleSubmit(form) {
           caps,
           durationDays: Number(data.get("durationDays")),
           tone: String(data.get("tone") || "normal"),
-          ngWords: String(data.get("ngWords") || ""),
+          ngWords,
+          wantWords: want.words,
           allowReportRequests: data.get("allowReportRequests") === "on",
           rankOptIn: data.get("rankOptIn") === "on",
           allowSexualPurposes: data.get("allowSexualPurposes") === "on",
@@ -3219,6 +3294,7 @@ async function handleSubmit(form) {
         },
       }, { form, success: "申し込みました。受理を待ちます。" });
       if (result?.contract) {
+        state.applyPrefill = null;
         state.contracts = [result.contract, ...state.contracts.filter((row) => row.contractId !== result.contract.contractId)];
         openThread(result.contract.contractId);
       }
@@ -3311,6 +3387,17 @@ async function handleSubmit(form) {
         showToast(saved ? "呼び名を付けました。財布には見えません。" : "呼び名を外しました。");
         closeSheet();
         renderKeepingDraft();
+      }
+      return;
+    }
+    case "want-words": {
+      if (!view) return;
+      const want = normalizeWantWords(String(form.elements.wantWords.value || ""), { ngWords: view.ngWords });
+      if (want.error) return setFormError(form, want.error);
+      const result = await mutate("set_want_words", contractPayload({ wantWords: want.words }), { form });
+      if (result) {
+        showToast(result.unchanged ? "言われたい言葉は変わっていません。" : want.words.length ? "言われたい言葉を保存しました。" : "言われたい言葉を外しました。");
+        closeSheet();
       }
       return;
     }
@@ -3486,6 +3573,23 @@ async function handleClick(target) {
     case "back-manager":
       if (state.applyTarget) openManager(state.applyTarget.publicManagerId);
       return;
+    // 終わった契約の設定を写して、その管理人の詳細を開く（受付中なら「同じ条件で申し込む」が出る）。
+    case "reapply": {
+      if (!view?.managerPublicId || view.role !== "payer") return;
+      state.applyPrefill = {
+        publicManagerId: view.managerPublicId,
+        caps: view.caps || null,
+        durationDays: view.durationDays,
+        tone: view.tone,
+        ngWords: view.ngWords,
+        wantWords: view.wantWords,
+        allowReportRequests: view.allowReportRequests,
+        allowWorkOrders: view.allowWorkOrders,
+        rankOptIn: view.rankOptIn,
+      };
+      openManager(view.managerPublicId);
+      return;
+    }
     case "open-thread":
       openThread(target.dataset.contract);
       return;
@@ -3534,10 +3638,12 @@ async function handleClick(target) {
       return;
     case "receive": {
       const reward = target.dataset.reward || "";
+      const rewardWord = reward === REWARD_WORD ? target.dataset.text || "" : "";
+      const label = rewardText({ reward, rewardText: rewardWord });
       const seq = Number(target.dataset.seq);
       const seal = target.closest(".tribute-receive")?.querySelector(`input[name="seal-${seq}"]:checked`)?.value || sealChoices.get(seq) || "";
-      const result = await mutate("receive", contractPayload({ tributeSeq: seq, reward, seal }), {
-        success: reward ? `「${sealLabel(seal) || "受領"}」の印に「${rewardLabel(reward)}」を添えて受け取りました。` : `「${sealLabel(seal) || "受領"}」の印を押して受け取りました。`,
+      const result = await mutate("receive", contractPayload({ tributeSeq: seq, reward, ...(rewardWord ? { rewardText: rewardWord } : {}), seal }), {
+        success: label ? `「${sealLabel(seal) || "受領"}」の印に「${label}」を添えて受け取りました。` : `「${sealLabel(seal) || "受領"}」の印を押して受け取りました。`,
       });
       if (result) sealChoices.delete(seq);
       return;
@@ -3724,9 +3830,11 @@ async function handleClick(target) {
       return;
     case "work-confirm": {
       const reward = target.dataset.reward || "";
+      const rewardWord = reward === REWARD_WORD ? target.dataset.text || "" : "";
+      const label = rewardText({ reward, rewardText: rewardWord });
       const seal = target.closest(".tribute-work-confirm")?.querySelector('input[name="seal-work"]:checked')?.value || sealChoices.get("work") || "";
-      const result = await mutate("work_confirm", contractPayload({ reward, seal }), {
-        success: reward ? `「${sealLabel(seal) || "受領"}」の印に「${rewardLabel(reward)}」を添えて、出稼ぎを確かめました。` : `「${sealLabel(seal) || "受領"}」の印を押して、出稼ぎを確かめました。`,
+      const result = await mutate("work_confirm", contractPayload({ reward, ...(rewardWord ? { rewardText: rewardWord } : {}), seal }), {
+        success: label ? `「${sealLabel(seal) || "受領"}」の印に「${label}」を添えて、出稼ぎを確かめました。` : `「${sealLabel(seal) || "受領"}」の印を押して、出稼ぎを確かめました。`,
       });
       if (result) sealChoices.delete("work");
       return;
@@ -3772,6 +3880,31 @@ async function handleClick(target) {
       form.dataset.template = "1";
       updateComposerCount(form);
       form.elements.text.focus();
+      return;
+    }
+    // 管理人が定型文の強さを選ぶ（契約の強さまで）。開いたまま、定型文の欄だけ描き直す。
+    case "template-tone": {
+      const details = target.closest(".tribute-templates");
+      if (!details || !view) return;
+      state.thread.templateTone = target.dataset.tone;
+      state.thread.templatesOpen = true;
+      details.outerHTML = renderTemplates(view);
+      return;
+    }
+    // 言われたい言葉を、入力欄のカーソルの位置に入れる。
+    case "want-insert": {
+      const form = document.querySelector('[data-form="message"]');
+      const box = form?.elements?.text;
+      if (!box) return;
+      const word = target.dataset.text || "";
+      const start = box.selectionStart ?? box.value.length;
+      const end = box.selectionEnd ?? box.value.length;
+      box.value = `${box.value.slice(0, start)}${word}${box.value.slice(end)}`.slice(0, LIMITS.message);
+      delete form.dataset.template;
+      updateComposerCount(form);
+      box.focus();
+      const caret = Math.min(box.value.length, start + word.length);
+      box.setSelectionRange(caret, caret);
       return;
     }
     case "receipt-close":
@@ -4281,6 +4414,8 @@ function previewRaw(role, status = "active") {
     durationDays: 3,
     tone: "harsh",
     ngWords: ["ブス", "デブ"],
+    wantWords: ["ざこ", "3号", "養分"],
+    managerPublicId: role === "payer" ? PREVIEW_MANAGER_CARD.publicManagerId : "",
     allowReportRequests: true,
     rankOptIn: true,
     allowSexualPurposes: true,
@@ -4340,6 +4475,12 @@ function previewEvents(raw) {
 }
 
 function previewThread(contractId) {
+  // 4… は財布として受理された後に期限で終わった契約（「同じ条件で申し込む」の見本）。
+  if (contractId === "4".repeat(40)) {
+    const now = previewNow();
+    const raw = { ...previewRaw("payer", "ended"), contractId, endReason: "expired", acceptedAt: now - 3 * 86_400_000, endedAt: now - 3_600_000, pendingRequests: {}, workOrder: null };
+    return { raw, events: previewEvents({ ...raw, status: "active" }) };
+  }
   const role = contractId === "1".repeat(40) ? "payer" : "manager";
   const raw = previewRaw(role, contractId === "3".repeat(40) ? "pending" : "active");
   return { raw, events: previewEvents(raw) };
@@ -4455,7 +4596,7 @@ function previewCall(action, payload) {
           kind: "gross",
           monthKey,
           managers: [
-            { rank: 1, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, vault: { level: 4 }, payers: 6, receivedGross: 12_400, xHandle: "mio_sama_ranch", rankingWord: "今月も財布を募集中。覚悟して貢ぎな。" },
+            { rank: 1, publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", disclosure: "nekama", sigil: 0, avatar: 7, vault: { level: 4 }, payers: 6, receivedGross: 12_400, xHandle: "mio_sama_ranch", rankingWord: "今月も財布を受付中。覚悟して貢ぎな。" },
             { rank: 2, publicManagerId: PREVIEW_OWN_MANAGER_ID, personaName: "レイ", disclosure: "as_is", sigil: 2, avatar: 5, vault: null, payers: 4, receivedGross: 8_200, xHandle: "", rankingWord: "", mine: true },
             { rank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", sigil: 2, avatar: 11, vault: { level: 4 }, payers: 5, receivedGross: 6_050, xHandle: "kai_kanri", rankingWord: "" },
             { rank: 4, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", sigil: 3, avatar: 2, vault: { level: 3 }, payers: 3, receivedGross: 3_300, xHandle: "", rankingWord: "毎日決まった額を、決まった時間に。" },
@@ -4529,10 +4670,11 @@ function previewCall(action, payload) {
         target.receivedAt = at;
         target.seal = payload.seal || "juryo";
         Object.assign(target, (({ sealShape, sealInk }) => ({ sealShape, sealInk }))(normalizeDecorations(state.profile?.card)));
-        if (payload.reward) target.reward = payload.reward;
+        const rewardMarks = payload.reward ? { reward: payload.reward, ...(payload.rewardText ? { rewardText: payload.rewardText } : {}) } : {};
+        Object.assign(target, rewardMarks);
         raw.awaitingReceipt = Math.max(0, Number(raw.awaitingReceipt || 0) - 1);
         if (payload.reward) raw.rewardCount = Number(raw.rewardCount || 0) + 1;
-        push({ type: "received", actor: "manager", tributeSeq: target.seq, amount: target.amount, seal: target.seal, ...(payload.reward ? { reward: payload.reward } : {}) });
+        push({ type: "received", actor: "manager", tributeSeq: target.seq, amount: target.amount, seal: target.seal, ...rewardMarks });
       });
       return Promise.resolve({ ok: true, contract: view });
     }
@@ -4625,8 +4767,15 @@ function previewCall(action, payload) {
         const order = raw.workOrder;
         if (!order?.doneAt) return;
         const look = normalizeDecorations(state.profile?.card);
-        push({ type: "work_confirm", actor: "manager", orderSeq: order.orderSeq, target: order.target, count: order.reportedCount, seal: payload.seal || "juryo", sealShape: look.sealShape, sealInk: look.sealInk, ...(payload.reward ? { reward: payload.reward } : {}) });
+        push({ type: "work_confirm", actor: "manager", orderSeq: order.orderSeq, target: order.target, count: order.reportedCount, seal: payload.seal || "juryo", sealShape: look.sealShape, sealInk: look.sealInk, ...(payload.reward ? { reward: payload.reward, ...(payload.rewardText ? { rewardText: payload.rewardText } : {}) } : {}) });
         raw.workOrder = null;
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "set_want_words": {
+      const view = previewThreadChange((raw, push) => {
+        raw.wantWords = Array.isArray(payload.wantWords) ? payload.wantWords : [];
+        push({ type: "want_words_changed", actor: "payer", count: raw.wantWords.length });
       });
       return Promise.resolve({ ok: true, contract: view });
     }
@@ -4739,6 +4888,7 @@ function startPreview(screen) {
     "thread-payer": () => openThread("1".repeat(40)),
     "thread-manager": () => openThread("2".repeat(40)),
     "thread-pending": () => openThread("3".repeat(40)),
+    "thread-ended": () => openThread("4".repeat(40)),
     give: () => {
       openThread("1".repeat(40));
       openSheet("give", { requestId: "abcdef0123456789", amount: 100, step: "hold" });

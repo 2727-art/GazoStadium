@@ -1486,17 +1486,17 @@ export async function renderRecruitImage(data) {
   const SHOT = "スクショを載せる";
   const HIGH = "高額請求";
   const tags = [manager.disclosureLabel, data.ignoreUnpaid ? OATH : "", data.postsScreenshots ? SHOT : "", data.highRequest ? HIGH : "", manager.styleLabel, vaultLabel].filter(Boolean);
-  await loadFonts([manager.personaName, word, intro, tags.join(""), achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布募集中入場料管理中今月の財布人アプリ内ポイントだけ現金なし#WALLET WANTED"].join(""));
+  await loadFonts([manager.personaName, word, intro, tags.join(""), achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布受付中入場料管理中今月の財布人アプリ内ポイントだけ現金なし#募集ACCEPTING WALLETS"].join(""));
   const image = await loadImage(manager.avatarUrl);
   const canvas = canvasFor();
   const ctx = canvas.getContext("2d");
   paintBackdrop(ctx);
-  paintHeader(ctx, "WALLET WANTED", "");
-  // 右上の「財布募集」
+  paintHeader(ctx, "ACCEPTING WALLETS", "");
+  // 右上の「財布受付」。管理人が財布を探すのではなく、来る財布を受け付ける言い方にする（2026-10-27、ユーザー決定）。
   ctx.save();
   ctx.font = `400 44px ${DISPLAY}`;
   spacing(ctx, 4);
-  const pillWidth = ctx.measureText("財布募集").width + 64;
+  const pillWidth = ctx.measureText("財布受付").width + 64;
   ctx.shadowColor = "rgba(255, 79, 163, 0.5)";
   ctx.shadowBlur = 34;
   const pill = ctx.createLinearGradient(SHARE_WIDTH - 64 - pillWidth, 56, SHARE_WIDTH - 64, 140);
@@ -1508,7 +1508,7 @@ export async function renderRecruitImage(data) {
   ctx.shadowColor = "transparent";
   ctx.fillStyle = "#fff";
   ctx.textBaseline = "middle";
-  ctx.fillText("財布募集", SHARE_WIDTH - 64 - pillWidth + 34, 100);
+  ctx.fillText("財布受付", SHARE_WIDTH - 64 - pillWidth + 34, 100);
   ctx.textBaseline = "alphabetic";
   spacing(ctx, 0);
   ctx.restore();
@@ -1645,14 +1645,14 @@ export async function renderRecruitImage(data) {
     }
   }
 
-  // 管理人の受取印で「募集中」を押す。枠や文字に重ねず、カードの右下の外に押す。
+  // 管理人の受取印で「受付中」を押す。枠や文字に重ねず、カードの右下の外に押す。
   drawSeal(ctx, {
     x: SHARE_WIDTH - 64 - 80,
     y: box.y + box.height + 82,
     size: 156,
     rotation: -10,
     rough: false,
-    label: "募集中",
+    label: "受付中",
     name: manager.personaName,
     at: data.at,
     shape: data.sealShape,

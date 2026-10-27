@@ -9,7 +9,9 @@ const TRIBUTE_AGE_VERSION = "tribute-age-v1";
 const PER_TRIBUTE_OPTIONS = Object.freeze([10, 30, 50, 100, 300, 500, 1_000, 3_000, 5_000, 10_000]);
 const PER_DAY_OPTIONS = Object.freeze([30, 100, 300, 500, 1_000, 3_000, 5_000, 10_000, 30_000]);
 const TOTAL_OPTIONS = Object.freeze([100, 300, 1_000, 3_000, 5_000, 10_000, 30_000, 50_000, 100_000]);
-const DURATION_DAYS_OPTIONS = Object.freeze([1, 3, 7]);
+// 契約の期間。14日・30日は、月単位で続く管理のために足した（2026-10-27、ユーザー決定）。
+const DURATION_DAYS_OPTIONS = Object.freeze([1, 3, 7, 14, 30]);
+const MAX_DURATION_DAYS = DURATION_DAYS_OPTIONS.at(-1);
 const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 // 出稼ぎ命令の回数（命令の後の1on1の正式完走）。毎日のプレイ報酬の段と同じで、10回は本日の基本目標に当たる。
 const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
@@ -37,7 +39,8 @@ const PURPOSES = Object.freeze([
 ]);
 const PURPOSE_IDS = Object.freeze(PURPOSES.map((purpose) => purpose.id));
 const SEXUAL_PURPOSE_IDS = Object.freeze(PURPOSES.filter((purpose) => purpose.sexual).map((purpose) => purpose.id));
-// 受け取った時に添える短い承認。押すのは毎回管理人で、システムからは出さない。言葉の強さごとに選べるものが変わる。
+// 受け取った時に添える短い承認。押すのは毎回管理人で、システムからは出さない。
+// 言葉の強さは財布が決める上限で、管理人は上限までのどの強さのご褒美も選べる。
 const REWARDS = Object.freeze([
   Object.freeze({ id: "gohoubi", label: "ご褒美♡", tones: Object.freeze(["sweet", "normal", "harsh"]) }),
   Object.freeze({ id: "fufu", label: "ふふ♡ご褒美♡", tones: Object.freeze(["sweet", "normal", "harsh"]) }),
@@ -48,7 +51,11 @@ const REWARDS = Object.freeze([
   Object.freeze({ id: "zako", label: "ざこ♡", tones: Object.freeze(["harsh"]) }),
   Object.freeze({ id: "soreppocchi", label: "それっぽっち？", tones: Object.freeze(["harsh"]) }),
   Object.freeze({ id: "tsugi", label: "次も持ってきな", tones: Object.freeze(["harsh"]) }),
+  Object.freeze({ id: "mata", label: "また来てね♡", tones: Object.freeze(["sweet"]) }),
+  Object.freeze({ id: "suki", label: "好き♡", tones: Object.freeze(["sweet"]) }),
 ]);
+// 財布の「言われたい言葉」をご褒美に使った時の印。記録には言葉そのもの（rewardText）を残す。
+const REWARD_WORD = "word";
 const RECEIVABLE_KINDS = Object.freeze(["request", "silent"]);
 // 管理人の受取印。カードに一覧から3つまで登録し、受け取る時に1つ選んで押す。自由入力はない。
 const SEALS = Object.freeze([
@@ -119,6 +126,9 @@ const LIMITS = Object.freeze({
   nicknameEntries: 300,
   ngWordCount: 5,
   ngWordLength: 12,
+  // 財布が登録する「言われたい言葉」（言われたくない言葉の反対）。管理人の言葉選びの手がかりにする。
+  wantWordCount: 5,
+  wantWordLength: 12,
   message: 240,
   requestNote: 60,
   pendingRequests: 3,
@@ -320,6 +330,23 @@ function containsNgWord(text, ngWords) {
   const normalized = String(text ?? "").normalize("NFKC").toLowerCase();
   return (Array.isArray(ngWords) ? ngWords : [])
     .some((word) => word && normalized.includes(String(word).normalize("NFKC").toLowerCase()));
+}
+
+// 言われたい言葉。会話と同じく外部決済・現金・現実の金額を止め、言われたくない言葉を含む語は登録できない。
+// 財布が自分の受け方を決める設定なので、性的な言葉は止めない。
+const WANT_WORDS_NG_MESSAGE = "「言われたくない言葉」を含む言葉は、言われたい言葉に登録できません。";
+
+function normalizeWantWords(value, { ngWords = [] } = {}) {
+  const list = Array.isArray(value) ? value : String(value ?? "").split(/[\n,、]/u);
+  const words = [...new Set(list
+    .map((word) => cleanLine(word, LIMITS.wantWordLength))
+    .filter(Boolean))].slice(0, LIMITS.wantWordCount);
+  for (const word of words) {
+    const reason = contractTextReason(word);
+    if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+    if (containsNgWord(word, ngWords)) return { error: WANT_WORDS_NG_MESSAGE };
+  }
+  return { words };
 }
 
 function normalizeCaps(value) {
@@ -531,12 +558,15 @@ function normalizeApplication(value, { entryFee = 0 } = {}) {
     return { error: "請求は断れず、払うか解約するかであることを確かめてください。" };
   }
   const ngWords = normalizeNgWords(value?.ngWords);
+  const want = normalizeWantWords(value?.wantWords, { ngWords });
+  if (want.error) return { error: want.error };
   return {
     application: {
       caps,
       durationDays,
       tone,
       ngWords,
+      wantWords: want.words,
       allowReportRequests: value?.allowReportRequests === true,
       rankOptIn: value?.rankOptIn === true,
       allowSexualPurposes: value?.allowSexualPurposes === true,
@@ -567,18 +597,39 @@ function visiblePurpose(value, { allowSexual = false } = {}) {
   return SEXUAL_PURPOSE_IDS.includes(purpose) && allowSexual !== true ? "" : purpose;
 }
 
-function rewardsFor(tone, ngWords = []) {
-  const key = TONES.includes(tone) ? tone : "normal";
-  return REWARDS.filter((reward) => reward.tones.includes(key) && !containsNgWord(reward.label, ngWords));
+// 契約の言葉の強さは、財布が決めた「ここまでなら言われてもいい」の上限。上限までの強さを、弱い順に返す。
+function tonesUpTo(tone) {
+  const index = TONES.indexOf(tone);
+  return TONES.slice(0, (index < 0 ? TONES.indexOf("normal") : index) + 1);
 }
 
-function normalizeReward(value, { tone = "normal", ngWords = [] } = {}) {
+function rewardsFor(tone, ngWords = []) {
+  const allowed = tonesUpTo(tone);
+  return REWARDS.filter((reward) => reward.tones.some((entry) => allowed.includes(entry)) && !containsNgWord(reward.label, ngWords));
+}
+
+// ご褒美は一覧の一言か、財布がいま登録している言われたい言葉（REWARD_WORD と言葉そのもの）。
+function normalizeReward(value, { tone = "normal", ngWords = [], wantWords = [], text = "" } = {}) {
   const reward = String(value ?? "");
   if (!reward) return { reward: "" };
+  if (reward === REWARD_WORD) {
+    const word = cleanLine(text, LIMITS.wantWordLength);
+    const registered = Array.isArray(wantWords) ? wantWords.map((entry) => cleanLine(entry, LIMITS.wantWordLength)) : [];
+    if (!word || !registered.includes(word)) return { error: "その言葉は、いまの言われたい言葉にありません。開き直してください。" };
+    if (containsNgWord(word, ngWords)) return { error: "このご褒美は、この契約では選べません。" };
+    return { reward, rewardText: word };
+  }
   if (!rewardsFor(tone, ngWords).some((entry) => entry.id === reward)) {
     return { error: "このご褒美は、この契約では選べません。" };
   }
   return { reward };
+}
+
+// 言われたい言葉を使ったご褒美の、記録した言葉。一覧の一言（id だけで読める）と、読めないものは空文字。
+function storedRewardText(record) {
+  const source = record && typeof record === "object" ? record : {};
+  if (source.reward !== REWARD_WORD) return "";
+  return cleanLine(source.rewardText, LIMITS.wantWordLength);
 }
 
 function normalizeMessage(value) {
@@ -678,9 +729,11 @@ module.exports = {
   PER_DAY_OPTIONS,
   TOTAL_OPTIONS,
   DURATION_DAYS_OPTIONS,
+  MAX_DURATION_DAYS,
   ENTRY_FEE_OPTIONS,
   WORK_ORDER_TARGETS,
   TONES,
+  tonesUpTo,
   DISCLOSURES,
   MANAGER_STYLES,
   SIGIL_COLORS,
@@ -688,6 +741,7 @@ module.exports = {
   PURPOSE_IDS,
   SEXUAL_PURPOSE_IDS,
   REWARDS,
+  REWARD_WORD,
   RECEIVABLE_KINDS,
   SEALS,
   SEAL_IDS,
@@ -725,6 +779,7 @@ module.exports = {
   contractTextReason,
   normalizeNgWords,
   containsNgWord,
+  normalizeWantWords,
   normalizeCaps,
   capsAreLowerOrEqual,
   normalizeManagerCard,
@@ -744,6 +799,7 @@ module.exports = {
   visiblePurpose,
   rewardsFor,
   normalizeReward,
+  storedRewardText,
   normalizeMessage,
   tributeFee,
   honorTierFor,

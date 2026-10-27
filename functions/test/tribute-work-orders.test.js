@@ -121,7 +121,7 @@ test("the manager confirms a finished order once, with a seal and an optional re
   assert.equal(h.contract(contractId).lastPayerMessageSeq < h.contract(contractId).eventSeq, true);
 
   await rejects(act("payer", "work_confirm", { seal: "yoku" }), /この操作はできません/);
-  await rejects(act("manager", "work_confirm", { seal: "yoku", reward: "iiko" }), /ご褒美/, "sweet rewards are not offered in a harsh contract");
+  await rejects(act("manager", "work_confirm", { seal: "yoku", reward: "bogus" }), /ご褒美/, "a reward outside the list is refused");
   const confirmed = await act("manager", "work_confirm", { seal: "yoku", reward: "zako" });
   assert.equal(confirmed.contract.workOrder, null);
   assert.equal(confirmed.contract.workOrdersDone, 1);
@@ -227,7 +227,7 @@ async function threadRenderer() {
   const context = vm.createContext({ ...module, ...await deco, previewScreen: "", sealChoices: new Map(),
     state: { profile: { card: { seals: ["yoku", "zako"] } }, thread: {}, contracts: [], walletBalance: 500 },
     frame: (html) => html, escapeHtml: String, renderBlockButton: () => "", renderTemplates: () => "", renderThreadHead: () => "", sealSvg: () => "" });
-  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "retryReasonText", "canShowShot", "renderShotButton", "renderPendingRequests", "renderWorkOrder", "renderWorkConfirmControls", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
+  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "rewardChips", "renderWantChips", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "retryReasonText", "canShowShot", "renderShotButton", "renderPendingRequests", "renderWorkOrder", "renderWorkConfirmControls", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
   return (raw, uid, { work = null, events = [], demo = false } = {}) => {
     context.state.thread = { view: module.viewContract(raw, uid), events, work, demo };
     return context.renderThread();
@@ -261,7 +261,9 @@ test("the payer sees live progress and a way to the 1on1; the manager sees only 
   assert.match(done, /出稼ぎの報告<\/span><strong>果たしました（3 \/ 3回）/);
   assert.match(done, /name="seal-work" value="yoku" checked/);
   assert.match(done, /data-t="work-confirm" data-reward="zako">ざこ♡/);
-  assert.doesNotMatch(done, /data-reward="iiko"/, "rewards follow the contract tone");
+  // 契約の強さは上限。辛口までの契約では、甘めのご褒美も選べる（2026-10-27）。
+  assert.match(done, /data-reward="iiko"/, "a harsh contract also offers the softer rewards");
+  assert.doesNotMatch(render(rawWithOrder(DONE, { tone: "sweet" }), "manager"), /data-reward="zako"/, "a sweet contract never offers harsh rewards");
   assert.match(render(rawWithOrder(DONE), "player"), /ミオ様の確認を待っています/);
   assert.doesNotMatch(render(rawWithOrder(OPEN, { status: "ended" }), "player"), /tribute-work-order/);
 
@@ -321,7 +323,7 @@ test("progress is counted once per order on opening, not on every snapshot", asy
 
 test("payers opt in on applying and can change it from the thread; sheets, notes, sample and preview", async () => {
   const apply = sourceBlock(clientSource, "function renderApply", "function renderCardEditor");
-  assert.match(apply, /<input type="checkbox" name="allowWorkOrders" checked \/><span>出稼ぎ命令を受ける/);
+  assert.match(apply, /<input type="checkbox" name="allowWorkOrders" \$\{checked\("allowWorkOrders", true\)\} \/><span>出稼ぎ命令を受ける/);
   assert.match(clientSource, /allowScreenshots: data\.get\("allowScreenshots"\) === "on",\s*allowWorkOrders: data\.get\("allowWorkOrders"\) === "on",/);
   assert.equal((clientSource.match(/data-sheet="work-settings">出稼ぎの設定<\/button>/g) || []).length, 2, "pending and active payer threads");
   const settings = sourceBlock(clientSource, 'case "work-settings": {', 'case "end":');
@@ -335,7 +337,10 @@ test("payers opt in on applying and can change it from the thread; sheets, notes
   assert.match(sourceBlock(clientSource, 'case "work-report": {', 'case "work-withdraw":'), /mutate\("work_report", contractPayload\(\), \{/, "the client never sends a count");
 
   const coreModule = await core;
-  assert.deepEqual(coreModule.workOrderNotesFor("harsh"), ["財布が空なら稼いでこい。", "養分は働いて貢ぐもの。", "稼いでから顔を出せ。"]);
+  // 契約の強さ（上限）までの候補を、強い順に並べる。
+  assert.deepEqual(coreModule.workOrderNotesFor("harsh").slice(0, 3), ["財布が空なら稼いでこい。", "養分は働いて貢ぐもの。", "稼いでから顔を出せ。"]);
+  assert.ok(coreModule.workOrderNotesFor("harsh").includes("1on1で少し稼いできてね♡"), "the softer lines stay under a harsh ceiling");
+  assert.deepEqual(coreModule.workOrderNotesFor("sweet"), ["1on1で少し稼いできてね♡", "がんばってきたら褒めてあげる。"]);
   assert.ok(coreModule.workOrderNotesFor("harsh", { collarNo: 3 }).includes("3号、出稼ぎの時間だ。"));
   assert.doesNotMatch(coreModule.workOrderNotesFor("harsh", { ngWords: ["養分"] }).join(), /養分/);
   for (const lines of Object.values(coreModule.WORK_ORDER_NOTES)) {

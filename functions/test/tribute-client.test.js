@@ -31,10 +31,10 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-cheers-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-activity-optin-v1-ranch-cheers-v1"/);
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1-ranch-screenshot-v1"/);
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-activity-optin-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
+  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1-ranch-screenshot-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
@@ -386,8 +386,9 @@ test("named fees, receiving and rewards mirror the server and stay in the hands 
   assert.match(choices, /purposesFor\(\{ allowSexual \}\)/);
   const events = sourceBlock(client, "function renderEvent", "function renderThreadHead");
   assert.match(events, /receivable && view\.role === "manager" && view\.status === "active"\s*\? renderReceiveControls\(event, view\)/, "only the manager receives, only while active");
-  assert.match(sourceBlock(client, "function renderReceiveControls", "function renderTally"), /rewardsFor\(view\.tone, view\.ngWords\)/);
-  assert.match(events, /case "received": \{[\s\S]*?rewardLabel\(event\.reward\)/);
+  assert.match(sourceBlock(client, "function renderReceiveControls", "function renderTally"), /rewardChips\(view, "receive", ` data-seq="\$\{seq\}"`\)/);
+  assert.match(sourceBlock(client, "function rewardChips", "function renderPendingRequests"), /rewardsFor\(view\.tone, view\.ngWords\)/);
+  assert.match(events, /case "received": \{[\s\S]*?rewardText\(event\)/);
   const overlay = sourceBlock(client, "function renderReceiptOverlay", "function renderReceipts");
   assert.match(overlay, /献上完了/);
   assert.match(overlay, /非譲渡・換金不可 ・ AnjuPay only/);
@@ -432,7 +433,7 @@ test("seals, collar numbers, templates and note suggestions mirror the server an
   assert.match(thread, /const save = view\.role === "payer"/, "only the payer can make report images");
   assert.match(thread, /あなたは\$\{escapeHtml\(managerName\)\}の財布 \$\{collarNo\}号です。/);
   assert.match(sourceBlock(client, "function renderReceiveControls", "function renderTally"), /sealsFor\(state\.profile\?\.card\?\.seals, view\.ngWords\)/);
-  assert.match(sourceBlock(client, 'case "receive": {', 'case "share-open": {'), /contractPayload\(\{ tributeSeq: seq, reward, seal \}\)/);
+  assert.match(sourceBlock(client, 'case "receive": {', 'case "share-open": {'), /contractPayload\(\{ tributeSeq: seq, reward, \.\.\.\(rewardWord \? \{ rewardText: rewardWord \} : \{\}\), seal \}\)/);
   const card = sourceBlock(client, "function renderCardEditor", "function renderSealSettings");
   assert.match(card, /name="reportConsent" \$\{\(profile\.card \? card\.reportConsent === true : true\) \? "checked" : ""\}/, "existing cards are not opted in silently");
   assert.match(sourceBlock(client, 'case "card": {', 'case "apply": {'), /seals: data\.getAll\("seals"\)\.map\(String\)\.slice\(0, MAX_SEALS\),\s*\.\.\.formDecorations\(form\),\s*achievements: data\.getAll\("achievements"\)\.map\(String\)\.slice\(0, CARD_ACHIEVEMENT_LIMIT\),\s*reportConsent: data\.get\("reportConsent"\) === "on",/);
@@ -512,7 +513,7 @@ test("the trial preset is always a valid, small first contract that still fits t
     assert.ok(caps.total <= 100 || caps.total === rules.TOTAL_OPTIONS.find((value) => value >= caps.perDay), `fee ${entryFee} stays small`);
   }
   const apply = sourceBlock(client, "function renderApply", "function renderCardEditor");
-  assert.match(apply, /const firstTime = isNewWallet\(\);/);
+  assert.match(apply, /const firstTime = !prefill && isNewWallet\(\);/);
   assert.match(apply, /data-t="apply-trial"/);
   const trial = sourceBlock(client, 'case "apply-trial": {', 'case "copy-invite": {');
   assert.match(trial, /form\.elements\.allowSexualPurposes\.checked = false;/, "the trial never consents to sexual names");

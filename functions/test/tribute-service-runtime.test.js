@@ -1165,7 +1165,8 @@ test("the manager receives each payer tribute once, may add a reward, and the pa
   assert.equal(tribute.receivedAt, undefined);
 
   await rejects(harness.act("payer", "receive", { contractId, tributeSeq: tribute.seq, reward: "gohoubi" }), /この操作はできません/);
-  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "arigato" }), /選べません/, "a sweet-only reward is not offered under harsh words");
+  // 契約の強さは財布が決めた上限。辛口までの契約では甘めのご褒美も選べるが、一覧にないご褒美は選べない（2026-10-27）。
+  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "bogus" }), /選べません/, "an unknown reward is refused");
   await rejects(harness.act("manager", "receive", { contractId, tributeSeq: 999 }), /受け取れる献上が見つかりません/);
   const balanceBefore = harness.balance("manager");
   harness.advance(60_000);
@@ -1720,4 +1721,66 @@ test("only wallets that tributed this month write in a manager's cheer column; m
   assert.deepEqual((await detail("stranger")).cheers, []);
   assert.equal((await detail("big")).myCheer.canWrite, false);
   assert.equal(await unseen(), 0);
+});
+
+// 財布の打つ手と管理人の言葉・第1段（ranch-wallet-words-v1、2026-10-27 ユーザー決定）:
+// 言われたい言葉、言葉の強さは財布が決める上限、期間14日・30日、同じ条件で申し込むための管理人の公開ID。
+test("wished-for words travel with the contract, the payer alone edits them and the manager can give one as a reward", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  await rejects(startContract(harness, "manager", "payer", publicManagerId, { ngWords: "ブス", wantWords: ["ブス財布"] }), /言われたくない言葉/);
+  await rejects(startContract(harness, "manager", "payer", publicManagerId, { wantWords: ["ペイペイで払え"] }), /外部の決済/);
+  harness.advance(31_000);
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { wantWords: ["ざこ", "3号", "ざこ", "イかせて"], durationDays: 30 });
+  const stored = harness.contract(contractId);
+  assert.deepEqual(stored.wantWords, ["ざこ", "3号", "イかせて"], "deduplicated; sexual words are the payer's own choice");
+  assert.equal(stored.managerPublicId, publicManagerId);
+  assert.equal(stored.expiresAt - stored.acceptedAt, 30 * 24 * 60 * 60 * 1_000, "30 days are offered");
+  const managerView = (await harness.act("manager", "state")).contracts.find((contract) => contract.contractId === contractId);
+  assert.deepEqual(managerView.wantWords, ["ざこ", "3号", "イかせて"], "the manager sees the words");
+  assert.equal(managerView.durationDays, 30);
+  assert.equal(managerView.managerPublicId, publicManagerId);
+
+  // 決めるのは財布だけ。言われたくない言葉を含む語と、外部決済の言葉は登録できない。
+  await rejects(harness.act("manager", "set_want_words", { contractId, wantWords: ["雑魚"] }), /この操作はできません/);
+  await rejects(harness.act("payer", "set_want_words", { contractId, wantWords: ["銀行振込"] }), /外部の決済/);
+  const unchanged = await harness.act("payer", "set_want_words", { contractId, wantWords: ["ざこ", "3号", "イかせて"] });
+  assert.equal(unchanged.unchanged, true);
+  const changed = await harness.act("payer", "set_want_words", { contractId, wantWords: ["養分", "いい子"] });
+  assert.deepEqual(changed.contract.wantWords, ["養分", "いい子"]);
+  const event = harness.events(contractId).at(-1);
+  assert.deepEqual([event.type, event.actor, event.count], ["want_words_changed", "payer", 2]);
+  assert.equal(JSON.stringify(event).includes("養分"), false, "the event does not repeat the words");
+
+  // ご褒美: いまの言われたい言葉だけ。言葉そのものを献上・出来事・レシートに残す。
+  const given = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 50, clientRequestId: nextRequestId() });
+  const tribute = harness.events(contractId).at(-1);
+  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "word", rewardText: "ざこ" }), /いまの言われたい言葉にありません/, "a removed word is refused");
+  await harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "word", rewardText: "養分" });
+  const marked = harness.events(contractId).find((entry) => entry.seq === tribute.seq);
+  assert.deepEqual([marked.reward, marked.rewardText], ["word", "養分"]);
+  const received = harness.events(contractId).at(-1);
+  assert.deepEqual([received.type, received.reward, received.rewardText], ["received", "word", "養分"]);
+  assert.equal(harness.contract(contractId).rewardCount, 1);
+  const receipt = (await harness.act("payer", "receipts")).receipts.find((row) => row.receiptId === given.receipt.receiptId);
+  assert.deepEqual([receipt.reward, receipt.rewardText], ["word", "養分"]);
+  const share = await harness.act("payer", "share_info", { contractId, receiptId: given.receipt.receiptId });
+  assert.deepEqual([share.receipt.reward, share.receipt.rewardText], ["word", "養分"]);
+});
+
+test("the tone is a ceiling: a harsh contract also offers soft rewards, a sweet one never offers harsh ones", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000, sweet: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const harsh = await startContract(harness, "manager", "payer", publicManagerId, { tone: "harsh" });
+  await harness.act("payer", "tribute", { contractId: harsh, kind: "silent", amount: 30, clientRequestId: nextRequestId() });
+  const harshSeq = harness.events(harsh).at(-1).seq;
+  await harness.act("manager", "receive", { contractId: harsh, tributeSeq: harshSeq, reward: "suki" });
+  assert.equal(harness.events(harsh).at(-1).reward, "suki", "a sweet reward under a harsh ceiling");
+
+  const sweet = await startContract(harness, "manager", "sweet", publicManagerId, { tone: "sweet" });
+  await harness.act("sweet", "tribute", { contractId: sweet, kind: "silent", amount: 30, clientRequestId: nextRequestId() });
+  const sweetSeq = harness.events(sweet).at(-1).seq;
+  await rejects(harness.act("manager", "receive", { contractId: sweet, tributeSeq: sweetSeq, reward: "zako" }), /選べません/);
+  await harness.act("manager", "receive", { contractId: sweet, tributeSeq: sweetSeq, reward: "mata" });
+  assert.equal(harness.events(sweet).at(-1).reward, "mata");
 });

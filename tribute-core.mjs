@@ -16,7 +16,9 @@ export const PREMISES = Object.freeze([
 export const PER_TRIBUTE_OPTIONS = Object.freeze([10, 30, 50, 100, 300, 500, 1_000, 3_000, 5_000, 10_000]);
 export const PER_DAY_OPTIONS = Object.freeze([30, 100, 300, 500, 1_000, 3_000, 5_000, 10_000, 30_000]);
 export const TOTAL_OPTIONS = Object.freeze([100, 300, 1_000, 3_000, 5_000, 10_000, 30_000, 50_000, 100_000]);
-export const DURATION_DAYS_OPTIONS = Object.freeze([1, 3, 7]);
+// 契約の期間。サーバーの DURATION_DAYS_OPTIONS と同じ（14日・30日は2026-10-27に足した）。
+export const DURATION_DAYS_OPTIONS = Object.freeze([1, 3, 7, 14, 30]);
+const MAX_DURATION_DAYS = DURATION_DAYS_OPTIONS.at(-1);
 export const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 // 出稼ぎ命令の回数（命令の後の1on1の正式完走）。サーバーの WORK_ORDER_TARGETS と同じ。
 export const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
@@ -28,6 +30,8 @@ export const LIMITS = Object.freeze({
   nickname: 12,
   ngWordCount: 5,
   ngWordLength: 12,
+  wantWordCount: 5,
+  wantWordLength: 12,
   message: 240,
   requestNote: 60,
   pendingRequests: 3,
@@ -44,6 +48,15 @@ export const LIMITS = Object.freeze({
 });
 
 export const TONE_LABELS = Object.freeze({ sweet: "甘め", normal: "普通", harsh: "辛口" });
+// 契約の言葉の強さは、財布が決める「ここまでなら言われてもいい」の上限。管理人は上限までの強さから選ぶ。
+export const TONE_CEILING_LABELS = Object.freeze({ sweet: "甘めまで", normal: "普通まで", harsh: "辛口まで" });
+const TONE_ORDER = Object.freeze(["sweet", "normal", "harsh"]);
+
+// 上限までの強さを、弱い順に返す（サーバーの tonesUpTo と同じ）。
+export function tonesUpTo(tone) {
+  const index = TONE_ORDER.indexOf(tone);
+  return TONE_ORDER.slice(0, (index < 0 ? TONE_ORDER.indexOf("normal") : index) + 1);
+}
 export const DISCLOSURE_LABELS = Object.freeze({
   nekama: "ネカマ（中身は男）",
   as_is: "演じていない",
@@ -121,7 +134,7 @@ const PURPOSE_IDS = Object.freeze(PURPOSES.map((purpose) => purpose.id));
 const SEXUAL_PURPOSE_IDS = Object.freeze(PURPOSES.filter((purpose) => purpose.sexual).map((purpose) => purpose.id));
 export const SEXUAL_PURPOSE_SUMMARY = PURPOSES.filter((purpose) => purpose.sexual).map((purpose) => purpose.label).join("・");
 
-// 受け取った時に添える短い承認。サーバーの REWARDS と同じ。押すのは毎回管理人。
+// 受け取った時に添える短い承認。サーバーの REWARDS と同じ。押すのは毎回管理人で、上限までのどの強さからも選べる。
 export const REWARDS = Object.freeze([
   Object.freeze({ id: "gohoubi", label: "ご褒美♡", tones: Object.freeze(["sweet", "normal", "harsh"]) }),
   Object.freeze({ id: "fufu", label: "ふふ♡ご褒美♡", tones: Object.freeze(["sweet", "normal", "harsh"]) }),
@@ -132,7 +145,11 @@ export const REWARDS = Object.freeze([
   Object.freeze({ id: "zako", label: "ざこ♡", tones: Object.freeze(["harsh"]) }),
   Object.freeze({ id: "soreppocchi", label: "それっぽっち？", tones: Object.freeze(["harsh"]) }),
   Object.freeze({ id: "tsugi", label: "次も持ってきな", tones: Object.freeze(["harsh"]) }),
+  Object.freeze({ id: "mata", label: "また来てね♡", tones: Object.freeze(["sweet"]) }),
+  Object.freeze({ id: "suki", label: "好き♡", tones: Object.freeze(["sweet"]) }),
 ]);
+// 財布の「言われたい言葉」をご褒美に使った時の印（サーバーの REWARD_WORD と同じ）。言葉そのものは rewardText に残る。
+export const REWARD_WORD = "word";
 export const RECEIVABLE_KINDS = Object.freeze(["request", "silent"]);
 
 // 管理人の受取印。サーバーの SEALS と同じ。カードに3つまで登録し、受け取る時に1つ選んで押す。
@@ -186,12 +203,19 @@ export function purposesFor({ allowSexual = false } = {}) {
 }
 
 export function rewardsFor(tone, ngWords = []) {
-  const key = ["sweet", "normal", "harsh"].includes(tone) ? tone : "normal";
-  return REWARDS.filter((reward) => reward.tones.includes(key) && !containsNgWord(reward.label, ngWords));
+  const allowed = tonesUpTo(tone);
+  return REWARDS.filter((reward) => reward.tones.some((entry) => allowed.includes(entry)) && !containsNgWord(reward.label, ngWords));
 }
 
 export function rewardLabel(value) {
   return REWARDS.find((reward) => reward.id === value)?.label || "";
+}
+
+// 記録に残ったご褒美の言葉。一覧の一言はその表示名、言われたい言葉は残した言葉そのもの。
+export function rewardText(record) {
+  const source = record && typeof record === "object" ? record : {};
+  if (source.reward === REWARD_WORD) return Array.from(String(source.rewardText || "").trim()).slice(0, LIMITS.wantWordLength).join("");
+  return rewardLabel(source.reward);
 }
 
 export const KIND_LABELS = Object.freeze({
@@ -300,6 +324,26 @@ export function contractTextProblem(text, { role = "payer", ngWords = [] } = {})
   if (reason) return FORBIDDEN_MESSAGES[reason];
   if (role === "manager" && containsNgWord(text, ngWords)) return FORBIDDEN_MESSAGES.ng_word;
   return "";
+}
+
+// 言われたい言葉。サーバーの normalizeWantWords と同じく整え、同じ理由で止める（性的な言葉は止めない）。
+export const WANT_WORDS_NG_MESSAGE = "「言われたくない言葉」を含む言葉は、言われたい言葉に登録できません。";
+
+export function normalizeWantWords(value, { ngWords = [] } = {}) {
+  const list = Array.isArray(value) ? value : String(value ?? "").split(/[\n,、]/u);
+  const words = [...new Set(list
+    .map((word) => Array.from(String(word ?? "")
+      .normalize("NFKC")
+      .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "")
+      .replace(/\s+/gu, " ")
+      .trim()).slice(0, LIMITS.wantWordLength).join(""))
+    .filter(Boolean))].slice(0, LIMITS.wantWordCount);
+  for (const word of words) {
+    const reason = contractTextReason(word);
+    if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+    if (containsNgWord(word, ngWords)) return { error: WANT_WORDS_NG_MESSAGE };
+  }
+  return { words };
 }
 
 export function textLength(value) {
@@ -444,9 +488,11 @@ export function viewContract(contract, uid, now = Date.now()) {
     caps,
     pendingCaps: pendingStillScheduled ? pending : null,
     pendingCapsEffectiveDateKey: pendingStillScheduled ? pendingKey : "",
-    durationDays: integer(raw.durationDays, 1, 7),
+    durationDays: integer(raw.durationDays, 1, MAX_DURATION_DAYS),
     tone: String(raw.tone || "normal"),
     ngWords: Array.isArray(raw.ngWords) ? raw.ngWords.slice(0, LIMITS.ngWordCount).map(String) : [],
+    wantWords: Array.isArray(raw.wantWords) ? raw.wantWords.map(String).filter(Boolean).slice(0, LIMITS.wantWordCount) : [],
+    managerPublicId: PUBLIC_MANAGER_ID_PATTERN.test(String(raw.managerPublicId || "")) ? raw.managerPublicId : "",
     allowReportRequests: raw.allowReportRequests === true,
     rankOptIn: raw.rankOptIn === true,
     allowSexualPurposes: raw.allowSexualPurposes === true,
@@ -499,11 +545,14 @@ export function ignoreLabel(since, now = Date.now()) {
   return `既読無視 ${Math.floor(elapsed / 86_400_000) + 1}日目`;
 }
 
-// 定型文。言葉の強さ（預ける側が契約で選ぶ）ごとに用意する。辛口は徹底して辛く、ただし
+// 定型文。言葉の強さごとに用意する。契約の強さは預ける側が決める上限で、管理人はその上限までの強さから選ぶ
+// （財布の定型文は契約の強さのもの）。辛口は徹底して辛く、ただし
 // 自傷・死・暴力・差別・晒しの語、上限を上げさせる文、解約をためらわせる文は入れない。
 // 上限を下げた時・終わった時の反応は、責めない。
 export const MANAGER_SITUATIONS = Object.freeze([
   Object.freeze({ id: "nudge", label: "催促" }),
+  // 財布の気持ちを、財布より先に言う（2026-10-27、記事の「相手の考え代弁型」から）。
+  Object.freeze({ id: "voice", label: "言い当てる" }),
   Object.freeze({ id: "after", label: "受け取った後" }),
   Object.freeze({ id: "ignore", label: "突き放す" }),
   Object.freeze({ id: "report", label: "報告させる" }),
@@ -533,6 +582,12 @@ export const TEMPLATES = Object.freeze({
         "養分は黙って差し出せ。",
         "お財布くん、今日の分は？",
         "{no}号、待たせるな。",
+      ]),
+      voice: Object.freeze([
+        "財布開けたくて震えてるの、バレバレ。",
+        "払いたくて仕方ないって顔してる。",
+        "口では渋っても、指はもう押したがってる。",
+        "{no}号、また貢ぎたくなってるでしょ。",
       ]),
       after: Object.freeze([
         "それっぽっち？まあ受け取ってやる。",
@@ -580,6 +635,11 @@ export const TEMPLATES = Object.freeze({
         "財布の管理は私の仕事。",
         "{no}号、今日もよろしく。",
       ]),
+      voice: Object.freeze([
+        "払いたくなってきたでしょ。",
+        "本当は差し出したいって、分かってる。",
+        "{no}号、そろそろ貢ぎたい頃だよね。",
+      ]),
       after: Object.freeze([
         "受け取った。よくできました。",
         "確認した。次も遅れないで。",
@@ -596,10 +656,16 @@ export const TEMPLATES = Object.freeze({
       ended: Object.freeze(["おつかれさま。ここまでありがとう。", "契約終了。ちゃんと休んでね。"]),
     }),
     sweet: Object.freeze({
+      // お願いの形にはしない（記事で財布が嫌ったのは、媚びる・営業する貢がせ役だった）。
       nudge: Object.freeze([
-        "待ってたよ。今日も来てくれる？",
+        "待ってたよ。今日も来るよね？",
         "無理のない範囲でね。",
         "顔見せてくれたら、それでうれしいよ。",
+      ]),
+      voice: Object.freeze([
+        "本当は貢ぎたくてそわそわしてるでしょ♡",
+        "差し出したい気持ち、ちゃんと分かってるよ。",
+        "{no}号、顔に出てるよ♡",
       ]),
       after: Object.freeze([
         "えらいね、ちゃんと持ってきたんだ。",
@@ -620,19 +686,19 @@ export const TEMPLATES = Object.freeze({
   payer: Object.freeze({
     harsh: Object.freeze({
       give: Object.freeze(["差し出します。", "今日の分です。受け取ってください。", "遅れてすみません。", "{no}号、献上します。"]),
-      reply: Object.freeze(["はい。", "財布として使ってください。", "もっと罵ってください。", "ありがとうございます。", "ATMとして使ってください。", "養分です。"]),
+      reply: Object.freeze(["はい。", "財布として使ってください。", "もっと罵ってください。", "ありがとうございます。", "貢がせていただき、ありがとうございます。", "ATMとして使ってください。", "養分です。"]),
       control: Object.freeze(["寸止め料、払いました。", "イかせてください。お願いします。", "勝手にイきました。罰金を払います。"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
     }),
     normal: Object.freeze({
       give: Object.freeze(["今日の分です。", "差し出します。", "{no}号、献上します。"]),
-      reply: Object.freeze(["はい。", "ありがとうございます。", "報告します。"]),
+      reply: Object.freeze(["はい。", "ありがとうございます。", "貢がせてくれてありがとうございます。", "報告します。"]),
       control: Object.freeze(["寸止め料です。", "イってもいいですか。"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
     }),
     sweet: Object.freeze({
       give: Object.freeze(["今日の分、どうぞ。", "受け取ってくれたらうれしい。"]),
-      reply: Object.freeze(["ありがとう。", "今日もお願いします。", "うれしい。"]),
+      reply: Object.freeze(["ありがとう。", "受け取ってくれてありがとう。", "今日もお願いします。", "うれしい。"]),
       control: Object.freeze(["寸止め料、どうぞ。", "イってもいい？"]),
       safety: Object.freeze(["今日はここまで。", "その言い方はやめて。", "少し休みます。"]),
     }),
@@ -666,8 +732,9 @@ export const WORK_ORDER_NOTES = Object.freeze({
   sweet: Object.freeze(["1on1で少し稼いできてね♡", "がんばってきたら褒めてあげる。", "{no}号、いってらっしゃい♡"]),
 });
 
+// 契約の強さ（上限）までの候補を、強い順に並べる。
 export function workOrderNotesFor(tone, { collarNo = 0, ngWords = [] } = {}) {
-  const lines = WORK_ORDER_NOTES[tone] || WORK_ORDER_NOTES.normal;
+  const lines = tonesUpTo(tone).reverse().flatMap((key) => WORK_ORDER_NOTES[key]);
   const number = Number.isSafeInteger(Number(collarNo)) && Number(collarNo) > 0 ? String(Number(collarNo)) : "";
   return lines
     .filter((line) => !line.includes("{no}") || number)

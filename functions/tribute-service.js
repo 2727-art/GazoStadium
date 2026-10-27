@@ -34,9 +34,12 @@ const {
   normalizeWalletName,
   normalizeNickname,
   normalizeApplication,
+  normalizeWantWords,
   normalizePurpose,
   visiblePurpose,
   normalizeReward,
+  storedRewardText,
+  MAX_DURATION_DAYS,
   PURPOSE_IDS,
   SEXUAL_PURPOSE_IDS,
   RECEIVABLE_KINDS,
@@ -93,6 +96,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "set_purposes",
   "set_screenshots",
   "set_nickname",
+  "set_want_words",
   "set_work_orders",
   "work_order",
   "work_withdraw",
@@ -343,6 +347,13 @@ function cardSnapshot(card) {
   };
 }
 
+// 財布の言われたい言葉。管理人にも見せる（言葉選びの手がかり）。
+function wantWordList(contract) {
+  return Array.isArray(contract.wantWords)
+    ? contract.wantWords.map((word) => cleanLine(word, LIMITS.wantWordLength)).filter(Boolean).slice(0, LIMITS.wantWordCount)
+    : [];
+}
+
 function pendingRequestList(contract) {
   return Object.entries(object(contract.pendingRequests))
     .map(([requestId, entry]) => ({
@@ -430,9 +441,12 @@ function viewContract(contract, uid, now) {
     caps,
     pendingCaps: pendingStillScheduled ? pending : null,
     pendingCapsEffectiveDateKey: pendingStillScheduled ? pendingKey : "",
-    durationDays: integer(contract.durationDays, 1, 7, 1),
+    durationDays: integer(contract.durationDays, 1, MAX_DURATION_DAYS, 1),
     tone: String(contract.tone || "normal"),
     ngWords: Array.isArray(contract.ngWords) ? contract.ngWords.slice(0, LIMITS.ngWordCount) : [],
+    wantWords: wantWordList(contract),
+    // 終わった契約から「同じ条件で申し込む」ために、管理人の公開IDを持つ（この設定より前の契約は空）。
+    managerPublicId: PUBLIC_MANAGER_ID_PATTERN.test(String(contract.managerPublicId || "")) ? contract.managerPublicId : "",
     allowReportRequests: contract.allowReportRequests === true,
     rankOptIn: contract.rankOptIn === true,
     allowSexualPurposes: contract.allowSexualPurposes === true,
@@ -692,6 +706,22 @@ function createTributeService(deps) {
   function patchPair(ctx, values) {
     ctx.pair.patch = { ...(ctx.pair.patch || {}), ...values };
     Object.assign(ctx.pair.value, values);
+  }
+
+  // 受け取り・出稼ぎの確認に添えるご褒美。一覧は契約の強さ（上限）まで、言われたい言葉は言葉そのものを残す。
+  function contractReward(ctx, data) {
+    const normalized = normalizeReward(data?.reward, {
+      tone: ctx.contract.tone,
+      ngWords: ctx.contract.ngWords,
+      wantWords: wantWordList(ctx.contract),
+      text: data?.rewardText,
+    });
+    if (normalized.error) fail("invalid-argument", normalized.error);
+    const reward = normalized.reward;
+    return {
+      reward,
+      rewardMarks: reward ? { reward, ...(normalized.rewardText ? { rewardText: normalized.rewardText } : {}) } : {},
+    };
   }
 
   function pushEvent(ctx, event) {
@@ -1696,12 +1726,14 @@ function createTributeService(deps) {
         status: "pending",
         endReason: "",
         managerCard: cardSnapshot(manager.card),
+        managerPublicId: publicManagerId,
         entryFee,
         payerWalletName: application.walletName,
         managerIgnoreUnpaid: manager.card.ignoreUnpaid === true,
         durationDays: application.durationDays,
         tone: application.tone,
         ngWords: application.ngWords,
+        wantWords: application.wantWords,
         allowReportRequests: application.allowReportRequests,
         rankOptIn: application.rankOptIn,
         allowSexualPurposes: application.allowSexualPurposes,
@@ -1858,7 +1890,7 @@ function createTributeService(deps) {
         if (manager.counts.managerActive >= LIMITS.managerActiveContracts) {
           fail("failed-precondition", `進行中の契約は${LIMITS.managerActiveContracts}件までです。`);
         }
-        const durationDays = integer(ctx.contract.durationDays, 1, 7, 1);
+        const durationDays = integer(ctx.contract.durationDays, 1, MAX_DURATION_DAYS, 1);
         setContract(ctx, {
           status: "active",
           acceptedAt: ctx.now,
@@ -2220,6 +2252,22 @@ function createTributeService(deps) {
         return { ok: true, contract: view(ctx) };
       },
     },
+    // 言われたい言葉。決めるのは預ける側だけで、申し込みの後もいつでも変えられる。管理人のスレッドに札として出る。
+    set_want_words: {
+      roles: ["payer"],
+      statuses: ["pending", "active"],
+      write(ctx, _extra, data) {
+        const normalized = normalizeWantWords(data?.wantWords, { ngWords: ctx.contract.ngWords });
+        if (normalized.error) fail("invalid-argument", normalized.error);
+        const current = wantWordList(ctx.contract);
+        if (current.length === normalized.words.length && current.every((word, index) => word === normalized.words[index])) {
+          return { ok: true, contract: view(ctx), unchanged: true };
+        }
+        setContract(ctx, { wantWords: normalized.words });
+        pushEvent(ctx, { type: "want_words_changed", actor: "payer", count: normalized.words.length });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
     // 出稼ぎ命令を受けるか。決めるのは預ける側だけで、いつでも変えられる。外すと、まだ果たしていない命令はその場で消える。
     set_work_orders: {
       roles: ["payer"],
@@ -2308,9 +2356,7 @@ function createTributeService(deps) {
       write(ctx, _extra, data) {
         const order = workOrderView(ctx.contract);
         if (!order?.done) fail("failed-precondition", "確認できる出稼ぎ報告はありません。");
-        const normalized = normalizeReward(data?.reward, { tone: ctx.contract.tone, ngWords: ctx.contract.ngWords });
-        if (normalized.error) fail("invalid-argument", normalized.error);
-        const reward = normalized.reward;
+        const { reward, rewardMarks } = contractReward(ctx, data);
         const card = ctx.profiles.manager.value.card;
         const seal = sealFor(data?.seal, { seals: card?.seals, ngWords: ctx.contract.ngWords });
         setContract(ctx, { workOrder: null });
@@ -2322,7 +2368,7 @@ function createTributeService(deps) {
           count: order.reportedCount,
           seal,
           ...sealLook(card),
-          ...(reward ? { reward } : {}),
+          ...rewardMarks,
         });
         // ご褒美の一言は返事なので、既読無視を終える。
         if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
@@ -2372,11 +2418,9 @@ function createTributeService(deps) {
           fail("not-found", "受け取れる献上が見つかりません。");
         }
         if (integer(event.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0) > 0) fail("failed-precondition", "この献上はもう受け取っています。");
-        const normalized = normalizeReward(data?.reward, { tone: ctx.contract.tone, ngWords: ctx.contract.ngWords });
-        if (normalized.error) fail("invalid-argument", normalized.error);
-        const reward = normalized.reward;
+        const { reward, rewardMarks } = contractReward(ctx, data);
         const seal = sealFor(data?.seal, { seals: ctx.profiles.manager.value.card?.seals, ngWords: ctx.contract.ngWords });
-        const marks = { receivedAt: ctx.now, seal, ...sealLook(ctx.profiles.manager.value.card), ...(reward ? { reward } : {}) };
+        const marks = { receivedAt: ctx.now, seal, ...sealLook(ctx.profiles.manager.value.card), ...rewardMarks };
         ctx.extraWrites.push((transaction) => transaction.update(eventRef(ctx.contractId, extra.seq), marks));
         if (extra.receiptExists) {
           ctx.extraWrites.push((transaction) => transaction.update(receiptRef(ctx.payerUid, extra.receiptId), marks));
@@ -2391,7 +2435,7 @@ function createTributeService(deps) {
           tributeSeq: extra.seq,
           amount: integer(event.amount, 0, Number.MAX_SAFE_INTEGER, 0),
           seal,
-          ...(reward ? { reward } : {}),
+          ...rewardMarks,
         });
         // ご褒美の一言は返事なので、既読無視を終える。
         if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
@@ -2536,6 +2580,7 @@ function createTributeService(deps) {
         purpose: PURPOSE_IDS.includes(value.purpose) ? value.purpose : "",
         receivedAt: integer(value.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0),
         reward: typeof value.reward === "string" && /^[a-z_]{1,24}$/.test(value.reward) ? value.reward : "",
+        rewardText: storedRewardText(value),
         seal: SEAL_IDS.includes(value.seal) ? value.seal : "",
         ...sealLook(value),
         collarNo: integer(value.collarNo, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -2581,6 +2626,7 @@ function createTributeService(deps) {
         seal: SEAL_IDS.includes(stored.seal) ? stored.seal : "",
         ...sealLook(stored),
         reward: typeof stored.reward === "string" && /^[a-z_]{1,24}$/.test(stored.reward) ? stored.reward : "",
+        rewardText: storedRewardText(stored),
       }
       : null;
     return {

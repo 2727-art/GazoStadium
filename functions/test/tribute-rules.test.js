@@ -109,7 +109,8 @@ test("caps must be chosen options in order and the entry fee must fit one tribut
   assert.equal(ok.application.walletName, "名無しの財布", "forbidden wallet names fall back");
   assert.equal(ok.application.allowReportRequests, false);
   assert.equal(ok.application.rankOptIn, false);
-  assert.match(rules.normalizeApplication({ ...base, durationDays: 30 }).error, /期間/);
+  assert.match(rules.normalizeApplication({ ...base, durationDays: 2 }).error, /期間/);
+  for (const durationDays of [14, 30]) assert.equal(rules.normalizeApplication({ ...base, durationDays }, { entryFee: 10 }).application.durationDays, durationDays, "14 and 30 days are offered");
 });
 
 test("manager cards need a persona, a disclosure tag and a style but never a gender", () => {
@@ -250,9 +251,10 @@ test("named fees: sexual names only with the payer's consent, and hidden again w
 });
 
 test("rewards are short fixed praises chosen per tone and filtered by the payer's NG words", () => {
-  assert.deepEqual(rules.rewardsFor("sweet").map((reward) => reward.id), ["gohoubi", "fufu", "iiko", "erai", "arigato"]);
-  assert.deepEqual(rules.rewardsFor("normal").map((reward) => reward.id), ["gohoubi", "fufu", "iiko", "erai", "yoku"]);
-  assert.deepEqual(rules.rewardsFor("harsh").map((reward) => reward.id), ["gohoubi", "fufu", "zako", "soreppocchi", "tsugi"]);
+  // 契約の強さは上限。上限までのどの強さのご褒美も選べる（2026-10-27、ユーザー決定）。
+  assert.deepEqual(rules.rewardsFor("sweet").map((reward) => reward.id), ["gohoubi", "fufu", "iiko", "erai", "arigato", "mata", "suki"]);
+  assert.deepEqual(rules.rewardsFor("normal").map((reward) => reward.id), ["gohoubi", "fufu", "iiko", "erai", "arigato", "yoku", "mata", "suki"]);
+  assert.deepEqual(rules.rewardsFor("harsh").map((reward) => reward.id), rules.REWARDS.map((reward) => reward.id));
   assert.deepEqual(rules.rewardsFor("unknown"), rules.rewardsFor("normal"));
   assert.ok(!rules.rewardsFor("harsh", ["ざこ"]).some((reward) => reward.id === "zako"));
   assert.deepEqual(rules.normalizeReward(""), { reward: "" });
