@@ -1755,7 +1755,7 @@ test("wished-for words travel with the contract, the payer alone edits them and 
   // ご褒美: いまの言われたい言葉だけ。言葉そのものを献上・出来事・レシートに残す。
   const given = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 50, clientRequestId: nextRequestId() });
   const tribute = harness.events(contractId).at(-1);
-  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "word", rewardText: "ざこ" }), /いまの言われたい言葉にありません/, "a removed word is refused");
+  await rejects(harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "word", rewardText: "ざこ" }), /いまのご褒美の候補にありません/, "a removed word is refused");
   await harness.act("manager", "receive", { contractId, tributeSeq: tribute.seq, reward: "word", rewardText: "養分" });
   const marked = harness.events(contractId).find((entry) => entry.seq === tribute.seq);
   assert.deepEqual([marked.reward, marked.rewardText], ["word", "養分"]);
@@ -1876,4 +1876,104 @@ test("a payer resists an unpaid request up to three times; it stays unpaid and t
   assert.equal(paid.contract.resistedTributes, 1);
   const receipt = (await harness.act("payer", "receipts")).receipts.find((row) => row.receiptId === paid.receipt.receiptId);
   assert.equal(receipt.resisted, 3);
+});
+
+// 財布の打つ手と管理人の言葉・第3段（ranch-recite-v1、2026-10-27 ユーザー決定）:
+// 言葉の献上と復唱、管理人の自分の言葉（定型文・ご褒美・受取印の言葉）、延長。
+test("a word offering moves no Pay, is limited to three a day and is received with a seal and the manager's own reward", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager", { seals: ["yoku", "word:よく貢いだ", "word:LINE交換"] });
+  await rejects(harness.act("manager", "set_own_words", { ownWords: { rewards: [{ text: "ペイペイで", tone: "harsh" }] } }), /外部の決済/);
+  const own = await harness.act("manager", "set_own_words", { ownWords: { lines: [{ text: "跪いて差し出しな。", tone: "harsh" }], rewards: [{ text: "上出来", tone: "normal" }, { text: "イっていいよ", tone: "harsh" }, { text: "甘いね", tone: "sweet" }] } });
+  assert.deepEqual(own.profile.ownWords.rewards.map((entry) => entry.text), ["上出来", "イっていいよ", "甘いね"]);
+  assert.deepEqual(harness.firestore.read("tributeProfiles/manager").card.seals, ["yoku", "word:よく貢いだ"], "a seal word with contact words is dropped");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { tone: "normal" });
+  const board = await harness.act("payer", "board");
+  assert.equal(JSON.stringify(board).includes("上出来"), false, "own words never reach the board");
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+  const balance = harness.balance("payer");
+  await rejects(act("payer", "offer_words", { text: "" }), /差し出す言葉/);
+  await rejects(act("payer", "offer_words", { text: "現金で払います" }), /外部の決済/);
+  const offered = await act("payer", "offer_words", { text: "今日も負けました。\n言葉だけ置いていきます。" });
+  assert.equal(harness.balance("payer"), balance, "no Pay moves");
+  assert.deepEqual([offered.contract.wordOfferings, offered.contract.awaitingReceipt, offered.contract.wordOffersToday], [1, 1, 1]);
+  const offering = harness.events(contractId).at(-1);
+  assert.deepEqual([offering.type, offering.text], ["word_offering", "今日も負けました。\n言葉だけ置いていきます。"]);
+  await act("payer", "offer_words", { text: "二つ目" });
+  await act("payer", "offer_words", { text: "三つ目" });
+  await rejects(act("payer", "offer_words", { text: "四つ目" }), /1日3回まで/);
+  // 自分のご褒美: 強さの札が上限以下で、性的な言葉は性的な名目を許した契約でだけ。
+  await rejects(act("manager", "receive", { tributeSeq: offering.seq, reward: "word", rewardText: "イっていいよ" }), /ご褒美の候補にありません/, "harsh own reward under a normal ceiling");
+  const received = await act("manager", "receive", { tributeSeq: offering.seq, seal: "word:よく貢いだ", reward: "word", rewardText: "上出来" });
+  const marked = harness.events(contractId).find((event) => event.seq === offering.seq);
+  assert.deepEqual([marked.seal, marked.reward, marked.rewardText, marked.receivedAt > 0], ["word:よく貢いだ", "word", "上出来", true]);
+  const last = harness.events(contractId).at(-1);
+  assert.deepEqual([last.type, last.words, last.amount], ["received", true, 0]);
+  assert.equal(received.contract.awaitingReceipt, 2);
+  assert.equal(harness.contract(contractId).totalTributed, 10, "only the entry fee counts as tribute");
+  await act("manager", "receive", { tributeSeq: offering.seq + 1, reward: "word", rewardText: "甘いね" });
+  // 受取印の言葉は、Pay の献上のレシートにも言葉のまま残る。
+  const given = await act("payer", "tribute", { kind: "silent", amount: 30, clientRequestId: nextRequestId() });
+  await act("manager", "receive", { tributeSeq: harness.events(contractId).at(-1).seq, seal: "word:よく貢いだ" });
+  const receipt = (await harness.act("payer", "receipts")).receipts.find((row) => row.receiptId === given.receipt.receiptId);
+  assert.equal(receipt.seal, "word:よく貢いだ");
+});
+
+test("recitation: the manager sets a line and a count, the payer types it exactly, and the manager confirms it once", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId);
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+  await rejects(act("payer", "recite_order", { text: "私は財布です。", target: 1 }), /この操作はできません/);
+  await rejects(act("manager", "recite_order", { text: "イかせてください", target: 1 }), /性的な言葉を復唱させられません/);
+  await rejects(act("manager", "recite_order", { text: "ブスな財布です", target: 1 }), /言われたくない言葉/);
+  await rejects(act("manager", "recite_order", { text: "私は財布です。", target: 2 }), /回数/);
+  await act("manager", "recite_order", { text: "私は　財布です。", target: 3 });
+  await rejects(act("manager", "recite_order", { text: "もう一つ", target: 1 }), /1件ずつ/);
+  await act("payer", "message", { text: "はい" });
+  await act("manager", "mark_read", { seq: harness.contract(contractId).eventSeq });
+  const ignoredSince = harness.contract(contractId).ignoredSince;
+  await rejects(act("payer", "recite", { text: "私は財布でした。" }), /一字一句同じに/);
+  const first = await act("payer", "recite", { text: "  私は 財布です。 " });
+  assert.deepEqual([first.count, first.done], [1, false]);
+  assert.equal(harness.contract(contractId).lastPayerMessageSeq < harness.contract(contractId).eventSeq, true, "a recitation is not a payer message");
+  assert.equal(harness.contract(contractId).ignoredSince, ignoredSince);
+  await rejects(act("payer", "recite", { text: "私は財布です。" }), /一字一句同じに/, "spaces collapse but are not removed");
+  await act("payer", "recite", { text: "私は　財布です。" });
+  await rejects(act("manager", "recite_confirm"), /確認できる復唱はありません/);
+  const done = await act("payer", "recite", { text: "私は 財布です。" });
+  assert.deepEqual([done.done, done.contract.recitesDone, done.contract.reciteOrder.done], [true, 1, true]);
+  await rejects(act("payer", "recite", { text: "私は 財布です。" }), /復唱する一言はありません/);
+  await act("manager", "recite_confirm", { seal: "yoku", reward: "zako" });
+  const confirm = harness.events(contractId).at(-1);
+  assert.deepEqual([confirm.type, confirm.seal, confirm.reward, harness.contract(contractId).reciteOrder], ["recite_confirm", "yoku", "zako", null]);
+  assert.equal(harness.contract(contractId).ignoredSince, 0, "a reward ends 既読無視");
+  await act("manager", "recite_order", { text: "もう一度", target: 1 });
+  await act("manager", "recite_withdraw");
+  assert.equal(harness.events(contractId).at(-1).type, "recite_withdrawn");
+});
+
+test("extension: the payer asks for days, the manager accepts from the current end or declines; managers cannot ask", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { durationDays: 3 });
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+  const end = harness.contract(contractId).expiresAt;
+  await rejects(act("manager", "extend_request", { days: 7 }), /この操作はできません/);
+  await rejects(act("payer", "extend_request", { days: 2 }), /日数/);
+  await rejects(act("manager", "extend_accept"), /受けられる延長の申し込みはありません/);
+  await act("payer", "extend_request", { days: 7 });
+  await rejects(act("payer", "extend_request", { days: 14 }), /1件ずつ/);
+  const managerView = (await harness.act("manager", "state")).contracts.find((contract) => contract.contractId === contractId);
+  assert.equal(managerView.extension.days, 7);
+  const accepted = await act("manager", "extend_accept");
+  assert.equal(accepted.contract.expiresAt, end + 7 * 24 * 60 * 60 * 1_000, "extended from the current end");
+  assert.equal(accepted.contract.extension, null);
+  assert.equal(harness.events(contractId).at(-1).type, "extend_accepted");
+  await act("payer", "extend_request", { days: 1 });
+  await act("manager", "extend_decline");
+  assert.equal(harness.contract(contractId).expiresAt, end + 7 * 24 * 60 * 60 * 1_000);
+  await act("payer", "extend_request", { days: 30 });
+  await act("payer", "extend_withdraw");
+  assert.equal(harness.contract(contractId).extension, null);
 });

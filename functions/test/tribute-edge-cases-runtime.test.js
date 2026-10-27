@@ -97,7 +97,7 @@ test("RANCH-02: old unpaid requests stay actionable and older tributes can be re
   const context = vm.createContext({ ...module, ...await deco, previewScreen: "", sealChoices: new Map(),
     state: { profile: h.firestore.read("tributeProfiles/manager"), thread: {}, contracts: [], walletBalance: 2000 },
     frame: html => html, escapeHtml: String, renderBlockButton: () => "", renderTemplates: () => "", renderThreadHead: () => "", sealSvg: () => "" });
-  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "rewardChips", "renderWantChips", "renderResistRow", "renderHold", "renderGiveButton", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "canShowShot", "renderShotButton", "renderPendingRequests", "renderWorkOrder", "renderWorkConfirmControls", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
+  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "rewardChips", "renderWantChips", "renderResistRow", "renderHold", "renderGiveButton", "renderRecite", "renderReciteConfirmControls", "renderExtension", "ownWordsFor", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "canShowShot", "renderShotButton", "renderPendingRequests", "renderWorkOrder", "renderWorkConfirmControls", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
   const render = (uid, events) => { context.state.thread = { view: module.viewContract(raw, uid, h.now()), events }; return context.renderThread(); };
   assert.equal((render("payer", all.slice(-100)).match(/data-t="give-request"/g) || []).length, 3);
   assert.equal((render("manager", all.slice(-100)).match(/data-t="cancel-request"/g) || []).length, 3);
@@ -218,7 +218,7 @@ test("RANCH-05: a list response does not recreate the card editor or erase its d
   c.context.state.profile = { card: { intro: "保存済み" } };
   c.context.appRoot = { set innerHTML(value) { replacements++; inputValue = /name="intro"[^>]*value="([^"]*)"/.exec(value)?.[1] || ""; } };
   c.context.renderLayer = () => {};
-  addFunctions(c.context, ["loadList", "render", "renderCardEditor"]);
+  addFunctions(c.context, ["loadList", "render", "renderCardEditor", "renderOwnWordsEditor"]);
   const loading = c.context.loadList("receipts", "receipts", payload => ({ items: payload.receipts }));
   c.context.state.screen = "card"; c.context.render(); inputValue = "編集中の紹介文";
   const before = replacements; gate.resolve({ receipts: [] }); await loading;

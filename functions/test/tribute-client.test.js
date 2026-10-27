@@ -436,7 +436,7 @@ test("seals, collar numbers, templates and note suggestions mirror the server an
   assert.match(sourceBlock(client, 'case "receive": {', 'case "share-open": {'), /contractPayload\(\{ tributeSeq: seq, reward, \.\.\.\(rewardWord \? \{ rewardText: rewardWord \} : \{\}\), seal \}\)/);
   const card = sourceBlock(client, "function renderCardEditor", "function renderSealSettings");
   assert.match(card, /name="reportConsent" \$\{\(profile\.card \? card\.reportConsent === true : true\) \? "checked" : ""\}/, "existing cards are not opted in silently");
-  assert.match(sourceBlock(client, 'case "card": {', 'case "apply": {'), /seals: data\.getAll\("seals"\)\.map\(String\)\.slice\(0, MAX_SEALS\),\s*\.\.\.formDecorations\(form\),\s*achievements: data\.getAll\("achievements"\)\.map\(String\)\.slice\(0, CARD_ACHIEVEMENT_LIMIT\),\s*reportConsent: data\.get\("reportConsent"\) === "on",/);
+  assert.match(sourceBlock(client, 'case "card": {', 'case "apply": {'), /seals,\s*\.\.\.formDecorations\(form\),\s*achievements: data\.getAll\("achievements"\)\.map\(String\)\.slice\(0, CARD_ACHIEVEMENT_LIMIT\),\s*reportConsent: data\.get\("reportConsent"\) === "on",/);
   assert.match(styles, /\.tribute-collar \{/);
   assert.match(styles, /\.tribute-share-preview \{/);
   assert.match(design, /首輪番号/);

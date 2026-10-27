@@ -22,6 +22,8 @@ const MAX_DURATION_DAYS = DURATION_DAYS_OPTIONS.at(-1);
 export const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 // 出稼ぎ命令の回数（命令の後の1on1の正式完走）。サーバーの WORK_ORDER_TARGETS と同じ。
 export const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
+// 復唱の回数。サーバーの RECITE_TARGETS と同じ。
+export const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 
 export const LIMITS = Object.freeze({
   personaName: 16,
@@ -34,6 +36,14 @@ export const LIMITS = Object.freeze({
   wantWordLength: 12,
   // 抵抗は、未払いの請求1件に3回まで（サーバーと同じ）。
   resistsPerRequest: 3,
+  // 言葉の献上と、管理人の自分の言葉（サーバーと同じ）。
+  wordOffering: 400,
+  wordOfferingsPerDay: 3,
+  ownLines: 10,
+  ownLineLength: 60,
+  ownRewards: 5,
+  ownRewardLength: 12,
+  sealWordLength: 7,
   message: 240,
   requestNote: 60,
   pendingRequests: 3,
@@ -167,14 +177,19 @@ export const SEALS = Object.freeze([
 export const DEFAULT_SEALS = Object.freeze(["juryo", "yoku", "kakunin"]);
 export const MAX_SEALS = 3;
 
+// 管理人の自分の言葉の受取印は「word:言葉」で一覧の印と混ぜて登録し、記録にも言葉そのものが残る（サーバーと同じ）。
+export const SEAL_WORD_PREFIX = "word:";
+
 export function sealLabel(id) {
-  return SEALS.find((seal) => seal.id === id)?.label || "";
+  const value = String(id ?? "");
+  if (value.startsWith(SEAL_WORD_PREFIX)) return Array.from(value.slice(SEAL_WORD_PREFIX.length)).slice(0, LIMITS.sealWordLength).join("");
+  return SEALS.find((seal) => seal.id === value)?.label || "";
 }
 
 // 受け取る時に選べる印。サーバーの sealFor と同じく、言われたくない言葉に当たる印は出さない。
 export function sealsFor(cardSeals, ngWords = []) {
   const ids = Array.isArray(cardSeals) && cardSeals.length ? cardSeals : DEFAULT_SEALS;
-  const usable = ids.filter((id) => SEALS.some((seal) => seal.id === id) && !containsNgWord(sealLabel(id), ngWords));
+  const usable = ids.filter((id) => (SEALS.some((seal) => seal.id === id) || String(id).startsWith(SEAL_WORD_PREFIX)) && sealLabel(id) && !containsNgWord(sealLabel(id), ngWords));
   return usable.length ? usable : ["juryo"];
 }
 
@@ -341,6 +356,69 @@ export function contractTextProblem(text, { role = "payer", ngWords = [] } = {})
   return "";
 }
 
+// サーバーの cleanLine と同じ整え方（NFKC・制御文字を外す・続く空白を1つ・前後の空白を取る）。
+function cleanText(value, maximumLength) {
+  return Array.from(String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim()).slice(0, maximumLength).join("");
+}
+
+// 受取印の言葉。サーバーの normalizeSealWord と同じく、今日のひとことと同じ禁止表現と性的な言葉を通さない。
+export const SEAL_WORD_SEXUAL_MESSAGE = "受取印の言葉はレシートと貢ぎ報告の画像に残るため、性的な言葉は使えません。";
+export function sealWordProblem(value) {
+  const text = cleanText(value, LIMITS.sealWordLength);
+  if (!text) return "受取印の言葉を入力してください。";
+  const reason = forbiddenReason(text);
+  if (reason) return FORBIDDEN_MESSAGES[reason];
+  if (BOARD_SEXUAL_PATTERN.test(text.normalize("NFKC"))) return SEAL_WORD_SEXUAL_MESSAGE;
+  return "";
+}
+
+// 受取印の言葉を、カードの受取印に登録する形（「word:言葉」）にする。
+export function sealWordId(value) {
+  return `${SEAL_WORD_PREFIX}${cleanText(value, LIMITS.sealWordLength)}`;
+}
+
+// 管理人の自分の言葉（定型文・ご褒美）。サーバーの normalizeOwnWords と同じ。
+export function normalizeOwnWords(value) {
+  const tones = ["sweet", "normal", "harsh"];
+  const read = (list, maximum, length) => (Array.isArray(list) ? list : [])
+    .map((entry) => ({ text: cleanText(entry?.text, length), tone: tones.includes(entry?.tone) ? entry.tone : "normal" }))
+    .filter((entry) => entry.text)
+    .slice(0, maximum);
+  const lines = read(value?.lines, LIMITS.ownLines, LIMITS.ownLineLength);
+  const rewards = read(value?.rewards, LIMITS.ownRewards, LIMITS.ownRewardLength);
+  for (const entry of [...lines, ...rewards]) {
+    const reason = contractTextReason(entry.text);
+    if (reason) return { error: `「${entry.text}」: ${FORBIDDEN_MESSAGES[reason]}` };
+  }
+  return { ownWords: { lines, rewards } };
+}
+
+// 自分の言葉を、この契約で出せるか（強さの札が上限以下・言われたくない言葉なし・性的な言葉は許した契約でだけ）。
+export function ownWordUsable(entry, { tone = "normal", ngWords = [], allowSexual = false } = {}) {
+  const text = String(entry?.text ?? "");
+  if (!text || !tonesUpTo(tone).includes(entry?.tone)) return false;
+  if (containsNgWord(text, ngWords)) return false;
+  return allowSexual === true || !BOARD_SEXUAL_PATTERN.test(text.normalize("NFKC"));
+}
+
+// 復唱の一言を比べる形（サーバーの reciteKey と同じ）。
+export function reciteKey(value) {
+  return cleanText(value, LIMITS.requestNote);
+}
+
+// 言葉の献上の確認（サーバーの normalizeWordOffering と同じ理由で止める）。
+export function wordOfferingProblem(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "差し出す言葉を書いてください。";
+  if (Array.from(text).length > LIMITS.wordOffering) return `言葉の献上は${LIMITS.wordOffering}文字までです。`;
+  const reason = contractTextReason(text);
+  return reason ? FORBIDDEN_MESSAGES[reason] : "";
+}
+
 // 言われたい言葉。サーバーの normalizeWantWords と同じく整え、同じ理由で止める（性的な言葉は止めない）。
 export const WANT_WORDS_NG_MESSAGE = "「言われたくない言葉」を含む言葉は、言われたい言葉に登録できません。";
 
@@ -447,6 +525,24 @@ export function workOrderView(raw) {
     done: doneAt > 0,
     doneAt,
   };
+}
+
+// 復唱と延長。サーバーの reciteOrderView・extensionView と同じ。
+export function reciteOrderView(raw) {
+  const order = raw?.reciteOrder && typeof raw.reciteOrder === "object" ? raw.reciteOrder : null;
+  const target = integer(order?.target, 0, 1_000);
+  const orderSeq = integer(order?.orderSeq);
+  const text = String(order?.text || "").slice(0, LIMITS.requestNote);
+  if (!order || !RECITE_TARGETS.includes(target) || orderSeq < 1 || !text) return null;
+  const doneAt = integer(order.doneAt);
+  return { orderSeq, text, target, count: integer(order.count, 0, target), issuedAt: integer(order.issuedAt), done: doneAt > 0, doneAt };
+}
+
+export function extensionView(raw) {
+  const extension = raw?.extension && typeof raw.extension === "object" ? raw.extension : null;
+  const days = integer(extension?.days, 0, 1_000);
+  if (!extension || !DURATION_DAYS_OPTIONS.includes(days)) return null;
+  return { days, createdAt: integer(extension.createdAt) };
 }
 
 // お預けと願い出。サーバーの holdView・pleaView と同じ。
@@ -577,6 +673,11 @@ export function viewContract(contract, uid, now = Date.now()) {
     pleaCount: integer(raw.pleaCount),
     pleaGrantedCount: integer(raw.pleaGrantedCount),
     resistedTributes: integer(raw.resistedTributes),
+    reciteOrder: status === "active" ? reciteOrderView(raw) : null,
+    recitesDone: integer(raw.recitesDone),
+    wordOfferings: integer(raw.wordOfferings),
+    wordOffersToday: raw.wordOfferDayKey === jstDateKey(now) ? integer(raw.wordOfferDayCount, 0, 1_000) : 0,
+    extension: status === "active" ? extensionView(raw) : null,
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
     peerReadSeq: Math.min(eventSeq, peerReadSeq),
@@ -608,8 +709,9 @@ export const MANAGER_SITUATIONS = Object.freeze([
   Object.freeze({ id: "nekama", label: "ネカマとして" }),
   Object.freeze({ id: "control", label: "寸止め・射精管理", sexual: true }),
   Object.freeze({ id: "ended", label: "終わる時" }),
-  // sheet: 会話の定型文には出さず、お預けのシートの一言の候補にだけ使う。
+  // sheet: 会話の定型文には出さず、お預け・復唱のシートの一言の候補にだけ使う。
   Object.freeze({ id: "hold", label: "お預け", sheet: true }),
+  Object.freeze({ id: "recite", label: "復唱させる", sheet: true }),
 ]);
 export const PAYER_SITUATIONS = Object.freeze([
   Object.freeze({ id: "give", label: "差し出す" }),
@@ -691,6 +793,11 @@ export const TEMPLATES = Object.freeze({
         "勝手に差し出すな。待て。",
         "{no}号、お預け。",
       ]),
+      recite: Object.freeze([
+        "私は財布です。貢ぐことしかできません。",
+        "負けました。財布として使ってください。",
+        "{no}号は、言われた分だけ差し出します。",
+      ]),
     }),
     normal: Object.freeze({
       nudge: Object.freeze([
@@ -725,6 +832,7 @@ export const TEMPLATES = Object.freeze({
       control: Object.freeze(["まだイっちゃだめ。", "イきたいなら先に払って。", "勝手にイったら罰金ね。"]),
       ended: Object.freeze(["おつかれさま。ここまでありがとう。", "契約終了。ちゃんと休んでね。"]),
       hold: Object.freeze(["当分お預け。勝手に差し出さないこと。", "許すまで待ちなさい。", "{no}号、お預けね。"]),
+      recite: Object.freeze(["私は管理されている財布です。", "{no}号、きちんと貢ぎます。"]),
     }),
     sweet: Object.freeze({
       // お願いの形にはしない（記事で財布が嫌ったのは、媚びる・営業する貢がせ役だった）。
@@ -758,6 +866,7 @@ export const TEMPLATES = Object.freeze({
       control: Object.freeze(["まだ我慢できるよね。", "ちゃんと払えたら、イっていいよ。", "勝手にイったら罰金だよ？"]),
       ended: Object.freeze(["おつかれさま。また気が向いたらね。", "ここまでありがとう。ゆっくり休んで。"]),
       hold: Object.freeze(["今日はお預け。いい子で待っててね♡", "我慢できたら、許してあげる。", "{no}号、お預けだよ♡"]),
+      recite: Object.freeze(["いい子にして貢ぎます。", "{no}号、ちゃんと待てます。"]),
     }),
   }),
   payer: Object.freeze({
@@ -898,6 +1007,9 @@ export const CONTRACT_TODOS = Object.freeze([
   Object.freeze({ kind: "work_done", label: "出稼ぎの報告", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.workOrder?.done ? 1 : 0) }),
   Object.freeze({ kind: "plea", label: "願い出", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.plea && !contract.plea.granted ? 1 : 0) }),
   Object.freeze({ kind: "granted", label: "許された献上", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.plea?.granted ? 1 : 0) }),
+  Object.freeze({ kind: "recite_done", label: "復唱の確認", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.reciteOrder?.done ? 1 : 0) }),
+  Object.freeze({ kind: "extend", label: "延長の申し込み", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.extension ? 1 : 0) }),
+  Object.freeze({ kind: "recite", label: "復唱", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reciteOrder && !contract.reciteOrder.done ? 1 : 0) }),
   Object.freeze({ kind: "withdraw", label: "使用許可の申請", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.escrowWithdrawRequest ? 1 : 0) }),
   Object.freeze({ kind: "report", label: "残高報告の依頼", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reportRequested ? 1 : 0) }),
   Object.freeze({ kind: "work", label: "出稼ぎ命令", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.workOrder && !contract.workOrder.done ? 1 : 0) }),

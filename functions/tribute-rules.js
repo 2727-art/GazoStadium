@@ -15,6 +15,8 @@ const MAX_DURATION_DAYS = DURATION_DAYS_OPTIONS.at(-1);
 const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 // 出稼ぎ命令の回数（命令の後の1on1の正式完走）。毎日のプレイ報酬の段と同じで、10回は本日の基本目標に当たる。
 const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
+// 復唱の回数（管理人が言わせたい一言を、財布が一字一句同じに打つ回数）。
+const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 const TONES = Object.freeze(["sweet", "normal", "harsh"]);
 const DISCLOSURES = Object.freeze(["nekama", "as_is", "undisclosed"]);
 const MANAGER_STYLES = Object.freeze(["harsh", "cold", "sweet"]);
@@ -131,6 +133,15 @@ const LIMITS = Object.freeze({
   wantWordLength: 12,
   // 抵抗: 未払いの請求1件に、財布が渋る一言を返せる回数（請求は断れないまま）。
   resistsPerRequest: 3,
+  // 言葉の献上（Pay 0 で差し出す文）。1つの契約で日本時間の1日3回まで。
+  wordOffering: 400,
+  wordOfferingsPerDay: 3,
+  // 管理人の自分の言葉（管理人だけが読む）。定型文と、ご褒美。受取印の言葉はカードの受取印に混ぜる。
+  ownLines: 10,
+  ownLineLength: 60,
+  ownRewards: 5,
+  ownRewardLength: 12,
+  sealWordLength: 7,
   message: 240,
   requestNote: 60,
   pendingRequests: 3,
@@ -412,10 +423,44 @@ function normalizeXProfile(value) {
   return { xHandle: handle };
 }
 
-// カードに登録する受取印。一覧にあるものだけを、重複なく3つまで。空なら既定の3つ。
+// 管理人の自分の言葉の受取印（「word:言葉」で一覧の印と混ぜて登録する）。どの契約のレシートにも残り、
+// 貢ぎ報告の画像にも入るので、今日のひとことと同じ禁止表現と性的な言葉を通さない。
+const SEAL_WORD_PREFIX = "word:";
+const SEAL_WORD_SEXUAL_MESSAGE = "受取印の言葉はレシートと貢ぎ報告の画像に残るため、性的な言葉は使えません。";
+
+function normalizeSealWord(value) {
+  const text = cleanLine(value, LIMITS.sealWordLength);
+  if (!text) return { error: "受取印の言葉を入力してください。" };
+  const reason = forbiddenReason(text);
+  if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+  if (boardSexualWord(text)) return { error: SEAL_WORD_SEXUAL_MESSAGE };
+  return { word: text };
+}
+
+function isSealWord(value) {
+  const text = String(value ?? "");
+  if (!text.startsWith(SEAL_WORD_PREFIX)) return false;
+  const word = text.slice(SEAL_WORD_PREFIX.length);
+  return normalizeSealWord(word).word === word;
+}
+
+// 印の言葉（一覧の印は表示名、自分の言葉の印は言葉そのもの）。
+function sealText(value) {
+  const id = String(value ?? "");
+  if (isSealWord(id)) return id.slice(SEAL_WORD_PREFIX.length);
+  return SEALS.find((entry) => entry.id === id)?.label || "";
+}
+
+// 記録した印を読む。一覧の印と、自分の言葉の印だけを返す。
+function storedSeal(value) {
+  const id = String(value ?? "");
+  return SEAL_IDS.includes(id) || isSealWord(id) ? id : "";
+}
+
+// カードに登録する受取印。一覧の印と自分の言葉の印を、重複なく3つまで。空なら既定の3つ。
 function normalizeSeals(value) {
   const list = Array.isArray(value) ? value : [];
-  const seals = [...new Set(list.map(String).filter((id) => SEAL_IDS.includes(id)))].slice(0, MAX_SEALS);
+  const seals = [...new Set(list.map(String).filter((id) => SEAL_IDS.includes(id) || isSealWord(id)))].slice(0, MAX_SEALS);
   return seals.length ? seals : [...DEFAULT_SEALS];
 }
 
@@ -424,8 +469,8 @@ function sealFor(value, { seals = DEFAULT_SEALS, ngWords = [] } = {}) {
   const registered = normalizeSeals(seals);
   const requested = String(value ?? "");
   const id = registered.includes(requested) ? requested : registered[0];
-  const seal = SEALS.find((entry) => entry.id === id);
-  return seal && !containsNgWord(seal.label, ngWords) ? id : FALLBACK_SEAL;
+  const label = sealText(id);
+  return label && !containsNgWord(label, ngWords) ? id : FALLBACK_SEAL;
 }
 
 // 飾りの選択。知らない値は既定に戻す（持っているか・金庫の段階に届いたかは、保存する時にサービスで確かめる）。
@@ -612,14 +657,27 @@ function rewardsFor(tone, ngWords = []) {
   return REWARDS.filter((reward) => reward.tones.some((entry) => allowed.includes(entry)) && !containsNgWord(reward.label, ngWords));
 }
 
-// ご褒美は一覧の一言か、財布がいま登録している言われたい言葉（REWARD_WORD と言葉そのもの）。
-function normalizeReward(value, { tone = "normal", ngWords = [], wantWords = [], text = "" } = {}) {
+// 管理人の自分の言葉（定型文・ご褒美）を、この契約で出せるか。強さの札が契約の上限以下、言われたくない言葉を含まない、
+// 性的な言葉は性的な名目を許した契約でだけ。
+function ownWordUsable(entry, { tone = "normal", ngWords = [], allowSexual = false } = {}) {
+  const text = String(entry?.text ?? "");
+  if (!text || !tonesUpTo(tone).includes(entry?.tone)) return false;
+  if (containsNgWord(text, ngWords)) return false;
+  return allowSexual === true || !boardSexualWord(text);
+}
+
+// ご褒美は一覧の一言か、言葉そのもの（REWARD_WORD）。言葉は、財布がいま登録している言われたい言葉か、
+// 管理人の自分のご褒美のうちこの契約で出せるもの。
+function normalizeReward(value, { tone = "normal", ngWords = [], wantWords = [], ownRewards = [], allowSexual = false, text = "" } = {}) {
   const reward = String(value ?? "");
   if (!reward) return { reward: "" };
   if (reward === REWARD_WORD) {
-    const word = cleanLine(text, LIMITS.wantWordLength);
-    const registered = Array.isArray(wantWords) ? wantWords.map((entry) => cleanLine(entry, LIMITS.wantWordLength)) : [];
-    if (!word || !registered.includes(word)) return { error: "その言葉は、いまの言われたい言葉にありません。開き直してください。" };
+    const word = cleanLine(text, Math.max(LIMITS.wantWordLength, LIMITS.ownRewardLength));
+    const wanted = Array.isArray(wantWords) ? wantWords.map((entry) => cleanLine(entry, LIMITS.wantWordLength)) : [];
+    const own = (Array.isArray(ownRewards) ? ownRewards : [])
+      .filter((entry) => ownWordUsable(entry, { tone, ngWords, allowSexual }))
+      .map((entry) => cleanLine(entry.text, LIMITS.ownRewardLength));
+    if (!word || (!wanted.includes(word) && !own.includes(word))) return { error: "その言葉は、いまのご褒美の候補にありません。開き直してください。" };
     if (containsNgWord(word, ngWords)) return { error: "このご褒美は、この契約では選べません。" };
     return { reward, rewardText: word };
   }
@@ -633,7 +691,36 @@ function normalizeReward(value, { tone = "normal", ngWords = [], wantWords = [],
 function storedRewardText(record) {
   const source = record && typeof record === "object" ? record : {};
   if (source.reward !== REWARD_WORD) return "";
-  return cleanLine(source.rewardText, LIMITS.wantWordLength);
+  return cleanLine(source.rewardText, Math.max(LIMITS.wantWordLength, LIMITS.ownRewardLength));
+}
+
+// 管理人の自分の言葉（定型文10・ご褒美5、強さの札付き）。確認は会話と同じ（外部決済・現金・現実の金額）。
+function normalizeOwnWords(value) {
+  const read = (list, maximum, length) => (Array.isArray(list) ? list : [])
+    .map((entry) => ({ text: cleanLine(entry?.text, length), tone: TONES.includes(entry?.tone) ? entry.tone : "normal" }))
+    .filter((entry) => entry.text)
+    .slice(0, maximum);
+  const lines = read(value?.lines, LIMITS.ownLines, LIMITS.ownLineLength);
+  const rewards = read(value?.rewards, LIMITS.ownRewards, LIMITS.ownRewardLength);
+  for (const entry of [...lines, ...rewards]) {
+    const reason = contractTextReason(entry.text);
+    if (reason) return { error: `「${entry.text}」: ${FORBIDDEN_MESSAGES[reason]}` };
+  }
+  return { ownWords: { lines, rewards } };
+}
+
+// 言葉の献上（Pay 0 で差し出す文）。400文字まで、会話と同じ確認。
+function normalizeWordOffering(value) {
+  const text = cleanMultiline(value, LIMITS.wordOffering);
+  if (!text) return { error: "差し出す言葉を書いてください。" };
+  const reason = contractTextReason(text);
+  if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+  return { text };
+}
+
+// 復唱の一言を比べる形（NFKC にし、前後の空白を取り、続く空白を1つにする）。
+function reciteKey(value) {
+  return cleanLine(value, LIMITS.requestNote);
 }
 
 function normalizeMessage(value) {
@@ -736,6 +823,7 @@ module.exports = {
   MAX_DURATION_DAYS,
   ENTRY_FEE_OPTIONS,
   WORK_ORDER_TARGETS,
+  RECITE_TARGETS,
   TONES,
   tonesUpTo,
   DISCLOSURES,
@@ -794,6 +882,15 @@ module.exports = {
   BOARD_SEXUAL_MESSAGE,
   normalizeSeals,
   sealFor,
+  SEAL_WORD_PREFIX,
+  normalizeSealWord,
+  isSealWord,
+  sealText,
+  storedSeal,
+  ownWordUsable,
+  normalizeOwnWords,
+  normalizeWordOffering,
+  reciteKey,
   normalizeXProfile,
   X_HANDLE_PATTERN,
   normalizeWalletName,

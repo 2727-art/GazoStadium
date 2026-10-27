@@ -66,8 +66,8 @@ test("a wished-for word is a reward only while registered, and the word itself i
   const core = await loadCore();
   const options = { tone: "harsh", ngWords: ["デブ"], wantWords: ["ざこ", "3号"] };
   assert.deepEqual(rules.normalizeReward("word", { ...options, text: "ざこ" }), { reward: "word", rewardText: "ざこ" });
-  assert.match(rules.normalizeReward("word", { ...options, text: "養分" }).error, /いまの言われたい言葉にありません/);
-  assert.match(rules.normalizeReward("word", { ...options, text: "" }).error, /いまの言われたい言葉にありません/);
+  assert.match(rules.normalizeReward("word", { ...options, text: "養分" }).error, /いまのご褒美の候補にありません/);
+  assert.match(rules.normalizeReward("word", { ...options, text: "" }).error, /いまのご褒美の候補にありません/);
   assert.deepEqual(rules.normalizeReward("arigato", options), { reward: "arigato" }, "a sweet reward under a harsh ceiling");
   assert.match(rules.normalizeReward("zako", { tone: "sweet" }).error, /選べません/);
   assert.equal(rules.storedRewardText({ reward: "word", rewardText: "ざこ" }), "ざこ");
@@ -101,7 +101,7 @@ test("new stock lines: the manager can voice the payer's wish, the payer can tha
 test("the manager picks the template tone within the ceiling and sees the wished-for words as chips", async () => {
   const core = await loadCore();
   const context = vm.createContext({ ...core, state: { thread: {} }, escapeHtml: String });
-  vm.runInContext(`${fn("templateTone")}\n${fn("renderTemplates")}\n${fn("renderWantChips")}\n${fn("rewardChips")}\nthis.renderTemplates = renderTemplates; this.renderWantChips = renderWantChips; this.rewardChips = rewardChips;`, context);
+  vm.runInContext(`${fn("templateTone")}\n${fn("ownWordsFor")}\n${fn("renderTemplates")}\n${fn("renderWantChips")}\n${fn("rewardChips")}\nthis.renderTemplates = renderTemplates; this.renderWantChips = renderWantChips; this.rewardChips = rewardChips;`, context);
   const view = (role, tone, extra = {}) => ({ role, tone, ngWords: [], wantWords: ["ざこ", "3号"], allowSexualPurposes: false, collarNo: 3, manager: { disclosure: "nekama" }, ...extra });
   const harsh = context.renderTemplates(view("manager", "harsh"));
   assert.equal((harsh.match(/data-t="template-tone"/g) || []).length, 3);

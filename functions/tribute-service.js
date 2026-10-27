@@ -11,6 +11,8 @@ const {
   SEVERE_REPORT_REASONS,
   LIMITS,
   WORK_ORDER_TARGETS,
+  RECITE_TARGETS,
+  DURATION_DAYS_OPTIONS,
   FORBIDDEN_MESSAGES,
   cleanLine,
   forbiddenReason,
@@ -23,6 +25,11 @@ const {
   normalizeCheer,
   normalizeSeals,
   sealFor,
+  storedSeal,
+  normalizeOwnWords,
+  normalizeWordOffering,
+  reciteKey,
+  boardSexualWord,
   SEAL_IDS,
   DECORATION_PRODUCT_IDS,
   normalizeDecorations,
@@ -105,6 +112,16 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "plea_grant",
   "plea_deny",
   "resist",
+  "set_own_words",
+  "offer_words",
+  "recite_order",
+  "recite",
+  "recite_withdraw",
+  "recite_confirm",
+  "extend_request",
+  "extend_withdraw",
+  "extend_accept",
+  "extend_decline",
   "set_work_orders",
   "work_order",
   "work_withdraw",
@@ -250,6 +267,8 @@ function readProfile(snapshot) {
       monthKey: String(object(data.cheerInbox).monthKey || ""),
       unseen: integer(object(data.cheerInbox).unseen, 0, 1_000_000, 0),
     },
+    // 管理人の自分の言葉（定型文・ご褒美）。管理人にだけ返し、カードには入れない（掲示板に出ない）。
+    ownWords: normalizeOwnWords(object(data.ownWords)).ownWords || { lines: [], rewards: [] },
   };
 }
 
@@ -335,6 +354,7 @@ function ownProfileView(profile, monthKey, now) {
     },
     counts: profile.counts,
     cheersUnseen: profile.cheerInbox.monthKey === monthKey ? profile.cheerInbox.unseen : 0,
+    ownWords: profile.ownWords,
     receiptCount: profile.receiptCount,
     refundPending: profile.refundPending,
     operatorRefundPending: profile.operatorRefundPending,
@@ -400,6 +420,30 @@ function workOrderView(contract) {
 function openWorkOrder(contract) {
   const order = workOrderView(contract);
   return order && !order.done ? order : null;
+}
+
+// 復唱。管理人が言わせたい一言と回数。果たした後も、管理人が確認するか次の復唱を命じるまで残す（done で見分ける）。
+function reciteOrderView(contract) {
+  const order = contract.reciteOrder && typeof contract.reciteOrder === "object" ? contract.reciteOrder : null;
+  const target = integer(order?.target, 0, 1_000, 0);
+  const orderSeq = integer(order?.orderSeq, 0, Number.MAX_SAFE_INTEGER, 0);
+  const text = cleanLine(order?.text, LIMITS.requestNote);
+  if (!order || !RECITE_TARGETS.includes(target) || orderSeq < 1 || !text) return null;
+  const doneAt = integer(order.doneAt, 0, Number.MAX_SAFE_INTEGER, 0);
+  return { orderSeq, text, target, count: integer(order.count, 0, target, 0), issuedAt: integer(order.issuedAt, 0, Number.MAX_SAFE_INTEGER, 0), done: doneAt > 0, doneAt };
+}
+
+function openReciteOrder(contract) {
+  const order = reciteOrderView(contract);
+  return order && !order.done ? order : null;
+}
+
+// 延長の申し込み（財布が日数を選び、管理人が受けると、いまの期限から延びる）。
+function extensionView(contract) {
+  const extension = contract.extension && typeof contract.extension === "object" ? contract.extension : null;
+  const days = integer(extension?.days, 0, 1_000, 0);
+  if (!extension || !DURATION_DAYS_OPTIONS.includes(days)) return null;
+  return { days, createdAt: integer(extension.createdAt, 0, Number.MAX_SAFE_INTEGER, 0) };
 }
 
 // お預け。管理人が「解く」まで続き、その間は財布から勝手に差し出せない（期限はない）。
@@ -521,6 +565,11 @@ function viewContract(contract, uid, now) {
     pleaCount: integer(contract.pleaCount, 0, Number.MAX_SAFE_INTEGER, 0),
     pleaGrantedCount: integer(contract.pleaGrantedCount, 0, Number.MAX_SAFE_INTEGER, 0),
     resistedTributes: integer(contract.resistedTributes, 0, Number.MAX_SAFE_INTEGER, 0),
+    reciteOrder: status === "active" ? reciteOrderView(contract) : null,
+    recitesDone: integer(contract.recitesDone, 0, Number.MAX_SAFE_INTEGER, 0),
+    wordOfferings: integer(contract.wordOfferings, 0, Number.MAX_SAFE_INTEGER, 0),
+    wordOffersToday: contract.wordOfferDayKey === jstDateKey(now) ? integer(contract.wordOfferDayCount, 0, 1_000, 0) : 0,
+    extension: status === "active" ? extensionView(contract) : null,
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
     peerReadSeq: Math.min(eventSeq, peerReadSeq),
@@ -777,6 +826,8 @@ function createTributeService(deps) {
       tone: ctx.contract.tone,
       ngWords: ctx.contract.ngWords,
       wantWords: wantWordList(ctx.contract),
+      ownRewards: ctx.profiles.manager.value.ownWords?.rewards,
+      allowSexual: ctx.contract.allowSexualPurposes === true,
       text: data?.rewardText,
     });
     if (normalized.error) fail("invalid-argument", normalized.error);
@@ -1642,6 +1693,25 @@ function createTributeService(deps) {
     return { ok: true, profile: ownProfileView(profile, jstMonthKey(now), now) };
   }
 
+  // 管理人の自分の言葉（定型文・ご褒美）。管理人だけが読み、カードには入れないので掲示板に出ない。活動には数えない。
+  async function setOwnWordsAction(uid, data) {
+    const normalized = normalizeOwnWords(data?.ownWords);
+    if (normalized.error) fail("invalid-argument", normalized.error);
+    let saved = null;
+    let now = 0;
+    await firestore.runTransaction(async (transaction) => {
+      saved = null;
+      now = currentTime();
+      const snapshot = await transaction.get(profileRef(uid));
+      requireAge(readProfile(snapshot));
+      const patch = { ownWords: normalized.ownWords, updatedAt: now };
+      transaction.set(profileRef(uid), patch, { merge: true });
+      saved = { ...object(snapshot.data()), ...patch };
+    });
+    const profile = readProfile({ exists: true, data: () => saved });
+    return { ok: true, profile: ownProfileView(profile, jstMonthKey(now), now) };
+  }
+
   async function visibleRows(uid, rows) {
     if (!playerSafety || typeof playerSafety.filterVisible !== "function") return rows;
     return playerSafety.filterVisible(uid, rows, (row) => row.uid);
@@ -2480,6 +2550,157 @@ function createTributeService(deps) {
         return { ok: true, contract: view(ctx) };
       },
     },
+    // 言葉の献上。Pay 0 で、告白・短い話・報告などの文（400文字まで）を差し出す。1つの契約で日本時間の1日3回まで。
+    // 管理人は献上と同じく受取印とご褒美で受け取る。Pay を動かさないので、番付・貢がれ総額・応援欄・実績・限度額には数えない。
+    offer_words: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        const normalized = normalizeWordOffering(data?.text);
+        if (normalized.error) fail("invalid-argument", normalized.error);
+        const usedToday = ctx.contract.wordOfferDayKey === ctx.dateKey ? integer(ctx.contract.wordOfferDayCount, 0, 1_000, 0) : 0;
+        if (usedToday >= LIMITS.wordOfferingsPerDay) {
+          fail("resource-exhausted", `言葉の献上は1つの契約で1日${LIMITS.wordOfferingsPerDay}回までです。日本時間の0時に戻ります。`);
+        }
+        messageRate(ctx);
+        setContract(ctx, {
+          wordOfferDayKey: ctx.dateKey,
+          wordOfferDayCount: usedToday + 1,
+          wordOfferings: integer(ctx.contract.wordOfferings, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
+          awaitingReceipt: integer(ctx.contract.awaitingReceipt, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
+        });
+        pushEvent(ctx, { type: "word_offering", actor: "payer", text: normalized.text });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 復唱。管理人が言わせたい一言（60文字まで）と回数（1／3／5回）を送り、財布が一字一句同じに打つ。1つの契約に1件まで。
+    // 性的な言葉は、財布が性的な名目を許した契約でだけ。復唱しなくても何も起きない。
+    recite_order: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        if (openReciteOrder(ctx.contract)) fail("failed-precondition", "復唱は1件ずつです。");
+        const target = Number(data?.target);
+        if (!RECITE_TARGETS.includes(target)) fail("invalid-argument", "回数を選び直してください。");
+        const text = reciteKey(data?.text);
+        if (!text) fail("invalid-argument", "言わせたい一言を入力してください。");
+        checkManagerText(ctx, text);
+        if (boardSexualWord(text) && ctx.contract.allowSexualPurposes !== true) {
+          fail("failed-precondition", "この契約では、性的な言葉を復唱させられません（財布が性的な名目を許していません）。");
+        }
+        messageRate(ctx);
+        // 確認していない前の復唱は、ここで確認なしに閉じる。
+        const orderSeq = integer(ctx.contract.reciteSeq, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+        setContract(ctx, { reciteSeq: orderSeq, reciteOrder: { orderSeq, text, target, count: 0, issuedAt: ctx.now, doneAt: 0 } });
+        pushEvent(ctx, { type: "recite_order", actor: "manager", orderSeq, text, target });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 財布が一字一句同じに打って送る。違えば送らない（NFKC にし、前後の空白と続く空白だけは無視）。
+    // 出稼ぎの報告と同じく、財布の発言には数えない（既読無視を始めない）。
+    recite: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        const order = openReciteOrder(ctx.contract);
+        if (!order) fail("failed-precondition", "復唱する一言はありません。");
+        if (reciteKey(data?.text) !== order.text) fail("invalid-argument", "一字一句同じに打ってください。");
+        messageRate(ctx);
+        const count = order.count + 1;
+        const done = count >= order.target;
+        setContract(ctx, {
+          reciteOrder: { ...object(ctx.contract.reciteOrder), count, ...(done ? { doneAt: ctx.now } : {}) },
+          ...(done ? { recitesDone: integer(ctx.contract.recitesDone, 0, Number.MAX_SAFE_INTEGER, 0) + 1 } : {}),
+        });
+        pushEvent(ctx, { type: "recite", actor: "payer", orderSeq: order.orderSeq, count, target: order.target, text: order.text, done });
+        return { ok: true, count, done, contract: view(ctx) };
+      },
+    },
+    recite_withdraw: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        const order = openReciteOrder(ctx.contract);
+        if (!order) fail("failed-precondition", "取り下げられる復唱はありません。");
+        setContract(ctx, { reciteOrder: null });
+        pushEvent(ctx, { type: "recite_withdrawn", actor: "manager", orderSeq: order.orderSeq });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 果たした復唱を、管理人が確かめる。受取印を1つ押し、ご褒美を1つ添えられる（出稼ぎの確認と同じ）。
+    recite_confirm: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        const order = reciteOrderView(ctx.contract);
+        if (!order?.done) fail("failed-precondition", "確認できる復唱はありません。");
+        const { reward, rewardMarks } = contractReward(ctx, data);
+        const card = ctx.profiles.manager.value.card;
+        const seal = sealFor(data?.seal, { seals: card?.seals, ngWords: ctx.contract.ngWords });
+        setContract(ctx, { reciteOrder: null });
+        pushEvent(ctx, { type: "recite_confirm", actor: "manager", orderSeq: order.orderSeq, target: order.target, seal, ...sealLook(card), ...rewardMarks });
+        if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 延長。財布が日数（1／3／7／14／30日）を選んで申し込み、管理人が受けると、いまの期限から延びる。入場料は取らない。
+    // 期間は財布が決めるので、管理人からは申し込めない。1件ずつで、受ける前に契約が終わると消える。
+    extend_request: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        if (extensionView(ctx.contract)) fail("failed-precondition", "延長の申し込みは1件ずつです。");
+        const days = Number(data?.days);
+        if (!DURATION_DAYS_OPTIONS.includes(days)) fail("invalid-argument", "日数を選び直してください。");
+        messageRate(ctx);
+        setContract(ctx, { extension: { days, createdAt: ctx.now } });
+        pushEvent(ctx, { type: "extend_request", actor: "payer", days });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    extend_withdraw: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx) {
+        const extension = extensionView(ctx.contract);
+        if (!extension) fail("failed-precondition", "取り下げられる延長の申し込みはありません。");
+        setContract(ctx, { extension: null });
+        pushEvent(ctx, { type: "extend_withdrawn", actor: "payer", days: extension.days });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    extend_accept: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        const extension = extensionView(ctx.contract);
+        if (!extension) fail("failed-precondition", "受けられる延長の申し込みはありません。");
+        const expiresAt = integer(ctx.contract.expiresAt, 0, Number.MAX_SAFE_INTEGER, ctx.now) + extension.days * DAY_MS;
+        setContract(ctx, {
+          expiresAt,
+          extension: null,
+          extendedDays: integer(ctx.contract.extendedDays, 0, Number.MAX_SAFE_INTEGER, 0) + extension.days,
+        });
+        pushEvent(ctx, { type: "extend_accepted", actor: "manager", days: extension.days, expiresAt });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    extend_decline: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        const extension = extensionView(ctx.contract);
+        if (!extension) fail("failed-precondition", "断れる延長の申し込みはありません。");
+        setContract(ctx, { extension: null });
+        pushEvent(ctx, { type: "extend_declined", actor: "manager", days: extension.days });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
     // 出稼ぎ命令を受けるか。決めるのは預ける側だけで、いつでも変えられる。外すと、まだ果たしていない命令はその場で消える。
     set_work_orders: {
       roles: ["payer"],
@@ -2632,7 +2853,9 @@ function createTributeService(deps) {
       },
       write(ctx, extra, data) {
         const event = extra.event;
-        if (!event || event.type !== "tribute" || !RECEIVABLE_KINDS.includes(event.kind)) {
+        // 言葉の献上（Pay 0）も、献上と同じく受取印とご褒美で受け取る。レシートはない。
+        const words = event?.type === "word_offering";
+        if (!event || (!words && (event.type !== "tribute" || !RECEIVABLE_KINDS.includes(event.kind)))) {
           fail("not-found", "受け取れる献上が見つかりません。");
         }
         if (integer(event.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0) > 0) fail("failed-precondition", "この献上はもう受け取っています。");
@@ -2651,7 +2874,8 @@ function createTributeService(deps) {
           type: "received",
           actor: "manager",
           tributeSeq: extra.seq,
-          amount: integer(event.amount, 0, Number.MAX_SAFE_INTEGER, 0),
+          amount: words ? 0 : integer(event.amount, 0, Number.MAX_SAFE_INTEGER, 0),
+          ...(words ? { words: true } : {}),
           seal,
           ...rewardMarks,
         });
@@ -2801,7 +3025,7 @@ function createTributeService(deps) {
         rewardText: storedRewardText(value),
         granted: value.granted === true,
         resisted: integer(value.resisted, 0, LIMITS.resistsPerRequest, 0),
-        seal: SEAL_IDS.includes(value.seal) ? value.seal : "",
+        seal: storedSeal(value.seal),
         ...sealLook(value),
         collarNo: integer(value.collarNo, 0, Number.MAX_SAFE_INTEGER, 0),
         pairCount: integer(value.pairCount, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -2843,7 +3067,7 @@ function createTributeService(deps) {
         pairCount: integer(stored.pairCount, 0, Number.MAX_SAFE_INTEGER, 0),
         createdAt: integer(stored.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
         receivedAt: integer(stored.receivedAt, 0, Number.MAX_SAFE_INTEGER, 0),
-        seal: SEAL_IDS.includes(stored.seal) ? stored.seal : "",
+        seal: storedSeal(stored.seal),
         ...sealLook(stored),
         reward: typeof stored.reward === "string" && /^[a-z_]{1,24}$/.test(stored.reward) ? stored.reward : "",
         rewardText: storedRewardText(stored),
@@ -3408,6 +3632,7 @@ function createTributeService(deps) {
       case "receipts": return receiptsAction(uid, data);
       case "share_info": return shareInfoAction(uid, data);
       case "set_word": return setWordAction(uid, data);
+      case "set_own_words": return setOwnWordsAction(uid, data);
       case "ledger": return ledgerAction(uid);
       case "rankings": return rankingsAction(uid, data);
       case "set_cheer": return setCheerAction(uid, data);
