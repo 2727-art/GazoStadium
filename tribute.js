@@ -109,7 +109,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
