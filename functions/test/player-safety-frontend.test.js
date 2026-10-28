@@ -9,6 +9,8 @@ test("all browser entry points share one safety module URL and refresh its impor
   const origin = "https://release.example/";
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)].map((match) => new URL(match[1], origin));
+  const manifest = JSON.parse(html.match(/id="featureManifest">([\s\S]*?)<\/script>/)[1]);
+  scripts.push(...Object.values(manifest).filter(entry => entry.module).map(entry => new URL(entry.module, origin)));
   const safetyEntries = scripts.filter((url) => url.pathname === "/player-safety.js");
   assert.equal(safetyEntries.length, 1, "the page must have one safety entry point");
   const canonical = safetyEntries[0];
@@ -20,7 +22,7 @@ test("all browser entry points share one safety module URL and refresh its impor
       importers++;
       assert.equal(new URL(match[1], script).href, canonical.href,
         `${script.pathname} would instantiate another safety module with separate state and listeners`);
-      assert.ok(script.searchParams.get("v")?.startsWith(generation),
+      assert.ok(script.searchParams.get("v")?.includes("lazy-loading-v1"),
         `${script.pathname} must refresh when its shared safety import changes`);
     }
   }

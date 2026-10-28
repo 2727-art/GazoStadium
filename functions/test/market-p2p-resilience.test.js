@@ -82,7 +82,7 @@ test("market P2P failures emit sanitized participant-only diagnostics", () => {
 });
 
 test("hosting cache key exposes the resilient market client", () => {
-  assert.match(htmlSource, /market\.js\?v=[^"]*p2p-resilience-v1/);
-  assert.match(htmlSource, /market\.js\?v=[^"]*market-rematch-resilience-v1/);
-  assert.match(htmlSource, /market\.js\?v=[^"]*oshijo-delivery-ack-v1/);
+  assert.match(htmlSource, /market-records\.js\?v=[^"]*p2p-resilience-v1/);
+  assert.match(htmlSource, /market-records\.js\?v=[^"]*market-rematch-resilience-v1/);
+  assert.match(htmlSource, /market-records\.js\?v=[^"]*oshijo-delivery-ack-v1/);
 });

@@ -1,4 +1,4 @@
-import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
 import {
   httpsCallable,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
@@ -14,8 +14,8 @@ import {
   auth,
   firestore,
   functions,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1";
 import {
   AVATAR_GROUPS,
   AVATARS,
@@ -4077,7 +4077,7 @@ async function handleClick(target) {
       requestHome();
       window.setTimeout(() => {
         if (mode === "missions") {
-          const open = window.HariaiOnline?.openDailyMissions;
+          const open = () => window.HariaiApp.openOnlineFeature("openDailyMissions");
           if (typeof open === "function") open();
           else showToast("デイリーミッションを開けませんでした。ホームから開いてください。");
           return;
@@ -4203,7 +4203,7 @@ async function handleClick(target) {
     case "open-missions":
       requestHome();
       window.setTimeout(() => {
-        const open = window.HariaiOnline?.openDailyMissions;
+        const open = () => window.HariaiApp.openOnlineFeature("openDailyMissions");
         if (typeof open === "function") open();
         else showToast("デイリーミッションを開けませんでした。ホームから開いてください。");
       }, 0);
@@ -4526,15 +4526,11 @@ async function handleClick(target) {
     }
     case "open-achievements":
       requestHome();
-      window.setTimeout(() => window.HariaiOnline?.openAchievements?.(), 0);
+      window.setTimeout(() => window.HariaiApp.openOnlineFeature("openAchievements"), 0);
       return;
     case "legacy-market": {
-      const destination = target.dataset.dest;
       requestHome();
-      window.setTimeout(() => {
-        if (destination === "rankings") window.HariaiMarket?.openRankingsFromLanding?.();
-        else window.HariaiMarket?.start?.();
-      }, 0);
+      window.setTimeout(() => window.HariaiApp.openMarketRecords(), 0);
       return;
     }
     default:
@@ -5685,9 +5681,12 @@ window.HariaiTribute = Object.freeze({
   start,
   isActive,
   requestHome,
+  openRequestedLink,
 });
 window.dispatchEvent(new Event("hariai-tribute-ready"));
 
-const initialInvite = takeInviteFromUrl();
-if (initialInvite) start({ inviteManager: initialInvite });
-else if (wantsRanchOpen(window.location.href)) start({ initialScreen: "hub" });
+function openRequestedLink() {
+  const initialInvite = takeInviteFromUrl();
+  if (initialInvite) start({ inviteManager: initialInvite });
+  else if (wantsRanchOpen(window.location.href)) start({ initialScreen: "hub" });
+}

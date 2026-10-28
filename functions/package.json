@@ -12,7 +12,8 @@
     "test:free-table-callable-emulator:run": "node --test --test-concurrency=1 test/free-table-callable-emulator.test.js",
     "test:flea-emulator": "node test/run-anju-pay-flea-e2e-emulator.js",
     "test:flea-emulator:run": "node --test --test-concurrency=1 test/anju-pay-flea-e2e-emulator.test.js",
-    "serve": "firebase emulators:start --only auth,functions,firestore,database --project demo-gazostadium"
+    "serve": "firebase emulators:start --only auth,functions,firestore,database --project demo-gazostadium",
+    "build:client": "node ../scripts/build-landing.cjs && node ../scripts/build-market-records.cjs"
   },
   "dependencies": {
     "firebase-admin": "14.3.0",
@@ -20,7 +21,9 @@
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "5.0.1",
-    "firebase": "12.19.0"
+    "acorn": "8.15.0",
+    "firebase": "12.19.0",
+    "postcss": "8.5.6"
   },
   "overrides": {
     "@grpc/grpc-js": "1.14.5",

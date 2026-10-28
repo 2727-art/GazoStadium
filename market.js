@@ -1,5 +1,5 @@
-import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
-import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1";
 import {
   doc,
   onSnapshot,
@@ -24,7 +24,7 @@ import {
   firestore,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -1484,6 +1484,12 @@ async function ensureAuthenticated(generation, { openLandingRankings = false } =
   const credential = { user: await ensureHariaiUser() };
   if (!isCurrentLifecycle(generation)) return;
   state.uid = credential.user.uid;
+  if (openLandingRankings) {
+    state.authReady = true;
+    setMarketChrome("VALUE MARKET RECORDS");
+    await openRankings("landing");
+    return;
+  }
   const response = await economyActionCallable({ action: "initialize" });
   if (!isCurrentLifecycle(generation)) return;
   updateMarketBalance(response.data?.balance || 0);
@@ -2564,12 +2570,12 @@ function renderCertificates() {
   } else if (state.certificateStatus === "error") {
     body = `<div class="market-certificate-status is-error" role="alert"><p>証書コレクションを読み込めませんでした。</p><button class="button button-primary" id="marketCertificatesRetry">再読み込み</button></div>`;
   } else if (!state.certificates.length) {
-    body = `<div class="market-certificate-status" role="status"><span aria-hidden="true">◇</span><h2>証書はまだありません</h2><p>推し値市場で購入が成立すると、画像を保存しないメタデータ証書がここへ追加されます。</p></div>`;
+    body = `<div class="market-certificate-status" role="status"><span aria-hidden="true">◇</span><h2>証書はまだありません</h2><p>終了以前に購入した証書を表示します。画像は保存していません。</p></div>`;
   } else {
     body = `<ol class="market-certificate-grid">${state.certificates.map(renderCertificateCard).join("")}</ol>${state.certificateHasMore ? `<p class="market-certificate-limit">最新100件を表示しています。</p>` : ""}`;
   }
   return `<section class="screen market-screen market-certificates">
-    <div class="market-section-head"><div><span class="eyebrow">VALUE MARKET COLLECTION</span><h1>推し値証書コレクション</h1><p>購入成立の価格・相手・日時だけを残す、あなただけの非譲渡コレクションです。</p></div><button class="button button-ghost" id="marketCertificatesBack">市場へ戻る</button></div>
+    <div class="market-section-head"><div><span class="eyebrow">VALUE MARKET COLLECTION</span><h1>推し値証書コレクション</h1><p>購入成立の価格・相手・日時だけを残す、あなただけの非譲渡コレクションです。</p></div><button class="button button-ghost" id="marketCertificatesBack">ランキングへ戻る</button></div>
     <div class="market-certificate-policy"><strong>画像は保存しません</strong><p>証書は取引メタデータだけです。元画像、営業チャット、音声、著作権、所有権は含まれません。</p></div>
     ${body}
   </section>`;

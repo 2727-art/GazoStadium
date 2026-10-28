@@ -25,11 +25,11 @@ function sourceBlock(source, startMarker, endMarker) {
 test("landing and module wiring expose a separate solo roulette mode", () => {
   assert.match(html, /roulette-training\.css\?v=[^"]*-room-scrapbook-v1[^"]*"/);
   assert.match(html, /roulette-training\.js\?v=[^"]*-room-scrapbook-v1[^"]*"/);
-  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1"/);
-  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1-tribute-v1-retire-free-table-v1"/);
+  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1[^"]*"/);
+  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1-tribute-v1-retire-free-table-v1[^"]*"/);
   assert.match(app, /id="rouletteTrainingButton"/);
   assert.match(app, /function startRouletteTraining\(\)/);
-  assert.match(app, /hariai-roulette-training-ready/);
+  assert.match(app, /launchFeature\("roulette"/);
   assert.match(app, /HariaiRouletteTraining\.requestHome\(\)/);
   assert.match(client, /window\.HariaiRouletteTraining = Object\.freeze/);
   assert.match(client, /openMarket:/);
@@ -1342,7 +1342,7 @@ test("all Firebase clients share one cache generation", () => {
     return match[1];
   });
   assert.equal(new Set(urls).size, 1);
-  assert.match(urls[0], /roulette-training-v1$/);
+  assert.match(urls[0], /roulette-training-v1(?:-lazy-loading-v1)?$/);
   assert.match(read("firebase-services.js"), /searchParams\.has\("rouletteTrainingPreview"\)/);
   assert.match(read("firebase-app-check.js"), /searchParams\.has\("rouletteTrainingPreview"\)/);
 });

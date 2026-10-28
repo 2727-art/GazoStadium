@@ -2,7 +2,7 @@ import {
   appendIncomingOnlineImageChunk,
   completeIncomingOnlineImageTransfer,
   normalizeOnlineImageMime,
-} from "./online-image-transfer.mjs";
+} from "./online-image-transfer.mjs?v=online-image-transfer-v1";
 
 const MAX_DECLARED_MIME_LENGTH = 80;
 const INCOMING_TRANSFER_FIELDS = Object.freeze({

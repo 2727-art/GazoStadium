@@ -1,7 +1,7 @@
 import {
   normalizeOnlineImageMime,
   onlineImageMimeFromBytes,
-} from "./online-image-transfer.mjs";
+} from "./online-image-transfer.mjs?v=online-image-transfer-v1";
 
 export const STRATEGY_DECK_SCHEMA_VERSION = 1;
 export const STRATEGY_DECK_MAIN_COUNT = 5;

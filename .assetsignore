@@ -28,3 +28,15 @@ firebase-debug.*.log
 database-debug.log
 firestore-debug.log
 ui-debug.log
+
+# Build inputs and retired standalone modes are not public entries.
+scripts/
+market.js
+market.css
+market-transfer.mjs
+flea-market.js
+flea-market.css
+danwaku-note.js
+danwaku-note.css
+free-table.js
+free-table.css

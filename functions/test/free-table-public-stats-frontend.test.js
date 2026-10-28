@@ -20,15 +20,15 @@ test("neither the initial snapshot nor either match result requests free-table p
   for (const file of ["online.js", "strategy.js"]) {
     assert.doesNotMatch(read(file), /freeTablePublicStats|FreeTablePublicStats|FREE_TABLE_PUBLIC_STATS|hariai-free-table-public-stats-updated|data-free-table-lamp-refresh/);
   }
-  assert.match(read("online.js"), /get\(ref\(database, "online\/publicPresence"\)\)/);
+  assert.match(read("landing-presence.mjs"), /get\(ref\(database, "online\/publicPresence"\)\)/);
 });
 
 test("retired invite navigation defers lobby reads until the user returns home", () => {
-  const online = read("online.js");
-  const loader = online.slice(online.indexOf("function loadInitialLobbyStats()"), online.indexOf("function watchLobbyStats()"));
+  const online = read("landing-presence.mjs");
+  const loader = online.slice(online.indexOf("function loadInitialLobbyStats()"), online.indexOf("window.HariaiLobby"));
   assert.ok(loader.indexOf('has("freeTableInvite")') < loader.indexOf('get(ref(database'));
   assert.match(read("app.js"), /if \(!openInitialFreeTableInvite\(\)\) renderLandingScreen\(\);/);
-  assert.match(read("app.js"), /function renderLandingScreen\(\) \{\s*clearRetiredFreeTableInvite\(\);/);
+  assert.match(read("app.js"), /function renderLandingScreen\(\) \{[\s\S]*?clearRetiredFreeTableInvite\(\);/);
 });
 
 test("HTML has no free-table loads or promotion and all changed active scripts have retirement cache tokens", () => {

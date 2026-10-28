@@ -28,7 +28,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function lobbyHarness() {
+function lobbyHarness({ preview = false } = {}) {
   let now = 1000000;
   let timerId = 0;
   const timers = new Map();
@@ -50,9 +50,10 @@ function lobbyHarness() {
   };
   const context = vm.createContext({
     Date: { now: () => now }, database: {}, currentScreen: "landing",
-    URLSearchParams, location: { search: "" },
+    URLSearchParams, location: { hostname: preview ? "localhost" : "hariaistadium.com", search: preview ? "?marketPreview" : "" },
     document: {
       visibilityState: "visible",
+      getElementById(id) { return countNodes.get("#"+id) || null; },
       querySelector(selector) {
         return countNodes.get(selector) || null;
       },
@@ -87,14 +88,11 @@ function lobbyHarness() {
     async freeTablePublicStatsCallable() { throw new Error("retired free table callable"); },
     async aiTextTrainingPublicStatsCallable() { calls.push("call:aiTextTrainingPublicStats"); throw new Error("retired callable"); },
   });
-  const createStart = online.indexOf("const createLobbyStats = (");
-  const createEnd = online.indexOf("const createBattlePresenceCheckState", createStart);
-  assert.ok(createStart >= 0 && createEnd > createStart);
-  vm.runInContext(online.slice(createStart, createEnd) + [
-    "getLobbyStats", "refreshLobbyStats", "renderLobbyStats", "withLobbyPublicStatsTimeout",
-    "loadInitialLobbyStats", "watchLobbyStats",
-  ].map((name) => fn(online, name)).join("\n"), context);
-  context.window.HariaiOnline = { getLobbyStats: context.getLobbyStats };
+  context.setTimeout = context.window.setTimeout;
+  context.clearTimeout = context.window.clearTimeout;
+  vm.runInContext(read("battle-presence-stats.mjs").replace(/export /g, ""), context);
+  const presence = read("landing-presence.mjs").replace(/^import .*;\r?\n/gm, "").replace(/export /g, "").replace(/loadInitialLobbyStats\(\);\s*$/, "");
+  vm.runInContext(presence + "\nfunction getLobbyStats(){return getStats();} function watchLobbyStats(){return loadInitialLobbyStats();}", context);
   return {
     context, calls, events, listeners, fixtures, fail, hold, countNodes, timers,
     advance(ms) { now += ms; },
@@ -213,8 +211,7 @@ test("failure of the active source is retained without retries or false zero cou
 });
 
 test("offline preview performs no initial fetch and returns unknown lobby counts", async () => {
-  const h = lobbyHarness();
-  h.context.useOfflineMarketPreview = true;
+  const h = lobbyHarness({preview: true});
   h.context.watchLobbyStats();
   await flush();
   await h.context.loadInitialLobbyStats();
@@ -248,7 +245,7 @@ test("source timeout keeps unknown counts and late replies cannot repaint or res
   h.hold.set("online/publicPresence", presence);
   const request = h.context.loadInitialLobbyStats();
   await flush();
-  h.fireTimers(20000);
+  h.fireTimers(6000);
   await request;
   const snapshot = JSON.stringify(h.context.getLobbyStats());
   for (const node of h.countNodes.values()) assert.equal(node.textContent, "--");

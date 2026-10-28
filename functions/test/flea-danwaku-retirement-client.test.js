@@ -31,7 +31,7 @@ test("landing render and event binding expose neither retired mode while retaini
   const calls = [];
   const app = { innerHTML: "", focus() {} };
   const context = vm.createContext({
-    app, currentScreen: "", pendingValueMarketDestination: "", expandedRankingEntryId: "",
+    navigationVersion: 0, setBusy() {}, launchFeature() {}, app, currentScreen: "", pendingValueMarketDestination: "", expandedRankingEntryId: "",
     rankingComments: [], rankingCommentsStatus: "",
     document: {
       querySelector(selector) {
@@ -78,7 +78,7 @@ test("retired modes have no global loads or delayed launch path; old modules rem
     const reference = html.split("\n").find((line) => line.includes(`${file}?v=`));
     assert.match(reference, /retire-flea-danwaku-v1/);
   }
-  assert.match(html, /src="account\.js\?v=/, "wallet remains globally available");
+  assert.match(html, /"module": "account\.js\?v=/, "wallet remains available on demand");
 });
 
 test("all 40 retired achievement IDs stay known and locked retired categories are not offered as new goals", () => {

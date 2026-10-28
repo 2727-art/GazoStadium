@@ -40,7 +40,7 @@ test("the landing replaces the market tile with お貢ぎ牧場 and keeps old ma
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
   assert.doesNotMatch(app, /id="valueMarketButton"/);
   assert.match(app, /id="tributeRankingButton"/);
-  assert.match(app, /function startTribute\(options = \{\}\)[\s\S]*?hariai-tribute-ready/);
+  assert.match(app, /function startTribute\(options = \{\}\)[\s\S]*?launchFeature\("tribute"/);
   assert.match(app, /HariaiTribute\?\.isActive\?\.\(\)\) \{\s*window\.HariaiTribute\.requestHome\(\);/);
   assert.match(app, /openTribute: startTribute/);
   assert.match(market, /const VALUE_MARKET_CLOSED = true;/);
@@ -56,7 +56,7 @@ test("every mode refuses to open over お貢ぎ牧場 and お貢ぎ牧場 refuse
   for (const name of ["HariaiOnline", "HariaiStrategy", "HariaiAiTextTraining", "HariaiRouletteTraining", "HariaiDanwakuNote", "HariaiMarket", "HariaiFleaMarket", "HariaiAccount"]) {
     assert.match(guard, new RegExp(`window\\.${name}\\?\\.isActive`), name);
   }
-  assert.match(client, /window\.HariaiTribute = Object\.freeze\(\{\s*start,\s*isActive,\s*requestHome,\s*\}\);/);
+  assert.match(client, /window\.HariaiTribute = Object\.freeze\(\{\s*start,\s*isActive,\s*requestHome,\s*openRequestedLink,\s*\}\);/);
 });
 
 test("the client keeps caps and exit with the payer and never filters by gender", () => {
@@ -326,7 +326,7 @@ test("the contract screen shows both ranch achievement lines and forwards unlock
     /notifyAchievementUnlocks\(result\.newlyUnlocked\);\s*if \(previewScreen\) updateThreadParts\(\);/,
     /notifyAchievementUnlocks\(payload\.achievements\.newlyUnlocked\);/,
   ]) assert.match(client, marker);
-  assert.match(client, /case "open-achievements":\s*requestHome\(\);\s*window\.setTimeout\(\(\) => window\.HariaiOnline\?\.openAchievements\?\.\(\), 0\);/);
+  assert.match(client, /case "open-achievements":\s*requestHome\(\);\s*window\.setTimeout\(\(\) => window\.HariaiApp\.openOnlineFeature\("openAchievements"\), 0\);/);
   assert.match(styles, /\.achievement-badge\.achievement-scope-tribute \{/);
   assert.match(read("achievements.js"), /\{ id: "tribute_ranch", label: "お貢ぎ牧場"/);
   assert.match(read("achievements.js"), /画像の好み・敗北・AnjuPayフリマ・お貢ぎ牧場の実績は自動公開されず/);
@@ -569,7 +569,7 @@ test("invite links carry only the public manager id, open after the age check, a
 
   const take = sourceBlock(client, "function takeInviteFromUrl", "// 見本で保存したカード");
   assert.match(take, /url\.searchParams\.delete\(INVITE_QUERY_KEY\);\s*window\.history\.replaceState/, "the id leaves the address bar at once");
-  assert.match(client, /const initialInvite = takeInviteFromUrl\(\);\s*if \(initialInvite\) start\(\{ inviteManager: initialInvite \}\);\s*else if \(wantsRanchOpen\(window\.location\.href\)\) start\(\{ initialScreen: "hub" \}\);\s*$/, "the ranch opens itself only for an invite link or ?open=ranch");
+  assert.match(client, /const initialInvite = takeInviteFromUrl\(\);\s*if \(initialInvite\) start\(\{ inviteManager: initialInvite \}\);\s*else if \(wantsRanchOpen\(window\.location\.href\)\) start\(\{ initialScreen: "hub" \}\);\s*\}\s*$/, "the ranch opens itself only for an invite link or ?open=ranch");
   const startBlock = sourceBlock(client, "async function start(", "function isActive");
   assert.ok(startBlock.indexOf("if (!state.ageConfirmed)") < startBlock.indexOf("if (pendingInvite)"), "the age check comes before the invited manager");
   assert.match(sourceBlock(client, 'case "age": {', 'case "wallet-name":'), /if \(pendingInvite\) \{[\s\S]*?openManager\(invite, \{ invited: true \}\);/);

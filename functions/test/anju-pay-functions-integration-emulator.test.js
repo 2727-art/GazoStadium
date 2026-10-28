@@ -402,7 +402,7 @@ if (!RUN_REQUESTED) {
       assert.equal(guestProgress.get("achievementStats.totalMatches"), 1);
     });
 
-    test("one initial migration supports match rewards and monotonic card growth without result reinitialization", async () => {
+    test("one initial migration supports match rewards without touching retired creator-card growth", async () => {
       const host = await createCaller("match-cost-host");
       const guest = await createCaller("match-cost-guest");
       const roomId = eventId(`${suiteId}:match-cost`).slice(0, 20);
@@ -424,7 +424,7 @@ if (!RUN_REQUESTED) {
       assert.equal(initialized.balance, 77, "first-use initialization migrates the legacy wallet");
       assertContinuousLedger(await readLedger(host.uid), 77);
       assert.equal((await realtime.ref(`online/economy/${host.uid}/patron`).get()).exists(), true);
-      assert.equal((await realtime.ref(`online/topMessages/${hostCardId}/growthLevel`).get()).val(), 2);
+      assert.equal((await realtime.ref(`online/topMessages/${hostCardId}/growthLevel`).get()).val(), 1, "wallet initialization leaves retired cards untouched");
       await realtime.ref(`online/rooms/${roomId}`).set({
         status: "active",
         createdAt: Date.now() - 60_000,
@@ -440,8 +440,8 @@ if (!RUN_REQUESTED) {
       const request = { action: "record_match", mode: "solo", outcome: "win", roomId, finalizationVersion: 2 };
       const first = await invoke(host.economyAction, request);
       assert.equal(first.outcome, "recorded");
-      assert.equal((await realtime.ref(`online/topMessages/${hostCardId}/growthLevel`).get()).val(), 3,
-        "committed match plus the captured 9 market activities raises card growth");
+      assert.equal((await realtime.ref(`online/topMessages/${hostCardId}/growthLevel`).get()).val(), 1,
+        "match finalization no longer updates retired cards");
       assert.equal((await realtime.ref(`online/topMessages/${guestCardId}/growthLevel`).get()).val(), 5,
         "an existing higher card level cannot regress");
       assert.equal((await firestore.doc(`economyProgress/${guest.uid}`).get()).get("achievementStats.totalMatches"), 1,

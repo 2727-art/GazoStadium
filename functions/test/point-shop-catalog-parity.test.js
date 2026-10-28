@@ -65,7 +65,7 @@ function idsAllowedByValidation(expression) {
 
 test("browser, Functions, and Realtime Database point-shop catalogs stay identical", () => {
   const browserProducts = parseProductRows([
-    "online.js",
+    "shop-products.mjs",
     "stamps.js",
     "player-titles.js",
     "chat-cosmetics.js",
@@ -198,8 +198,8 @@ test("market shop charms use owned stamp IDs without consuming chat equipment sl
   assert.match(readme, /無料4種とAnjuPayストアで購入済みのスタンプ/);
 
   const html = read("index.html");
-  assert.match(html, /market\.css\?v=[^"]*shop-charm-v1/);
-  assert.match(html, /market\.js\?v=[^"]*shop-charm-v1/);
+  assert.match(html, /market-records\.css\?v=[^"]*shop-charm-v1/);
+  assert.match(html, /market-records\.js\?v=[^"]*shop-charm-v1/);
   for (const entry of ["online.js", "strategy.js", "market.js", "flea-market.js"]) {
     assert.match(read(entry), /player-titles\.js\?v=player-titles-v3/, entry);
   }

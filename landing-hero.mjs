@@ -115,7 +115,7 @@ function prepareIntro(thread) {
 
 export function applyHeroLive(root = document) {
   const live = root.querySelector?.("[data-hero-live]");
-  const getLobbyStats = window.HariaiOnline?.getLobbyStats;
+  const getLobbyStats = window.HariaiLobby?.getStats || window.HariaiOnline?.getLobbyStats;
   // 人数をまだ読めない時は、描いた時の表示をそのまま残す。
   if (!live || typeof getLobbyStats !== "function") return;
   live.dataset.heroLive = heroLiveState(getLobbyStats()?.solo);

@@ -196,7 +196,7 @@ test("all modes use the same guard and only that guard can automatically create 
   const modes = ["account", "online", "strategy", "tribute", "stadium", "roulette-training", "ai-text-training", "player-safety", "market", "flea-market", "danwaku-note", "free-table"];
   for (const mode of modes) {
     const source = fs.readFileSync(path.join(root, `${mode}.js`), "utf8");
-    assert.match(source, /from "\.\/auth-session\.js\?v=auth-session-v1"/);
+    assert.match(source, /from "\.\/auth-session\.js\?v=auth-session-v1[^"]*"/);
     assert.doesNotMatch(source, /\bsignInAnonymously\b|\bsetPersistence\b/);
   }
 });
