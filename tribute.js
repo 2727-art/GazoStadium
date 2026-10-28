@@ -841,9 +841,16 @@ function renderBoard() {
   </div>`, { title: "掲示板" });
 }
 
+// 番付の行。財布どうしに見せるのは仕えた日数と首輪番号だけで、額は管理人本人の欄にだけ出す（設計書15.1）。
+function rankingValue(row) {
+  if (Number(row.days) > 0) return `${Number(row.days)}日`;
+  if (Number.isFinite(Number(row.amount)) && row.amount !== undefined) return formatPay(row.amount);
+  return Number(row.collarNo) > 0 ? `${Number(row.collarNo)}号` : "";
+}
+
 function renderRankingRows(rows, emptyText) {
   if (!rows?.length) return `<p class="tribute-empty">${escapeHtml(emptyText)}</p>`;
-  return `<ol class="tribute-rank-list">${rows.map((row) => `<li class="${row.mine ? "is-mine" : ""}"><b>${row.rank}</b><span>${escapeHtml(row.walletName)}</span><em>${escapeHtml(formatPay(row.amount))}</em></li>`).join("")}</ol>`;
+  return `<ol class="tribute-rank-list">${rows.map((row) => `<li class="${row.mine ? "is-mine" : ""}"><b>${row.rank}</b><span>${escapeHtml(row.walletName)}</span><em>${escapeHtml(rankingValue(row))}</em></li>`).join("")}</ol>`;
 }
 
 function renderManagerDetail() {
@@ -886,16 +893,23 @@ function renderManagerDetail() {
     </section>
     ${renderCheers(card, cheers, myCheer)}
     <section class="tribute-panel">
-      <h2>${escapeHtml(card.personaName)}の番付 <small>番付に載ることを選んだ財布だけ</small></h2>
+      <h2>${escapeHtml(card.personaName)}の番付 <small>番付に載ることを選んだ財布だけ・額ではなく仕えた日数の順</small></h2>
       <div class="tribute-two-col">
-        <div><h3>今月</h3>${renderRankingRows(ranking?.month, "今月はまだいません。")}</div>
-        <div><h3>累計</h3>${renderRankingRows(ranking?.lifetime, "まだいません。")}</div>
+        <div><h3>今月 <small>献上か言葉の献上をした日の数</small></h3>${renderRankingRows(ranking?.month, "今月はまだいません。")}</div>
+        <div><h3>累計 <small>長く仕えている順（首輪番号）</small></h3>${renderRankingRows(ranking?.lifetime, "まだいません。")}</div>
       </div>
     </section>
+    ${ranking?.amounts ? `<section class="tribute-panel tribute-amount-ranking">
+      <h2>献上額の順位 <small>あなただけに見えます</small></h2>
+      <div class="tribute-two-col">
+        <div><h3>今月</h3>${renderRankingRows(ranking.amounts.month, "今月はまだいません。")}</div>
+        <div><h3>累計</h3>${renderRankingRows(ranking.amounts.lifetime, "まだいません。")}</div>
+      </div>
+    </section>` : ""}
   </div>`, { title: card.personaName });
 }
 
-// 応援欄。今月この管理人に貢いだ財布だけが書け、今月の献上額の多い順に並ぶ（額は出さない）。
+// 応援欄。今月この管理人に貢いだ財布だけが書け、新しい順に並ぶ（額の順にはしない。設計書15.1）。
 // 管理人は「見たよ」の印を返し、隠せる。隠した応援は、管理人と書いた財布にだけ見える。
 function renderCheers(card, cheers, myCheer) {
   const list = Array.isArray(cheers) ? cheers : [];
@@ -912,7 +926,7 @@ function renderCheers(card, cheers, myCheer) {
     ? `<p class="tribute-note">今月あなたに貢いだ財布が書けます。「見たよ」を押すと、応援に印が付きます（誰にでも見えます）。隠した応援は、あなたと書いた財布にだけ見えます。</p>`
     : "";
   return `<section class="tribute-panel tribute-cheers" aria-labelledby="tributeCheersTitle">
-    <h2 id="tributeCheersTitle">応援欄 <small>今月貢いだ財布だけ・今月の献上額の順</small></h2>
+    <h2 id="tributeCheersTitle">応援欄 <small>今月貢いだ財布だけ・新しい順</small></h2>
     ${note}
     ${manager ? "" : renderCheerForm(card, myCheer)}
     ${rows}
@@ -5166,8 +5180,15 @@ function previewCall(action, payload) {
         openContractId: "",
         myTotal: 210,
         ranking: {
-          month: [{ rank: 1, walletName: "しもべ3号", amount: 1_200, mine: false }, { rank: 2, walletName: "ポチ財布", amount: 210, mine: true }],
-          lifetime: [{ rank: 1, walletName: "しもべ3号", amount: 5_400, mine: false }, { rank: 2, walletName: "ポチ財布", amount: 210, mine: true }],
+          month: [{ rank: 1, walletName: "しもべ3号", days: 12, collarNo: 3, mine: false }, { rank: 2, walletName: "ポチ財布", days: 4, collarNo: 5, mine: true }],
+          lifetime: [{ rank: 1, walletName: "しもべ3号", collarNo: 3, mine: false }, { rank: 2, walletName: "ポチ財布", collarNo: 5, mine: true }],
+          // 額の順位は管理人本人にだけ返る（設計書15.1）。
+          ...(mine ? {
+            amounts: {
+              month: [{ rank: 1, walletName: "しもべ3号", amount: 1_200, mine: false }, { rank: 2, walletName: "ポチ財布", amount: 210, mine: false }],
+              lifetime: [{ rank: 1, walletName: "しもべ3号", amount: 5_400, mine: false }, { rank: 2, walletName: "ポチ財布", amount: 210, mine: false }],
+            },
+          } : {}),
         },
       });
     }

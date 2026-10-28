@@ -130,7 +130,7 @@ test("the thread shows the type stock lines and type rewards only to the manager
   assert.match(chips, /reward\.style \? ' class="is-style"' : ""/);
   assert.match(service, /styles: ctx\.profiles\.manager\.value\.card\?\.styles,/);
   for (const selector of [".tribute-template-group.is-style button {", ".tribute-reward-chips button.is-style {"]) assert.ok(styles.includes(selector), selector);
-  assert.match(html, /tribute\.js\?v=[^"]*-ranch-style-words-v1"/);
+  assert.match(html, /tribute\.js\?v=[^"]*-ranch-style-words-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-style-words-v1"/);
   assert.match(design, /型の定型文/);
 });

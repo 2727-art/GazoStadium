@@ -426,6 +426,9 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
 
 .tribute-two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; }
 .tribute-two-col h3 { font-size: 0.86rem; color: var(--tr-mist); margin-bottom: 6px; }
+/* 番付の見出しの説明（仕えた日数・首輪番号、ranch-served-days-v1）。 */
+.tribute-two-col h3 small { display: block; margin-top: 2px; font-size: 0.72rem; font-weight: 400; }
+.tribute-amount-ranking { border-style: dashed; }
 
 .tribute-rank-list,
 .tribute-manager-ranking { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }

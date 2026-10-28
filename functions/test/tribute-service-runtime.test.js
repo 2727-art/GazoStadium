@@ -895,7 +895,9 @@ test("rankings show only opted-in wallet names and cap ranking points per pair p
   await harness.act("p1", "tribute", { contractId: c1, kind: "silent", amount: 1_000, clientRequestId: nextRequestId() });
   await harness.act("p2", "tribute", { contractId: c2, kind: "silent", amount: 300, clientRequestId: nextRequestId() });
   const rankings = await harness.act("p1", "rankings", { publicManagerId });
-  assert.deepEqual(rankings.managerBoard.month.map((row) => [row.walletName, row.amount, row.mine]), [["見せる財布", 1_000, true]]);
+  // 管理人ごとの番付は仕えた日数の順で、額は財布どうしに見せない（設計書15.1）。
+  assert.deepEqual(rankings.managerBoard.month.map((row) => [row.walletName, row.days, row.mine]), [["見せる財布", 1, true]]);
+  assert.equal("amounts" in rankings.managerBoard, false);
   assert.equal(rankings.managers.length, 1);
   assert.equal(rankings.managers[0].payers, 2);
   assert.equal(rankings.managers[0].rankScore, 500 + 300, "ranking points are capped at 500 per pair per day");
@@ -2020,4 +2022,66 @@ test("managers choose one or two of the five types; a card with only the old typ
   assert.ok(legacy, "the card stays on the board");
   assert.deepEqual(legacy.styles, []);
   assert.equal("style" in legacy, false);
+});
+
+// 仕えた日数の番付と応援欄の並び（設計書15.1、2026-10-28 ユーザー決定）: 財布どうしを額で比べない。
+test("served days count once a day per pair from tributes and word offerings, apart from the monthly total", async () => {
+  const { jstMonthKey } = require("../tribute-rules");
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { durationDays: 30 });
+  const pair = () => Object.values(Object.fromEntries(harness.firestore.keys("tributePairs/").map((path) => [path, harness.firestore.read(path)])))[0];
+  assert.deepEqual([pair().servedDays, pair().servedMonthKey], [1, jstMonthKey(harness.now())], "the entry fee is the first day");
+  harness.advance(2_100);
+  await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 30, clientRequestId: nextRequestId() });
+  assert.equal(pair().servedDays, 1, "once a day");
+  harness.advance(24 * 60 * 60 * 1_000);
+  await harness.act("payer", "offer_words", { contractId, text: "今日は言葉だけ置いていきます。" });
+  assert.equal(pair().servedDays, 2, "a word offering is a served day too");
+  const monthTotal = pair().monthTotal;
+  // 月が変わると0から数える。言葉の献上だけでは、貢ぎ帳の月（monthKey）と月の額は動かさない。
+  harness.advance(26 * 24 * 60 * 60 * 1_000);
+  await harness.act("payer", "offer_words", { contractId, text: "新しい月も来ました。" });
+  assert.deepEqual([pair().servedDays, pair().servedMonthKey], [1, jstMonthKey(harness.now())]);
+  assert.notEqual(pair().monthKey, jstMonthKey(harness.now()));
+  assert.equal(pair().monthTotal, monthTotal);
+});
+
+test("the manager ranking shows days served and collar numbers to everyone, and amounts only to the manager", async () => {
+  const harness = createHarness({ balances: { manager: 0, steady: 5_000, rich: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const steady = await startContract(harness, "manager", "steady", publicManagerId, { walletName: "毎日の財布" });
+  const rich = await startContract(harness, "manager", "rich", publicManagerId, { walletName: "太い財布" });
+  harness.advance(2_100);
+  await harness.act("rich", "tribute", { contractId: rich, kind: "silent", amount: 100, clientRequestId: nextRequestId() });
+  for (let day = 0; day < 2; day += 1) {
+    harness.advance(24 * 60 * 60 * 1_000);
+    await harness.act("steady", "offer_words", { contractId: steady, text: "今日も来ました。" });
+  }
+  const forPayer = (await harness.act("rich", "manager", { publicManagerId })).ranking;
+  assert.deepEqual(forPayer.month.map((row) => [row.walletName, row.days]), [["毎日の財布", 3], ["太い財布", 1]], "days, not amounts");
+  assert.deepEqual(forPayer.lifetime.map((row) => [row.walletName, row.collarNo]), [["毎日の財布", 1], ["太い財布", 2]], "longest serving first");
+  assert.equal("amounts" in forPayer, false);
+  assert.equal(JSON.stringify(forPayer).includes("amount"), false, "no amounts reach other wallets");
+  const forManager = (await harness.act("manager", "manager", { publicManagerId })).ranking;
+  assert.deepEqual(forManager.amounts.month.map((row) => [row.walletName, row.amount]), [["太い財布", 110], ["毎日の財布", 10]]);
+  assert.deepEqual(forManager.amounts.lifetime.map((row) => row.walletName), ["太い財布", "毎日の財布"]);
+});
+
+test("the cheer column lists the newest cheer first, not the biggest tributer", async () => {
+  const harness = createHarness({ balances: { manager: 0, big: 5_000, small: 1_000, viewer: 0 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const big = await startContract(harness, "manager", "big", publicManagerId, { walletName: "太い財布" });
+  await startContract(harness, "manager", "small", publicManagerId, { walletName: "細い財布" });
+  harness.advance(2_100);
+  await harness.act("big", "tribute", { contractId: big, kind: "silent", amount: 100, clientRequestId: nextRequestId() });
+  await harness.act("big", "set_cheer", { publicManagerId, text: "今月も一番に貢ぎます" });
+  harness.advance(60_000);
+  await harness.act("small", "set_cheer", { publicManagerId, text: "毎日見てます" });
+  await confirmAge(harness, "viewer");
+  const order = async () => (await harness.act("viewer", "manager", { publicManagerId })).cheers.map((cheer) => cheer.walletName);
+  assert.deepEqual(await order(), ["細い財布", "太い財布"]);
+  harness.advance(60_000);
+  await harness.act("big", "set_cheer", { publicManagerId, text: "書き直しました" });
+  assert.deepEqual(await order(), ["太い財布", "細い財布"], "a rewritten cheer moves to the top");
 });

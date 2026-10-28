@@ -665,6 +665,68 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "managerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rankOptIn",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "servedMonthKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "servedDays",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "collarNo",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "managerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rankOptIn",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "collarNo",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "managerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "cheerMonthKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "cheerAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
