@@ -1,6 +1,6 @@
 {
   "checkedAt": "2026-10-28T12:44:36.756Z",
-  "status": "firebase-verified-workers-pending",
+  "status": "verified",
   "project": "gazostadium",
   "sourceCommit": "04a0937",
   "implementationCommit": "04a0937",
@@ -125,10 +125,30 @@
       },
       "consoleErrors": [],
       "signedInUsers": 0
+    },
+    "workersRebuild": {
+      "commit": "07b2e0a",
+      "trigger": "release record push 04a0937..07b2e0a",
+      "conclusion": "success",
+      "completedAt": "2026-10-28T12:46:56Z"
+    },
+    "deliveryRecheck": {
+      "checkedAt": "2026-10-28T12:47:57.934Z",
+      "commit": "07b2e0a",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "imagesPerRoute": 549,
+      "imagesByteIdentical": true,
+      "previousMarkers": true,
+      "privateFiles404": true
     }
   },
   "remaining": [
-    "check workers.dev and hariaistadium.com after the build started by the record push",
     "pats on real contracts can only be checked by signed-in managers and wallets; covered by tests and previews",
     "ranch photo for X and ranch-level ranking remain as ideas"
   ]
