@@ -6,7 +6,6 @@
   演出の長さは --vb-fx-speed（標準1・短め0.5・即時0）を掛けて決める。
 */
 
-.screen.vl-landing,
 .screen.vb-screen {
   animation-name: vs-fade-in;
 }

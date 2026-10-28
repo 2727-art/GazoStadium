@@ -717,6 +717,12 @@ a:focus-visible,
 
 /* ---------- トップページ ---------- */
 
+/* transformを残す画面遷移は、子の固定タブを画面ではなくこの要素に固定する。
+   この指定は対戦CSSの遅延読み込み前から必要。 */
+.screen.vl-landing {
+  animation-name: vs-fade-in;
+}
+
 .hero.vl-landing {
   min-height: 0;
   display: grid;
