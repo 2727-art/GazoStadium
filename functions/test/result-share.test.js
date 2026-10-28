@@ -80,12 +80,7 @@ test("both battle modes keep using the shared result post helper", () => {
   assert.match(readme, /投稿本文にURLを含めず/);
 });
 
-test("URL removal stays isolated from creator-card and free-table sharing", () => {
-  const creatorCardShare = sourceBlock(
-    app,
-    "  function creatorCardShareText",
-    "  function createXCreatorCardPostUrl",
-  );
+test("retired creator sharing is absent and free-table URL helpers remain isolated", () => {
   const freeTable = read("free-table.js");
   const freeTableInviteShare = sourceBlock(
     freeTable,
@@ -93,7 +88,7 @@ test("URL removal stays isolated from creator-card and free-table sharing", () =
     "function formatInviteExpiry",
   );
 
-  assert.match(creatorCardShare, /OFFICIAL_GAME_URL/);
+  assert.doesNotMatch(app, /creatorCardShareText|createXCreatorCardPostUrl/);
   assert.match(freeTableInviteShare, /shared\(\)\?\.officialGameUrl/);
   assert.match(freeTableInviteShare, /searchParams\.set\("url", inviteUrl\)/);
 });

@@ -1,6 +1,7 @@
 "use strict";
 
 const RETIRED_MODE_MESSAGES = Object.freeze({
+  creator_card: "推しカードは提供を終了しました。自己紹介は各種ランキングの公開設定をご利用ください。",
   anju_pay_flea: "AnjuPayフリマは提供を終了しました。",
   danwaku_note: "断惑NOTEは提供を終了しました。",
   free_table: "貼り合い自由卓は提供を終了しました。",

@@ -153,6 +153,6 @@ test("gaze mode styles keep zoom to the image-only view and fall back without bl
   assert.match(css, /transform: translateY\(calc\(-1 \* var\(--vb-gaze-keyboard, 0px\)\)\);/);
   const index = read("index.html");
   for (const asset of ["online\\.js", "velvet-battle\\.css"]) {
-    assert.match(index, new RegExp(`${asset}\\?v=[^"]*normal-dm-thread-v1-normal-dm-gaze-v1(?:-ranch-premium-icons-v1)?"`));
+    assert.match(index, new RegExp(`${asset}\\?v=[^"]*normal-dm-thread-v1-normal-dm-gaze-v1(?:-ranch-premium-icons-v1)?[^"]*"`));
   }
 });

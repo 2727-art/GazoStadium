@@ -19,11 +19,11 @@ const functionsIndex = read("functions/index.js");
 test("index.html loads the stadium screen and styles with cache tokens", () => {
   assert.match(index, /<link rel="stylesheet" href="stadium\.css\?v=my-stadium-v1[^"]*" \/>/);
   assert.match(index, /<script type="module" src="stadium\.js\?v=my-stadium-v1[^"]*"><\/script>/);
-  assert.match(index, /stadium\.js\?v=[^"]*-diorama-v1"/);
-  assert.match(index, /stadium\.css\?v=[^"]*-diorama-v1"/);
-  assert.match(index, /app\.js\?v=[^"]*-my-stadium-v1-normal-dm-thread-v1-ranch-nav-v1"/);
-  assert.match(index, /velvet\.css\?v=[^"]*-my-stadium-v1-header-contact-v1"/);
-  assert.match(index, /account\.js\?v=[^"]*-my-stadium-v1-ranch-vault-v1(?:-[a-z0-9-]+)?"/);
+  assert.match(index, /stadium\.js\?v=[^"]*-diorama-v1[^"]*"/);
+  assert.match(index, /stadium\.css\?v=[^"]*-diorama-v1[^"]*"/);
+  assert.match(index, /app\.js\?v=[^"]*-my-stadium-v1-normal-dm-thread-v1-ranch-nav-v1[^"]*"/);
+  assert.match(index, /velvet\.css\?v=[^"]*-my-stadium-v1-header-contact-v1[^"]*"/);
+  assert.match(index, /account\.js\?v=[^"]*-my-stadium-v1-ranch-vault-v1(?:-[a-z0-9-]+)?[^"]*"/);
   assert.match(client, /from "\.\/stadium-core\.mjs\?v=my-stadium-v1"/);
 });
 

@@ -5,7 +5,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
-const { creatorCardActivityCount, creatorCardGrowthLevel } = require("../creator-card");
 
 const root = path.resolve(__dirname, "..", "..");
 const client = fs.readFileSync(path.join(root, "online.js"), "utf8");
@@ -165,108 +164,12 @@ test("result retries keep server reward requests and never reapply a cached init
   assert.equal(context.state.overallProfile, currentProfile);
 });
 
-test("match card growth reuses one initialization per participant with committed battle stats", async () => {
+test("match processing no longer reads or updates retired creator cards", () => {
+  assert.doesNotMatch(server, /syncCreatorCardGrowth|publishCreatorCard|ensureCreatorCardEntryId/);
+  const duplicate = between(server, "async function duplicateVerifiedMatchResult", "async function recordVerifiedMatch");
+  assert.doesNotMatch(duplicate, /normalizeMarketStats/);
+  assert.match(duplicate, /marketSnapshot.data\(\)/);
   const recording = between(server, "async function recordVerifiedMatch", "function validatePostMatchTipRequest");
-  const participants = ["host", "guest"];
-  const initializations = [];
-  const cards = {
-    host: { schemaVersion: 2, growthLevel: 1 },
-    guest: { schemaVersion: 2, growthLevel: 5 },
-  };
-  const context = {
-    participants,
-    progressResults: Object.fromEntries(participants.map((uid) => [uid, { achievementStats: { totalMatches: 1 } }])),
-    profileResults: Object.fromEntries(participants.map((uid) => [uid, { unlocked: { battle_first: true } }])),
-    newlyUnlockedResults: {},
-    ensureAchievementState: async (uid) => {
-      initializations.push(uid);
-      return {
-        progress: { achievementStats: { totalMatches: 0 } },
-        marketStats: { salesCount: 9, purchases: 0 },
-      };
-    },
-    mirrorEconomyProgress: async () => {},
-    CREATOR_CARD_VERSION: 2,
-    isCreatorCardEntryId: (value) => value.startsWith("card-"),
-    creatorCardGrowthFromState: (value) => creatorCardGrowthLevel(creatorCardActivityCount(
-      value.progress.achievementStats,
-      value.marketStats,
-    )),
-    realtime: {
-      ref: (reference) => ({
-        get: async () => ({
-          val: () => reference.includes("topMessageEntriesByUser")
-            ? `card-${reference.split("/").at(-1)}`
-            : reference.split("/").at(-1).slice(5),
-        }),
-        transaction: async (update) => {
-          const uid = reference.split("/").at(-1).slice(5);
-          const next = update(cards[uid]);
-          if (next !== undefined) cards[uid] = next;
-          return { committed: next !== undefined };
-        },
-      }),
-    },
-  };
-  vm.createContext(context);
-  vm.runInContext(`
-    ${between(server, "async function syncCreatorCardGrowth", "async function acknowledgeAchievements")}
-    this.runPostMatch = async () => {
-      ${between(recording, "  const achievementStates", "  const progressRefs")}
-      ${between(recording, "  const postMatchOperations", "  if (Object.keys(serverRankingEntryResults)")}
-      await Promise.all(postMatchOperations);
-    };
-  `, context);
-  await context.runPostMatch();
-  assert.deepEqual(initializations, participants, "card owners do not trigger a second full achievement read");
-  assert.equal(cards.host.growthLevel, 3, "9 market actions plus the committed match reach growth 3");
-  assert.equal(cards.guest.growthLevel, 5, "a newer concurrently grown card never regresses");
-});
-
-test("card growth survives a cold-cache retry without creating cards or lowering growth", async (t) => {
-  for (const [label, stored, expected] of [
-    ["existing card", { schemaVersion: 2, growthLevel: 1 }, { schemaVersion: 2, growthLevel: 3 }],
-    ["newer growth", { schemaVersion: 2, growthLevel: 5 }, { schemaVersion: 2, growthLevel: 5 }],
-    ["missing card", null, null],
-    ["legacy schema", { schemaVersion: 1, growthLevel: 1 }, { schemaVersion: 1, growthLevel: 1 }],
-  ]) {
-    await t.test(label, async () => {
-      let card = stored;
-      let retryCalls = 0;
-      let firstDecision;
-      const context = {
-        CREATOR_CARD_VERSION: 2,
-        isCreatorCardEntryId: () => true,
-        creatorCardGrowthFromState: () => 3,
-        ensureAchievementState: async () => { throw new Error("must use supplied state"); },
-        realtime: {
-          ref: (reference) => ({
-            get: async () => ({ val: () => reference.includes("EntriesByUser") ? "valid-card-id" : "owner" }),
-            transaction: async (update) => {
-              firstDecision = update(null);
-              if (firstDecision === undefined) return { committed: false };
-              // Model the RTDB compare-and-retry after its empty-cache hash
-              // disagrees with the existing server card.
-              const next = card === null ? firstDecision : (() => {
-                retryCalls += 1;
-                return update(card);
-              })();
-              if (next !== undefined) card = next;
-              return { committed: next !== undefined };
-            },
-          }),
-        },
-      };
-      vm.createContext(context);
-      vm.runInContext(`
-        ${between(server, "async function syncCreatorCardGrowth", "async function acknowledgeAchievements")}
-        this.syncGrowth = syncCreatorCardGrowth;
-      `, context);
-      const changed = await context.syncGrowth("owner", { progress: {}, marketStats: {} });
-      assert.equal(firstDecision, null, "cold cache requests a server comparison instead of aborting");
-      assert.equal(retryCalls, stored === null ? 0 : 1);
-      assert.deepEqual(JSON.parse(JSON.stringify(card)), expected);
-      assert.equal(changed, label === "existing card");
-    });
-  }
+  assert.match(recording, /syncAchievementPublicSurfaces/);
+  assert.match(recording, /mirrorEconomyProgress/);
 });
