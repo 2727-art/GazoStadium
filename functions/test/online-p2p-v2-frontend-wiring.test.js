@@ -144,8 +144,8 @@ test("stored UUID sessions remain valid when normalizing an opponent and enterin
 
 test("normal 1on1 freezes achievements and the public Danwaku day without private NOTE data", () => {
   const helperSource = sourceBetween(
-    "function normalizeCreatorCardAchievementIds",
-    "function creatorCardDailyOrder",
+    "function normalizeMatchAchievementIds",
+    "async function readPublicDatabasePath",
   );
   const knownIds = new Set(["first", "second", "third", "fourth"]);
   const renderCalls = [];
@@ -264,8 +264,8 @@ test("normal 1on1 renders only the entry-time achievement and Danwaku snapshot i
     "function normalizeImagePreference",
   );
   const helpers = sourceBetween(
-    "function normalizeCreatorCardAchievementIds",
-    "function creatorCardDailyOrder",
+    "function normalizeMatchAchievementIds",
+    "async function readPublicDatabasePath",
   );
   const connecting = sourceBetween("function renderConnecting", "function renderStatusCard");
   const hud = sourceBetween("function renderOnlineHud", "function renderRoundSelect");

@@ -60,12 +60,9 @@ test("landing render and event binding expose neither retired mode while retaini
     assert.ok(app.innerHTML.includes(`id="${id}"`), id);
     assert.ok(bindings.has(`#${id}:click`), `${id} handler retained`);
   }
-  assert.ok(app.innerHTML.includes('id="topMessagePanel"'));
-  const communityStart = app.innerHTML.indexOf('id="topMessagePanel"');
-  const toolsStart = app.innerHTML.indexOf('class="vl-more"');
-  assert.ok(communityStart < toolsStart, "shared cards precede the remaining tools without a retired-card gap");
+  assert.doesNotMatch(app.innerHTML, /topMessagePanel|推しカード/);
   assert.doesNotMatch(app.innerHTML, /vl-live-board|いまの参加状況|lobbyStatsRefresh|freeTableStatusButton/);
-  assert.deepEqual(calls, ["shared-cards"]);
+  assert.deepEqual(calls, []);
 });
 
 test("retired modes have no global loads or delayed launch path; old modules remain on disk only", () => {

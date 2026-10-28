@@ -259,54 +259,8 @@ const RANKING_COMMENTS_ENABLED_KEY = "hariai-stadium-ranking-comments-enabled-v1
 const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const RANKING_COMMENT_MAX_LENGTH = 80;
 const RANKING_COMMENT_URL_PATTERN = /(?:https?:\/\/|www\.)/i;
-const TOP_MESSAGE_PRODUCT_ID = "feature_top_message";
-const CREATOR_CARD_PREMIUM_PREVIEW_LOCKED = useOfflineMarketPreview && new URLSearchParams(window.location.search).get("creatorCardPremium") === "locked";
 const useOfflineBattlePreview = ["127.0.0.1", "localhost"].includes(window.location.hostname)
   && new URLSearchParams(window.location.search).has("battlePreview");
-const TOP_MESSAGE_MAX_LENGTH = 30;
-const CREATOR_CARD_URL_PATTERN = /(?:https?:\/\/|www\.|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}(?:[/?#]\S*)?)/i;
-const CREATOR_CARD_EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,24}/i;
-const TOP_MESSAGE_FETCH_LIMIT = 20;
-const TOP_MESSAGE_DISPLAY_LIMIT = 10;
-const TOP_MESSAGE_MUTED_KEY = "hariai-stadium-muted-top-messages-v1";
-const CREATOR_CARD_VERSION = 2;
-const CREATOR_CARD_TYPES = Object.freeze([
-  Object.freeze({
-    id: "illustration",
-    label: "イラスト",
-    icon: "✦",
-    templates: Object.freeze(["Xでイラストを投稿しています", "女の子のイラストを描いています", "新作を見てもらえたら嬉しいです"]),
-  }),
-  Object.freeze({
-    id: "photo",
-    label: "写真",
-    icon: "▣",
-    templates: Object.freeze(["Xで写真を投稿しています", "風景や街の写真を撮っています", "お気に入りの一枚を見にきてね"]),
-  }),
-  Object.freeze({
-    id: "both",
-    label: "イラスト・写真",
-    icon: "◆",
-    templates: Object.freeze(["イラストと写真を投稿しています", "好きな一枚を気ままに投稿中です", "作品を見てもらえたら嬉しいです"]),
-  }),
-  Object.freeze({
-    id: "community",
-    label: "対戦・交流",
-    icon: "♡",
-    templates: Object.freeze(["対戦相手募集中です", "みんなの好きな画像も見たいです", "気軽に声をかけてください"]),
-  }),
-]);
-const CREATOR_CARD_THEMES = Object.freeze([
-  Object.freeze({ id: "basic-rose", label: "ローズ", premium: false }),
-  Object.freeze({ id: "basic-aqua", label: "アクア", premium: false }),
-  Object.freeze({ id: "basic-violet", label: "バイオレット", premium: false }),
-  Object.freeze({ id: "basic-sunset", label: "サンセット", premium: false }),
-  Object.freeze({ id: "premium-hologram", label: "ホログラム", premium: true }),
-  Object.freeze({ id: "premium-stardust", label: "スターダスト", premium: true }),
-  Object.freeze({ id: "premium-royal", label: "ロイヤル箔", premium: true }),
-]);
-const CREATOR_CARD_GROWTH_THRESHOLDS = Object.freeze([0, 1, 10, 30, 100]);
-const CREATOR_CARD_GROWTH_LABELS = Object.freeze(["はじまり", "一枚目", "いつもの一枚", "育った一枚", "自分だけの名刺"]);
 const OSHI_MARKET_COLLECTION_ID = "oshi_market";
 const OSHI_MARKET_COLLECTION_GROUPS = Object.freeze([
   Object.freeze({
@@ -437,7 +391,6 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   trainingSeconds: 86_400,
 });
 const SHOP_PRODUCTS = [
-  { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "推しカード プレミアム仕上げ", description: "無料の推しカードでホログラム、スターダスト、ロイヤル箔を何度でも使える買い切り機能", price: 500 },
   ...AI_TEXT_TRAINING_STYLE_PRODUCTS,
   { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },
   { id: "reaction_best_shot", type: "reaction", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
@@ -592,9 +545,6 @@ let rankingDashboardRequestId = 0;
 let rankingDashboardBusy = false;
 let publicServerTimeOffset = 0;
 let publicServerTimeOffsetReady = false;
-let topMessageRecords = [];
-let topMessagesStatus = "idle";
-let topMessagesRequestId = 0;
 let cachedP2pIceServers = null;
 
 function loadOrCreateSoloSessionId() {
@@ -778,13 +728,6 @@ function createOnlineState() {
     periodRewardReminderShown: false,
     titleCategoryFilter: "all",
     expandedTitleCategories: new Set(["preference"]),
-    topMessage: null,
-    topMessageEntryId: "",
-    topMessageReady: false,
-    topMessageBusy: false,
-    creatorCardDependenciesSettled: false,
-    creatorCardDependenciesBusy: false,
-    creatorCardDraft: null,
     offerRecoveryTimer: null,
     offerRecoveryAttempt: 0,
     ownOfferUnsubscribe: null,
@@ -1842,9 +1785,19 @@ function attachEquippedChatCosmetics(message, economy = state.economy) {
   return message;
 }
 
+function setOnlineChrome(label) {
+  const status = document.querySelector(".status-dot");
+  const privacy = document.querySelector(".privacy-badge");
+  const footerItems = document.querySelectorAll(".site-footer span");
+  if (status) status.innerHTML = `<i></i> ${escapeHtml(label)}`;
+  if (privacy) privacy.textContent = "P2P画像転送";
+  if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 / FIREBASE + WEBRTC";
+  if (footerItems[1]) footerItems[1].textContent = "画像本体は対戦相手へ直接送信し、サーバーへ保存しません";
+}
+
 function openOnlineScreen(screen) {
   if (useOfflineMarketPreview) {
-    if (screen === "shop" || screen === "missions" || screen === "creatorCard") {
+    if (screen === "shop" || screen === "missions") {
       active = true;
       state = createOnlineState();
       lastRenderedScreen = "";
@@ -1855,7 +1808,6 @@ function openOnlineScreen(screen) {
       state.economy = normalizeEconomyRecord({
         points: 2_500,
         inventory: {
-          [TOP_MESSAGE_PRODUCT_ID]: !CREATOR_CARD_PREMIUM_PREVIEW_LOCKED,
           title_oshi_storyteller: true,
           title_tokimeki_curator: true,
           stamp_god_photo: true,
@@ -1870,39 +1822,9 @@ function openOnlineScreen(screen) {
           chatFrame: "chat_frame_heart_ribbon",
         },
       });
-      if (screen === "creatorCard") {
-        const previewUnlocked = Object.fromEntries([
-          "battle_total_30",
-          "battle_solo_20",
-          "market_seller_3",
-        ].map((id, index) => [id, Date.now() - (index * 60_000)]));
-        state.achievementsReady = true;
-        state.achievements = window.HariaiAchievements?.normalizeProfile?.({
-          unlocked: previewUnlocked,
-          showcase: Object.keys(previewUnlocked),
-        }) || state.achievements;
-        state.achievements.stats = {
-          battle: { totalMatches: 30 },
-          market: { salesCount: 3, purchases: 1 },
-        };
-        state.topMessageReady = true;
-        state.creatorCardDependenciesSettled = true;
-        state.topMessage = normalizeOwnTopMessage({
-          schemaVersion: CREATOR_CARD_VERSION,
-          name: "ANJU",
-          titleId: "title_oshi_storyteller",
-          text: "Xでイラストを投稿しています",
-          creatorType: "illustration",
-          cardTheme: "premium-hologram",
-          growthLevel: 4,
-          achievementShowcase: Object.keys(previewUnlocked).join(","),
-          xHandle: "example",
-          updatedAt: Date.now(),
-        });
-      }
       setOnlineChrome(screen === "shop"
         ? "ANJUPAY STORE PREVIEW"
-        : screen === "creatorCard" ? "FAVORITE CARD PREVIEW" : "DAILY MISSION PREVIEW");
+        : "DAILY MISSION PREVIEW");
       render();
       return;
     }
@@ -1981,11 +1903,11 @@ function openOnlineScreen(screen) {
       }
       return;
     }
-    showToast("LOCAL UI PREVIEW中は市場・実績・ミッション・AnjuPayストア・推しカード以外のオンライン機能へ接続しません。");
+    showToast("LOCAL UI PREVIEW中は市場・実績・ミッション・AnjuPayストア以外のオンライン機能へ接続しません。");
     return;
   }
   if (active) {
-    if (["setup", "familiarBook", "missions", "shop", "achievements", "creatorCard"].includes(state.screen)) {
+    if (["setup", "familiarBook", "missions", "shop", "achievements"].includes(state.screen)) {
       state.screen = screen;
       render();
     }
@@ -2283,11 +2205,6 @@ function openPointShop() {
 
 function openAchievements() {
   openOnlineScreen("achievements");
-}
-
-function openCreatorCard() {
-  state.creatorCardDraft = null;
-  openOnlineScreen("creatorCard");
 }
 
 function isActive() {
@@ -2593,26 +2510,7 @@ function getMonthlyBeyondLoadState() {
   };
 }
 
-function readMutedTopMessageIds() {
-  try {
-    const value = JSON.parse(localStorage.getItem(TOP_MESSAGE_MUTED_KEY) || "[]");
-    return new Set(Array.isArray(value) ? value.map(validLeaderboardEntryId).filter(Boolean) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function getCreatorCardType(value) {
-  return CREATOR_CARD_TYPES.find((type) => type.id === String(value || ""))
-    || CREATOR_CARD_TYPES.at(-1);
-}
-
-function getCreatorCardTheme(value, { legacyPremium = false } = {}) {
-  return CREATOR_CARD_THEMES.find((theme) => theme.id === String(value || ""))
-    || CREATOR_CARD_THEMES.find((theme) => theme.id === (legacyPremium ? "premium-hologram" : "basic-rose"));
-}
-
-function normalizeCreatorCardAchievementIds(value) {
+function normalizeMatchAchievementIds(value) {
   return window.HariaiAchievements?.normalizeIds?.(value, 3) || [];
 }
 
@@ -2637,7 +2535,7 @@ function normalizeRoomAchievementShowcases(value, participantUids = []) {
   }
   const players = {};
   [...new Set(participantUids.map((uid) => String(uid || "")).filter(Boolean))].forEach((uid) => {
-    const ids = normalizeCreatorCardAchievementIds(value.players?.[uid]?.ids);
+    const ids = normalizeMatchAchievementIds(value.players?.[uid]?.ids);
     const danwakuDays = Math.floor(Number(value.players?.[uid]?.danwakuDays));
     if (!ids.length && !(danwakuDays >= 1 && danwakuDays <= 1_000_000)) return;
     players[uid] = Object.freeze({
@@ -2654,7 +2552,7 @@ function normalizeRoomAchievementShowcases(value, participantUids = []) {
 
 function onlineMatchAchievementIds(uid, targetState = state) {
   if (targetState?.achievementShowcases?.version !== 1) return [];
-  return normalizeCreatorCardAchievementIds(
+  return normalizeMatchAchievementIds(
     targetState.achievementShowcases.players?.[String(uid || "")]?.ids,
   );
 }
@@ -2683,106 +2581,6 @@ function renderOnlineMatchAchievementShowcase(uid, {
   if (!badges && !danwakuBadge) return "";
   const classes = ["match-achievement-showcase", className].filter(Boolean).join(" ");
   return `<div class="${escapeHtml(classes)}">${label && badges ? `<span class="match-achievement-showcase-label">${escapeHtml(label)}</span>` : ""}${badges}${danwakuBadge}</div>`;
-}
-
-function creatorCardDailyOrder(entryId) {
-  const day = Math.floor((Date.now() + Number(publicServerTimeOffset || 0) + (9 * 60 * 60 * 1000)) / 86_400_000);
-  const text = `${entryId}:${day}`;
-  let hash = 2166136261;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function getTopMessages() {
-  const mutedIds = readMutedTopMessageIds();
-  return topMessageRecords
-    .filter((message) => !mutedIds.has(message.entryId))
-    .slice(0, TOP_MESSAGE_DISPLAY_LIMIT)
-    .map((message) => ({ ...message }));
-}
-
-function getTopMessagesStatus() {
-  return topMessagesStatus;
-}
-
-function getMutedTopMessageCount() {
-  return readMutedTopMessageIds().size;
-}
-
-function notifyTopMessagesUpdated() {
-  window.dispatchEvent(new Event("hariai-top-messages-updated"));
-}
-
-async function refreshTopMessages({ silent = false } = {}) {
-  if (useOfflineMarketPreview) {
-    topMessageRecords = [];
-    topMessagesStatus = "ready";
-    notifyTopMessagesUpdated();
-    return;
-  }
-  const requestId = ++topMessagesRequestId;
-  if (!silent || topMessagesStatus === "idle") {
-    topMessagesStatus = "loading";
-    notifyTopMessagesUpdated();
-  }
-  try {
-    const records = await readPublicDatabasePath("online/topMessages", {
-      orderByChildKey: "updatedAt",
-      limit: TOP_MESSAGE_FETCH_LIMIT,
-    });
-    if (requestId !== topMessagesRequestId) return;
-    topMessageRecords = Object.entries(records || {})
-      .map(([entryId, record]) => {
-        const titlePresentation = getPlayerTitlePresentation(record?.titleId);
-        const schemaVersion = Math.max(0, Math.floor(Number(record?.schemaVersion || 0)));
-        const creatorType = getCreatorCardType(record?.creatorType);
-        const cardTheme = getCreatorCardTheme(record?.cardTheme, { legacyPremium: schemaVersion < CREATOR_CARD_VERSION });
-        const xHandle = normalizeXHandle(record?.xHandle);
-        return {
-          entryId: String(entryId || ""),
-          schemaVersion,
-          name: String(record?.name || "").slice(0, 16),
-          titleId: String(record?.titleId || ""),
-          title: titlePresentation?.product.title || "",
-          titleIcon: titlePresentation?.icon || "",
-          titleClassName: titlePresentation?.className || "",
-          text: String(record?.text || "").slice(0, TOP_MESSAGE_MAX_LENGTH),
-          creatorType: creatorType.id,
-          cardTheme: cardTheme.id,
-          growthLevel: Math.min(5, Math.max(1, Math.floor(Number(record?.growthLevel || 1)))),
-          achievementShowcase: normalizeCreatorCardAchievementIds(record?.achievementShowcase),
-          ...(X_HANDLE_PATTERN.test(xHandle) ? { xHandle } : {}),
-          updatedAt: Number(record?.updatedAt || 0),
-        };
-      })
-      .filter((record) => validLeaderboardEntryId(record.entryId) && record.name && record.text && Number.isFinite(record.updatedAt))
-      .sort((first, second) => creatorCardDailyOrder(first.entryId) - creatorCardDailyOrder(second.entryId)
-        || second.updatedAt - first.updatedAt);
-    topMessagesStatus = "ready";
-  } catch (error) {
-    if (requestId !== topMessagesRequestId) return;
-    console.error(error);
-    topMessagesStatus = topMessageRecords.length ? "ready" : "error";
-  } finally {
-    if (requestId === topMessagesRequestId) notifyTopMessagesUpdated();
-  }
-}
-
-function muteTopMessage(entryId) {
-  const safeEntryId = validLeaderboardEntryId(entryId);
-  if (!safeEntryId) return;
-  const mutedIds = readMutedTopMessageIds();
-  mutedIds.add(safeEntryId);
-  localStorage.setItem(TOP_MESSAGE_MUTED_KEY, JSON.stringify(Array.from(mutedIds)));
-  notifyTopMessagesUpdated();
-}
-
-function clearMutedTopMessages() {
-  localStorage.removeItem(TOP_MESSAGE_MUTED_KEY);
-  notifyTopMessagesUpdated();
 }
 
 async function readPublicDatabasePath(path, {
@@ -2824,10 +2622,6 @@ async function readPublicDatabasePath(path, {
     publicServerTimeOffsetReady = true;
   }
   const value = snapshot.val();
-  if (path === "online/topMessages" && value && auth.currentUser) {
-    const rows = await filterPublicEntries("card", Object.entries(value).map(([entryId, entry]) => ({ ...entry, entryId })));
-    return Object.fromEntries(rows.map(({ entryId, ...entry }) => [entryId, entry]));
-  }
   if (/^online\/(?:leaderboard(?:\/|$)|leaderboardPeriods\/|serverOverallLeaderboard(?:\/|$)|serverRateFloorLeaderboard(?:\/|$)|serverLeaderboardPeriods\/|crownCircuitPeriods\/|rankingSpotlights(?:\/|$)|crownCircuitHallOfFame\/|serverRankingHallOfFame\/)/.test(path) && value && auth.currentUser) {
     return maskPublicRankingTree(value, path.split("/").at(-1));
   }
@@ -4352,8 +4146,6 @@ async function ensureAuthenticated() {
     showToast("総合ランキング情報を読み込めませんでした。対戦機能は利用できます。");
   }
   state.authReady = true;
-  state.creatorCardDependenciesBusy = true;
-  state.creatorCardDependenciesSettled = false;
   refreshSoloFamiliarBook({ renderAfter: true }).catch((error) => console.error(error));
   try {
     await initializeEconomy();
@@ -4363,15 +4155,6 @@ async function ensureAuthenticated() {
     state.economyReady = false;
     showToast("AnjuPay情報を読み込めませんでした。対戦機能は利用できます。");
   }
-  try {
-    await loadOwnTopMessage();
-  } catch (error) {
-    console.error(error);
-    state.topMessageReady = false;
-    showToast("推しカードを読み込めませんでした。時間をおいてもう一度お試しください。");
-  }
-  state.creatorCardDependenciesBusy = false;
-  state.creatorCardDependenciesSettled = true;
   if (state.leaderboardPublic) {
     try {
       await syncLeaderboardEntry();
@@ -4560,152 +4343,6 @@ async function saveAchievementShowcase(idsValue) {
   }
 }
 
-function normalizeOwnTopMessage(value) {
-  if (!value || typeof value !== "object") return null;
-  const text = String(value.text || "").trim().slice(0, TOP_MESSAGE_MAX_LENGTH);
-  if (!text) return null;
-  const schemaVersion = Math.max(0, Math.floor(Number(value.schemaVersion || 0)));
-  return {
-    schemaVersion,
-    name: String(value.name || "").trim().slice(0, 16),
-    titleId: String(value.titleId || ""),
-    text,
-    creatorType: getCreatorCardType(value.creatorType).id,
-    cardTheme: getCreatorCardTheme(value.cardTheme, { legacyPremium: schemaVersion < CREATOR_CARD_VERSION }).id,
-    growthLevel: Math.min(5, Math.max(1, Math.floor(Number(value.growthLevel || 1)))),
-    achievementShowcase: normalizeCreatorCardAchievementIds(value.achievementShowcase),
-    xHandle: normalizeXHandle(value.xHandle),
-    updatedAt: Number(value.updatedAt || 0),
-  };
-}
-
-async function loadOwnTopMessage() {
-  if (!state.uid) {
-    state.topMessage = null;
-    state.topMessageEntryId = "";
-    state.topMessageReady = true;
-    return;
-  }
-  const entrySnapshot = await get(ref(database, `online/topMessageEntriesByUser/${state.uid}`));
-  const entryId = validLeaderboardEntryId(entrySnapshot.val());
-  state.topMessageEntryId = entryId;
-  if (!entryId) {
-    state.topMessage = null;
-    state.topMessageReady = true;
-    return;
-  }
-  const snapshot = await get(ref(database, `online/topMessages/${entryId}`));
-  state.topMessage = snapshot.exists() ? normalizeOwnTopMessage(snapshot.val()) : null;
-  state.topMessageReady = true;
-}
-
-function validateTopMessageText(value) {
-  const text = String(value || "").trim();
-  if (!text || text.length > TOP_MESSAGE_MAX_LENGTH || /[\r\n]/.test(text)) {
-    throw new Error(`紹介文は1行${TOP_MESSAGE_MAX_LENGTH}文字以内で入力してください。`);
-  }
-  if (CREATOR_CARD_URL_PATTERN.test(text) || CREATOR_CARD_EMAIL_PATTERN.test(text)) {
-    throw new Error("紹介文にURL・メールアドレスは入力できません。Xのユーザー名は専用欄へ入力してください。");
-  }
-  return text;
-}
-
-async function saveTopMessage({
-  name: nameValue,
-  text: textValue,
-  creatorType: creatorTypeValue,
-  xHandle: xHandleValue = "",
-  cardTheme: cardThemeValue,
-  achievementIds = [],
-} = {}) {
-  if (useOfflineMarketPreview) {
-    throw new Error("LOCAL UI PREVIEWでは推しカードを公開・更新しません。");
-  }
-  if (state.topMessageBusy) return;
-  const name = String(nameValue || "").trim();
-  if (!name || name.length > 16 || /[\r\n]/.test(name)) throw new Error("表示名は1行16文字以内で入力してください。");
-  const text = validateTopMessageText(textValue);
-  const creatorType = getCreatorCardType(creatorTypeValue);
-  if (creatorType.id !== creatorTypeValue) throw new Error("活動札を選び直してください。");
-  const cardTheme = getCreatorCardTheme(cardThemeValue);
-  if (cardTheme.id !== cardThemeValue) throw new Error("カードテーマを選び直してください。");
-  const premiumOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
-  if (cardTheme.premium && !premiumOwned) throw new Error("プレミアム仕上げを先に解放してください。");
-  const rawXHandle = String(xHandleValue || "").trim().replace(/^@+/, "");
-  const xHandle = normalizeXHandle(rawXHandle);
-  if (rawXHandle && !X_HANDLE_PATTERN.test(xHandle)) {
-    throw new Error("Xのユーザー名は英数字と_の15文字以内で入力してください。");
-  }
-  const normalizedAchievementIds = normalizeCreatorCardAchievementIds(achievementIds);
-  if (!Array.isArray(achievementIds) || normalizedAchievementIds.length !== achievementIds.length) {
-    throw new Error("カードへ飾る実績は解除済みから3件まで選んでください。");
-  }
-  state.topMessageBusy = true;
-  setBusy(true, "推しカードを公開しています…");
-  let saved = false;
-  try {
-    const response = await economyActionCallable({
-      action: "publish_creator_card",
-      name,
-      text,
-      creatorType: creatorType.id,
-      xHandle,
-      cardTheme: cardTheme.id,
-      achievementIds: normalizedAchievementIds,
-    });
-    const result = response.data || {};
-    if (result.saved !== true || !validLeaderboardEntryId(result.entryId)) {
-      throw new Error("推しカードの公開を確認できませんでした。");
-    }
-    state.name = name;
-    localStorage.setItem(PROFILE_NAME_KEY, name);
-    state.topMessageEntryId = result.entryId;
-    state.topMessage = normalizeOwnTopMessage(result.card);
-    state.topMessageReady = true;
-    state.creatorCardDraft = null;
-    await refreshTopMessages({ silent: true });
-    saved = true;
-    showToast("推しカードをトップページに飾りました。");
-  } finally {
-    state.topMessageBusy = false;
-    setBusy(false);
-    if (saved) render();
-  }
-}
-
-async function deleteTopMessage() {
-  if (useOfflineMarketPreview) {
-    throw new Error("LOCAL UI PREVIEWでは公開中の推しカードを外しません。");
-  }
-  if (state.topMessageBusy || !state.topMessage) return;
-  state.topMessageBusy = true;
-  setBusy(true, "推しカードをトップページから外しています…");
-  let deleted = false;
-  try {
-    await economyActionCallable({ action: "delete_creator_card" });
-    state.topMessage = null;
-    state.topMessageReady = true;
-    state.creatorCardDraft = null;
-    await refreshTopMessages({ silent: true });
-    deleted = true;
-    showToast("推しカードをトップページから外しました。");
-  } finally {
-    state.topMessageBusy = false;
-    setBusy(false);
-    if (deleted) render();
-  }
-}
-
-function setOnlineChrome(label) {
-  const status = document.querySelector(".status-dot");
-  const privacy = document.querySelector(".privacy-badge");
-  const footerItems = document.querySelectorAll(".site-footer span");
-  if (status) status.innerHTML = `<i></i> ${escapeHtml(label)}`;
-  if (privacy) privacy.textContent = "P2P画像転送";
-  if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 / FIREBASE + WEBRTC";
-  if (footerItems[1]) footerItems[1].textContent = "画像本体は対戦相手へ直接送信し、サーバーへ保存しません";
-}
-
 function render() {
   if (!active) return;
   syncSoloSafetyContact();
@@ -4720,7 +4357,6 @@ function render() {
     missions: renderDailyMissions,
     shop: renderPointShop,
     achievements: renderAchievements,
-    creatorCard: renderCreatorCardEditor,
     matching: renderMatching,
     connecting: renderConnecting,
     select: renderRoundSelect,
@@ -5364,188 +5000,6 @@ function renderAchievements() {
   </section>`;
 }
 
-function creatorCardActivityCountFromState() {
-  const battleMatches = Math.max(0, Math.floor(Number(state.achievements?.stats?.battle?.totalMatches || 0)));
-  const marketSales = Math.max(0, Math.floor(Number(state.achievements?.stats?.market?.salesCount || 0)));
-  const marketPurchases = Math.max(0, Math.floor(Number(state.achievements?.stats?.market?.purchases || 0)));
-  return battleMatches + marketSales + marketPurchases;
-}
-
-function creatorCardGrowthProgress() {
-  const activity = creatorCardActivityCountFromState();
-  let level = 1;
-  CREATOR_CARD_GROWTH_THRESHOLDS.forEach((threshold, index) => {
-    if (activity >= threshold) level = index + 1;
-  });
-  const currentTarget = CREATOR_CARD_GROWTH_THRESHOLDS[level - 1];
-  const nextTarget = CREATOR_CARD_GROWTH_THRESHOLDS[level] || 0;
-  const progress = nextTarget
-    ? Math.min(100, Math.max(0, ((activity - currentTarget) / (nextTarget - currentTarget)) * 100))
-    : 100;
-  return {
-    activity,
-    level,
-    label: CREATOR_CARD_GROWTH_LABELS[level - 1],
-    nextTarget,
-    remaining: nextTarget ? Math.max(0, nextTarget - activity) : 0,
-    progress,
-  };
-}
-
-function creatorCardUnlockedAchievements() {
-  const unlocked = state.achievements?.unlocked || {};
-  const highestByFamily = new Map();
-  (window.HariaiAchievements?.catalog || []).forEach((achievement) => {
-    if (!unlocked[achievement.id]) return;
-    const current = highestByFamily.get(achievement.family);
-    if (!current || achievement.level > current.level) highestByFamily.set(achievement.family, achievement);
-  });
-  return [...highestByFamily.values()].sort((first, second) => (
-    Number(unlocked[second.id] || 0) - Number(unlocked[first.id] || 0)
-    || second.level - first.level
-    || first.id.localeCompare(second.id)
-  ));
-}
-
-function creatorCardHighestUnlockedAchievementId(id) {
-  const definition = window.HariaiAchievements?.byId?.get?.(id);
-  if (!definition) return "";
-  const unlocked = state.achievements?.unlocked || {};
-  return (window.HariaiAchievements?.catalog || [])
-    .filter((candidate) => candidate.family === definition.family && unlocked[candidate.id])
-    .sort((first, second) => second.level - first.level)[0]?.id || "";
-}
-
-function creatorCardInitialAchievementIds() {
-  const currentIds = state.topMessage
-    ? normalizeCreatorCardAchievementIds(state.topMessage.achievementShowcase)
-    : normalizeCreatorCardAchievementIds(state.achievements?.showcase);
-  return normalizeCreatorCardAchievementIds(
-    currentIds.map(creatorCardHighestUnlockedAchievementId).filter(Boolean),
-  );
-}
-
-function creatorCardPresentation({
-  name = state.topMessage?.name || state.name,
-  text = state.topMessage?.text || "",
-  creatorType = state.topMessage?.creatorType || "illustration",
-  xHandle = state.topMessage?.xHandle || "",
-  cardTheme = state.topMessage?.cardTheme || "basic-rose",
-  achievementShowcase = creatorCardInitialAchievementIds(),
-} = {}) {
-  const titlePresentation = getPlayerTitlePresentation(getTitleProduct()?.id);
-  const growth = creatorCardGrowthProgress();
-  return {
-    schemaVersion: CREATOR_CARD_VERSION,
-    name,
-    text,
-    creatorType,
-    xHandle,
-    cardTheme,
-    growthLevel: Math.max(growth.level, Number(state.topMessage?.growthLevel || 1)),
-    achievementShowcase,
-    title: titlePresentation?.product.title || "",
-    titleIcon: titlePresentation?.icon || "",
-    titleClassName: titlePresentation?.className || "",
-  };
-}
-
-function renderCreatorCardEditor() {
-  if (!state.authReady || !state.creatorCardDependenciesSettled) {
-    return `<section class="screen creator-card-screen">
-      <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1><p>公開カードを準備しています…</p></div><button class="button button-ghost button-small" id="creatorCardHomeButton">タイトルへ</button></div>
-      <div class="economy-unavailable"><strong>カード情報を読み込んでいます</strong><p>匿名アカウントと公開設定を確認しています。</p></div>
-    </section>`;
-  }
-  if (!state.economyReady || !state.achievementsReady || !state.topMessageReady) {
-    return `<section class="screen creator-card-screen">
-      <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1><p>公開権・実績・現在のカードを安全に確認できませんでした。</p></div><button class="button button-ghost button-small" id="creatorCardHomeButton">タイトルへ</button></div>
-      <div class="economy-unavailable"><strong>カード情報を読み込めませんでした</strong><p>既存のプレミアム仕上げや実績を失わないよう、確認できるまで編集を停止しています。</p><button class="button button-primary" id="creatorCardRetry" type="button" ${state.creatorCardDependenciesBusy ? "disabled" : ""}>再読み込み</button></div>
-    </section>`;
-  }
-  const premiumOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
-  const existing = state.topMessage;
-  const growth = creatorCardGrowthProgress();
-  const unlockedAchievements = creatorCardUnlockedAchievements();
-  const draft = state.creatorCardDraft ? normalizeCreatorCardDraft(state.creatorCardDraft) : null;
-  const creatorType = getCreatorCardType(draft?.creatorType || existing?.creatorType || "illustration");
-  const legacyPremium = Number(existing?.schemaVersion || CREATOR_CARD_VERSION) < CREATOR_CARD_VERSION;
-  const requestedTheme = getCreatorCardTheme(draft?.cardTheme || existing?.cardTheme, { legacyPremium });
-  const selectedTheme = requestedTheme.premium && !premiumOwned && !draft
-    ? getCreatorCardTheme("basic-rose")
-    : requestedTheme;
-  const initialName = draft ? draft.name : existing?.name || state.name;
-  const initialText = draft ? draft.text : existing?.text || creatorType.templates[0];
-  const initialXHandle = draft ? draft.xHandleInput : existing?.xHandle || state.xHandle || "";
-  const initialXPublic = draft ? draft.xPublic : Boolean(existing?.xHandle);
-  const initialAchievementIds = draft ? draft.achievementShowcase : creatorCardInitialAchievementIds();
-  const premiumTrial = selectedTheme.premium && !premiumOwned;
-  const premiumBalance = Math.max(0, Math.floor(Number(state.economy.points || 0)));
-  const premiumAffordable = premiumBalance >= 500;
-  const preview = creatorCardPresentation({
-    name: initialName,
-    text: initialText,
-    creatorType: creatorType.id,
-    xHandle: initialXPublic ? initialXHandle : "",
-    cardTheme: selectedTheme.id,
-    achievementShowcase: initialAchievementIds,
-  });
-  const typeOptions = CREATOR_CARD_TYPES.map((type) => `<label class="creator-card-choice"><input type="radio" name="creatorCardType" value="${type.id}" ${creatorType.id === type.id ? "checked" : ""} /><span><i aria-hidden="true">${type.icon}</i><b>${type.label}</b></span></label>`).join("");
-  const templateButtons = CREATOR_CARD_TYPES.flatMap((type) => type.templates.map((template) => `<button type="button" data-creator-card-template="${escapeHtml(template)}" data-creator-card-template-type="${type.id}" ${type.id === creatorType.id ? "" : "hidden"}>${escapeHtml(template)}</button>`)).join("");
-  const renderThemeOption = (theme) => `<label class="creator-card-theme-option creator-card-theme-${theme.id} ${theme.premium ? "is-premium" : ""}"><input type="radio" name="creatorCardTheme" value="${theme.id}" ${selectedTheme.id === theme.id ? "checked" : ""} /><span><i aria-hidden="true"></i><b>${theme.label}</b><small>${theme.premium ? (premiumOwned ? "PREMIUM" : "試着") : "FREE"}</small></span></label>`;
-  const freeThemeOptions = CREATOR_CARD_THEMES.filter((theme) => !theme.premium).map(renderThemeOption).join("");
-  const premiumThemeOptions = CREATOR_CARD_THEMES.filter((theme) => theme.premium).map(renderThemeOption).join("");
-  const achievementOptions = unlockedAchievements.length
-    ? unlockedAchievements.map((achievement) => `<button class="creator-card-achievement-option" type="button" data-creator-card-achievement="${achievement.id}" aria-pressed="${initialAchievementIds.includes(achievement.id)}"><i aria-hidden="true">${escapeHtml(achievement.icon)}</i><span>${escapeHtml(achievement.name)}</span><small>Lv.${achievement.level}</small></button>`).join("")
-    : `<p class="creator-card-achievement-empty">対戦・トレーニング・市場・AnjuPayフリマで実績を解除すると、ここから最大3件を選んで飾れます。</p>`;
-  const shareUrl = premiumTrial ? "#" : shared()?.createXCreatorCardPostUrl?.(preview) || "#";
-  return `<section class="screen creator-card-screen">
-    <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1>
-      <p>遊んだ歩みで育つ、自分だけの作品名刺です。基本カードは無料でトップページへ飾れます。</p></div>
-      <button class="button button-ghost button-small" id="creatorCardHomeButton" ${state.economyBusy ? "disabled" : ""}>タイトルへ</button></div>
-    <div class="creator-card-growth-panel">
-      <div><span>CARD GROWTH</span><strong>STAGE ${growth.level}・${growth.label}</strong><p>勝敗や順位ではなく、検証済みの正式対戦と市場成立で育ちます。</p></div>
-      <div class="creator-card-growth-meter"><span role="progressbar" aria-label="次のカード段階までの進み具合" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(growth.progress)}"><i style="width:${growth.progress.toFixed(1)}%"></i></span><small>${growth.nextTarget ? `次の成長まであと${growth.remaining}回` : "カードは最高段階まで育ちました"}</small></div>
-    </div>
-    <div class="creator-card-editor-layout">
-      <aside class="creator-card-editor-preview"><div><span>LIVE PREVIEW</span><small>公開前に完成形を確認できます</small></div><div id="creatorCardPreview">${shared()?.renderCreatorCard?.(preview, { preview: true }) || ""}</div>
-        <div class="creator-card-share-actions"><button class="button button-ghost button-small" id="creatorCardDownload" type="button" ${premiumTrial ? "disabled" : ""}>カード画像を保存</button><button class="button button-ghost button-small" id="creatorCardNativeShare" type="button" ${premiumTrial ? "disabled" : ""}>画像付きで共有</button>
-          <a class="button button-x-share button-small ${premiumTrial ? "is-disabled" : ""}" id="creatorCardXShare" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener noreferrer" aria-disabled="${premiumTrial}" ${premiumTrial ? 'tabindex="-1"' : ""}><span class="x-share-mark" aria-hidden="true">X</span><span>Xで披露</span></a></div>
-        <small id="creatorCardTrialShareNote" ${premiumTrial ? "" : "hidden"}>プレミアム仕上げの試着中は、解放するまで画像保存・共有・公開はできません。</small>
-        <small>Xの投稿画面には画像を自動添付できません。画像保存後、X側で添付してください。共有対応端末では「画像付きで共有」を利用できます。</small>
-      </aside>
-      <form class="creator-card-editor-form" id="creatorCardForm">
-        <section><div class="creator-card-field-head"><label for="creatorCardName">表示名</label><small>16文字以内</small></div><input id="creatorCardName" type="text" maxlength="16" required value="${escapeHtml(initialName)}" autocomplete="nickname" /></section>
-        <fieldset><legend>活動札</legend><div class="creator-card-choice-grid">${typeOptions}</div></fieldset>
-        <section><div class="creator-card-field-head"><label for="creatorCardText">カードの紹介文</label><span><b id="creatorCardLength">${String(initialText).length}</b> / ${TOP_MESSAGE_MAX_LENGTH}</span></div>
-          <textarea id="creatorCardText" maxlength="${TOP_MESSAGE_MAX_LENGTH}" rows="2" required>${escapeHtml(initialText)}</textarea>
-          <div class="creator-card-templates" aria-label="紹介文テンプレート">${templateButtons}</div><small>URL・メールアドレス・個人情報は入力しないでください。Xは下の専用欄から公開できます。</small></section>
-        <section><div class="creator-card-field-head"><label for="creatorCardXHandle">Xユーザー名</label><small>英数字と_、15文字以内</small></div>
-          <label class="creator-card-x-input" for="creatorCardXHandle"><span>@</span><input id="creatorCardXHandle" type="text" maxlength="15" value="${escapeHtml(initialXHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
-          <label class="creator-card-public-check"><input id="creatorCardXPublic" type="checkbox" ${initialXPublic ? "checked" : ""} /><span>このカードからXを公開する</span></label><small>ランキングや市場の公開設定とは別です。チェックした場合だけカードにXリンクを表示します。</small></section>
-        <fieldset><legend>カードテーマ</legend>
-          <section class="creator-card-theme-group"><div class="creator-card-theme-group-head"><strong>無料4種</strong><small>いつでも選べます</small></div><div class="creator-card-theme-grid">${freeThemeOptions}</div></section>
-          <section class="creator-card-theme-group"><div class="creator-card-theme-group-head"><strong>プレミアム3種</strong><small>${premiumOwned ? "解放済み" : "選ぶとプレビューへ試着"}</small></div><div class="creator-card-theme-grid is-premium">${premiumThemeOptions}</div></section>
-        </fieldset>
-        <div class="creator-card-premium-panel ${premiumOwned ? "is-owned" : ""}" id="creatorCardPremiumPanel" role="region" aria-labelledby="creatorCardPremiumHeading" aria-busy="${state.economyBusy}">
-          <div class="creator-card-premium-panel-head"><span>ONE-TIME FAVORITE CARD FINISH</span><strong id="creatorCardPremiumHeading">${premiumOwned ? "3つのプレミアム仕上げを解放済み" : "3つのプレミアム仕上げを500 Payで解放"}</strong>
-            <p id="creatorCardPremiumTrialLabel" aria-live="polite">${premiumOwned ? "解放済み・追加料金なし" : premiumTrial ? `「${escapeHtml(selectedTheme.label)}」を試着中です` : "プレミアムを選ぶと、自分のカードで仕上がりを試せます"}</p></div>
-          <div class="creator-card-premium-panel-body">
-            <ul><li>ホログラム・スターダスト・ロイヤル箔の3種セット</li><li>一度解放すれば何度でも使える買い切りです</li><li>見た目だけの仕上げで、成長やトップの表示順には影響しません</li></ul>
-            ${premiumOwned ? '<div class="creator-card-premium-owned"><strong>解放済み</strong><span>3つすべてを追加料金なしで使えます。</span></div>' : `<div class="creator-card-premium-purchase"><div class="creator-card-premium-balance"><span>現在 <strong>${formatAnjuPay(premiumBalance)}</strong></span><span>解放後 <strong>${premiumAffordable ? formatAnjuPay(premiumBalance - 500) : "残高不足"}</strong></span></div><button class="button button-primary" id="creatorCardUnlockPremium" type="button" ${!premiumTrial || !premiumAffordable || state.economyBusy || useOfflineMarketPreview ? "disabled" : ""}>${useOfflineMarketPreview ? "LOCAL UI PREVIEWでは購入できません" : !premiumTrial ? "プレミアム仕上げを選んで試着" : premiumAffordable ? "3つの仕上げを500 Payで解放" : `あと${formatAnjuPay(500 - premiumBalance)}`}</button></div>`}
-          </div>
-          <small>解放しただけでは公開中のカードは変わりません。「カードを更新して飾る」で初めて反映します。</small>
-        </div>
-        <fieldset><legend>カードに飾る実績 <small>最大3件</small></legend><div class="creator-card-achievement-grid">${achievementOptions}</div></fieldset>
-        <div class="creator-card-public-note"><strong>公開されるもの</strong><span>表示名・活動札・紹介文・選んだ実績・称号・カード段階・許可したXユーザー名。匿名UID、勝敗、RATE、画像、ルーム履歴は公開しません。</span></div>
-        ${useOfflineMarketPreview ? '<p class="creator-card-preview-notice">LOCAL UI PREVIEWでは見た目と画像保存だけを確認でき、公開・更新・削除・購入は行いません。</p>' : ""}
-        <div class="creator-card-editor-actions"><button class="button button-primary" id="creatorCardSubmit" type="submit" ${state.topMessageBusy || useOfflineMarketPreview || premiumTrial ? "disabled" : ""}>${existing ? "カードを更新して飾る" : "トップページに飾る"}</button>
-          ${existing ? `<button class="button button-ghost" id="deleteTopMessage" type="button" ${state.topMessageBusy || useOfflineMarketPreview ? "disabled" : ""}>トップページから外す</button>` : ""}</div>
-      </form>
-    </div>
-  </section>`;
-}
-
 function renderPointShop() {
   const equippedReactionCount = getEquippedReactionProducts().length;
   const equippedStampCount = getEquippedStampProducts().length;
@@ -5591,11 +5045,9 @@ function renderPointShop() {
               : ranchSealSvg({ label: "受領", name: "管理人", at: Date.now(), size: 84, shape: product.type === "ranchSealShape" ? product.deco : "date", ink: product.type === "ranchSealInk" ? product.deco : "shu", rough: false })}</div>`
           : product.type === "aiTextTrainingStyle"
             ? `<div class="shop-ai-training-style-preview" data-att-panel-theme="${escapeHtml(product.id)}" data-att-message-decoration="${escapeHtml(product.id)}"><div class="shop-ai-training-style-window"><span>ROUND 1</span><strong>20</strong><div class="shop-ai-training-style-message is-doodle is-collage" data-att-doodle-layout="diagonal-banner" data-att-doodle-density="medium" data-att-doodle-part-count="2" role="img" aria-label="今日の気分で、一緒に最後までいこう"><span class="att-doodle-copy is-part-1" data-text="今日の気分で、" aria-hidden="true">今日の気分で、</span><span class="att-doodle-copy is-part-2" data-text="一緒に最後までいこう" aria-hidden="true">一緒に最後までいこう</span><i class="att-doodle-ornament is-heart" aria-hidden="true">♡</i><i class="att-doodle-ornament is-spark-a" aria-hidden="true">✦</i><i class="att-doodle-ornament is-ribbon" aria-hidden="true">୨୧</i><i class="att-doodle-meta" aria-hidden="true">R1 · 80 BPM</i></div></div><small>窓とデコ台詞を別々に組み合わせ可能 · 全画面コラージュ</small></div>`
-          : `<div class="shop-message-preview"><span>✦ FAVORITE CARD FINISH</span><strong>推しカードを特別な一枚へ</strong></div>`;
+          : "";
     let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(product.price)}で購入` : `あと${formatAnjuPay(product.price - state.economy.points)}`}</button>`;
-    if (owned && product.type === "feature") {
-      action = `<button class="button button-wide button-cyan" data-open-creator-card ${state.topMessageBusy ? "disabled" : ""}>プレミアム仕上げを選ぶ</button>`;
-    } else if (owned && product.type === "aiTextTrainingStyle") {
+    if (owned && product.type === "aiTextTrainingStyle") {
       action = '<button class="button button-wide button-cyan" type="button" disabled>購入済み・文字コラ準備で選択</button>';
     } else if (owned && RANCH_DECORATION_TYPES.has(product.type)) {
       action = '<button class="button button-wide button-cyan" type="button" disabled>購入済み・牧場のカード編集で選ぶ</button>';
@@ -5612,7 +5064,7 @@ function renderPointShop() {
               : product.type === "ranchSealShape" ? "RANCH SEAL"
                 : product.type === "ranchSealInk" ? "RANCH SEAL INK"
                   : product.type === "ranchAvatar" ? "RANCH PREMIUM ICON"
-                  : "FAVORITE CARD PREMIUM";
+                  : "CUSTOMIZE";
     return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
       <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : productTypeLabel}</span><strong>${formatAnjuPay(product.price)}</strong></div>
       <h2>${escapeHtml(product.name)}</h2>${preview}
@@ -5683,8 +5135,6 @@ function renderPointShop() {
         <h3 class="shop-ranch-sub">カードの枠</h3><div class="shop-grid">${ranchShelf("ranchFrame")}</div>
         <h3 class="shop-ranch-sub">受取印の形</h3><div class="shop-grid">${ranchShelf("ranchSealShape")}</div>
         <h3 class="shop-ranch-sub">朱肉の色</h3><div class="shop-grid">${ranchShelf("ranchSealInk")}</div></section>
-      <section class="shop-category"><div class="shop-category-head"><div><span>FAVORITE CARD</span><h2>推しカードの仕上げ</h2></div><p>推しカードに関する選択と解放は、自分のカードを見ながら行える編集ルームへまとめました。</p></div>
-        <div class="shop-free-card-callout"><div><strong>推しカード編集ルームへ移動しました</strong><span>無料テーマもプレミアム仕上げも、自分のカードで試してから選べます。プレミアム3種の500 Pay買い切り解放も編集ルーム内で行います。</span></div><button class="button button-cyan" type="button" data-open-creator-card>推しカード編集へ</button></div></section>
       <section class="shop-category shop-ai-training-category"><div class="shop-category-head"><div><span>AI TEXT TRAINING / ${AI_TEXT_TRAINING_STYLE_PRODUCTS.length} SETS</span><h2>文字コラトレーニング演出セット</h2></div><p>買い切りで、画像ウィンドウとセリフ装飾を1種ずつ解放します。購入済みセット同士は文字コラ準備画面で自由に組み合わせられ、標準を含め最大25通り。BPM・運動結果・安全操作には影響しません。</p></div><div class="shop-grid">${aiTextTrainingStyleProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / ${CHAT_BACKGROUND_PRODUCTS.length} COLORS</span><h2>チャット背景</h2></div><p>対戦チャットの吹き出し背景を1個装備できます。文字コラ専用演出とは別の商品です。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / ${CHAT_STANDARD_FRAME_PRODUCTS.length} STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
@@ -5694,7 +5144,7 @@ function renderPointShop() {
       <section class="shop-category shop-title-category" id="shopTitleCategory"><div class="shop-category-head"><div><span>PLAYER TITLE / ${standardTitleProducts.length} STANDARD TITLES</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備できます。推し値市場向け7種は上の「推し活・ときめきコレクション」にあります。</p></div><div class="shop-title-filters" role="group" aria-label="称号カテゴリ">${titleCategoryFilters}</div><div class="shop-title-groups">${titleGroups}</div></section>` : renderEconomyUnavailable()}
     <div class="economy-actions"><button class="button button-primary" id="shopMissionsButton">ミッションを見る</button>
       <button class="button button-ghost" id="shopBattleButton">オンライン対戦へ</button></div>
-    <p class="economy-note">${useOfflineMarketPreview ? "LOCAL UI PREVIEWでは購入・装備を変更しません。表示とレイアウトだけを安全に確認できます。" : "購入後の払い戻しはありません。推しカードは本人が公開を選んだ情報だけを表示します。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。"}</p>
+    <p class="economy-note">${useOfflineMarketPreview ? "LOCAL UI PREVIEWでは購入・装備を変更しません。表示とレイアウトだけを安全に確認できます。" : "購入後の払い戻しはありません。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。"}</p>
   </section>`;
 }
 
@@ -7035,7 +6485,6 @@ function bindScreenEvents() {
   if (state.screen === "familiarBook") bindSoloFamiliarBookEvents();
   if (state.screen === "missions" || state.screen === "shop") bindEconomyEvents();
   if (state.screen === "achievements") bindAchievementEvents();
-  if (state.screen === "creatorCard") bindCreatorCardEvents();
   if (state.screen === "matching") {
     document.querySelector("#retrySoloHiddenWaitStop")?.addEventListener("click", () => state.soloHiddenWaitGuard?.retry());
     document.querySelector("#expandMatchingScope")?.addEventListener("click", expandMatchmakingScope);
@@ -7334,276 +6783,6 @@ function applyTitleCategoryFilter(categoryId) {
   });
 }
 
-function normalizeCreatorCardDraft(value) {
-  const source = value && typeof value === "object" ? value : {};
-  return {
-    name: String(source.name ?? "").slice(0, 16),
-    text: String(source.text ?? "").slice(0, TOP_MESSAGE_MAX_LENGTH),
-    creatorType: getCreatorCardType(source.creatorType || "illustration").id,
-    xHandleInput: String(source.xHandleInput ?? "").trim().replace(/^@+/, "").slice(0, 15),
-    xPublic: source.xPublic === true,
-    cardTheme: getCreatorCardTheme(source.cardTheme || "basic-rose").id,
-    achievementShowcase: normalizeCreatorCardAchievementIds(source.achievementShowcase),
-  };
-}
-
-function captureCreatorCardDraft() {
-  const form = document.querySelector("#creatorCardForm");
-  if (!form) return state.creatorCardDraft;
-  const achievementShowcase = [...document.querySelectorAll("[data-creator-card-achievement][aria-pressed='true']")]
-    .map((button) => button.dataset.creatorCardAchievement)
-    .filter(Boolean)
-    .slice(0, 3);
-  const draft = normalizeCreatorCardDraft({
-    name: document.querySelector("#creatorCardName")?.value ?? "",
-    text: document.querySelector("#creatorCardText")?.value ?? "",
-    creatorType: document.querySelector('input[name="creatorCardType"]:checked')?.value,
-    xHandleInput: document.querySelector("#creatorCardXHandle")?.value ?? "",
-    xPublic: document.querySelector("#creatorCardXPublic")?.checked === true,
-    cardTheme: document.querySelector('input[name="creatorCardTheme"]:checked')?.value,
-    achievementShowcase,
-  });
-  state.creatorCardDraft = draft;
-  return draft;
-}
-
-function creatorCardUsesLockedPremium(value) {
-  return getCreatorCardTheme(value?.cardTheme).premium && state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] !== true;
-}
-
-function creatorCardFormValue() {
-  const draft = captureCreatorCardDraft() || normalizeCreatorCardDraft();
-  return creatorCardPresentation({
-    name: draft.name,
-    text: draft.text,
-    creatorType: draft.creatorType,
-    xHandle: draft.xPublic ? draft.xHandleInput : "",
-    cardTheme: draft.cardTheme,
-    achievementShowcase: draft.achievementShowcase,
-  });
-}
-
-function updateCreatorCardPreview() {
-  const value = creatorCardFormValue();
-  const selectedTheme = getCreatorCardTheme(value.cardTheme);
-  const premiumOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
-  const premiumTrial = selectedTheme.premium && !premiumOwned;
-  const preview = document.querySelector("#creatorCardPreview");
-  if (preview) preview.innerHTML = shared()?.renderCreatorCard?.(value, { preview: true }) || "";
-  const counter = document.querySelector("#creatorCardLength");
-  if (counter) counter.textContent = String(document.querySelector("#creatorCardText")?.value.length || 0);
-  document.querySelectorAll("[data-creator-card-template]").forEach((button) => {
-    button.hidden = button.dataset.creatorCardTemplateType !== value.creatorType;
-  });
-  const premiumPanel = document.querySelector("#creatorCardPremiumPanel");
-  if (premiumPanel) {
-    premiumPanel.classList.toggle("is-owned", premiumOwned);
-    premiumPanel.setAttribute("aria-busy", String(state.economyBusy));
-  }
-  const trialLabel = document.querySelector("#creatorCardPremiumTrialLabel");
-  if (trialLabel) {
-    trialLabel.textContent = premiumOwned ? "解放済み・追加料金なし" : premiumTrial ? `「${selectedTheme.label}」を試着中です` : "プレミアムを選ぶと、自分のカードで仕上がりを試せます";
-  }
-  const unlockButton = document.querySelector("#creatorCardUnlockPremium");
-  if (unlockButton) {
-    const balance = Math.max(0, Math.floor(Number(state.economy.points || 0)));
-    const affordable = balance >= 500;
-    unlockButton.disabled = !premiumTrial || !affordable || state.economyBusy || useOfflineMarketPreview;
-    unlockButton.textContent = useOfflineMarketPreview
-      ? "LOCAL UI PREVIEWでは購入できません"
-      : !premiumTrial
-        ? "プレミアム仕上げを選んで試着"
-        : !affordable
-          ? `あと${formatAnjuPay(500 - balance)}`
-          : "3つの仕上げを500 Payで解放";
-  }
-  const submitButton = document.querySelector("#creatorCardSubmit");
-  if (submitButton) submitButton.disabled = state.topMessageBusy || useOfflineMarketPreview || premiumTrial;
-  const downloadButton = document.querySelector("#creatorCardDownload");
-  if (downloadButton) downloadButton.disabled = premiumTrial;
-  const nativeShareButton = document.querySelector("#creatorCardNativeShare");
-  if (nativeShareButton) nativeShareButton.disabled = premiumTrial;
-  const xShare = document.querySelector("#creatorCardXShare");
-  if (xShare) {
-    xShare.classList.toggle("is-disabled", premiumTrial);
-    xShare.setAttribute("aria-disabled", String(premiumTrial));
-    if (premiumTrial) {
-      xShare.href = "#";
-      xShare.setAttribute("tabindex", "-1");
-    } else {
-      xShare.href = shared()?.createXCreatorCardPostUrl?.(value) || "#";
-      xShare.removeAttribute("tabindex");
-    }
-  }
-  const trialShareNote = document.querySelector("#creatorCardTrialShareNote");
-  if (trialShareNote) trialShareNote.hidden = !premiumTrial;
-  return value;
-}
-
-function creatorCardDownloadName(value) {
-  const safeName = String(value?.name || "player").replace(/[\\/:*?"<>|]/g, "_").slice(0, 24) || "player";
-  return `hariai-favorite-card-${safeName}.png`;
-}
-
-async function downloadCreatorCard({ shareFile = false } = {}) {
-  const value = creatorCardFormValue();
-  if (creatorCardUsesLockedPremium(value)) throw new Error("プレミアム仕上げを解放すると画像保存・共有できます。");
-  setBusy(true, "推しカード画像をつくっています…");
-  try {
-    const blob = await shared()?.createCreatorCardPngBlob?.(value);
-    if (!(blob instanceof Blob)) throw new Error("カード画像を作成できませんでした。");
-    const filename = creatorCardDownloadName(value);
-    const file = new File([blob], filename, { type: "image/png" });
-    if (shareFile && navigator.share && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({
-        title: "貼り合いスタジアム｜推しカード",
-        text: shared()?.creatorCardShareText?.(value) || "",
-        files: [file],
-      });
-      return;
-    }
-    shared()?.downloadBlob?.(blob, filename);
-    showToast(shareFile
-      ? "共有対応端末ではないため画像を保存しました。X側で添付できます。"
-      : "推しカード画像を保存しました。Xの投稿へ添付できます。");
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function retryCreatorCardDependencies() {
-  if (!state.uid || state.creatorCardDependenciesBusy) return;
-  state.creatorCardDependenciesBusy = true;
-  state.creatorCardDependenciesSettled = false;
-  render();
-  const errors = [];
-  try {
-    await initializeEconomy();
-  } catch (error) {
-    console.error(error);
-    state.economyReady = false;
-    errors.push(error);
-  }
-  try {
-    await loadOwnTopMessage();
-  } catch (error) {
-    console.error(error);
-    state.topMessageReady = false;
-    errors.push(error);
-  }
-  state.creatorCardDependenciesBusy = false;
-  state.creatorCardDependenciesSettled = true;
-  render();
-  if (errors.length) showToast("推しカード情報を再読み込みできませんでした。時間をおいてお試しください。");
-  else showToast("推しカード情報を再読み込みしました。");
-}
-
-function bindCreatorCardEvents() {
-  document.querySelector("#creatorCardHomeButton")?.addEventListener("click", leaveToLanding);
-  document.querySelector("#creatorCardRetry")?.addEventListener("click", () => {
-    retryCreatorCardDependencies().catch((error) => {
-      console.error(error);
-      showToast("推しカード情報を再読み込みできませんでした。");
-    });
-  });
-  const form = document.querySelector("#creatorCardForm");
-  if (!form) return;
-  document.querySelector("#creatorCardUnlockPremium")?.addEventListener("click", async () => {
-    const value = creatorCardFormValue();
-    const selectedTheme = getCreatorCardTheme(value.cardTheme);
-    if (!selectedTheme.premium) {
-      showToast("プレミアム仕上げを選び、自分のカードで試着してから解放できます。");
-      return;
-    }
-    if (state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true) {
-      showToast("プレミアム仕上げは解放済みです。追加料金はかかりません。");
-      updateCreatorCardPreview();
-      return;
-    }
-    if (useOfflineMarketPreview) {
-      showToast("LOCAL UI PREVIEWではAnjuPayを使用しません。");
-      return;
-    }
-    if (state.economyBusy) return;
-    const balance = Math.max(0, Math.floor(Number(state.economy.points || 0)));
-    if (balance < 500) {
-      showToast(`プレミアム仕上げの解放まで、あと${formatAnjuPay(500 - balance)}です。`);
-      return;
-    }
-    const confirmed = window.confirm(
-      `プレミアム仕上げ3種を500 Payで解放しますか？\n\n残高 ${formatAnjuPay(balance)} → ${formatAnjuPay(balance - 500)}\n買い切りで、ホログラム・スターダスト・ロイヤル箔を何度でも使えます。\n購入だけでは公開中のカードは変わりません。`,
-    );
-    if (!confirmed) return;
-    await purchaseShopProduct(TOP_MESSAGE_PRODUCT_ID);
-  });
-  document.querySelector("#creatorCardXShare")?.addEventListener("click", (event) => {
-    if (!creatorCardUsesLockedPremium(creatorCardFormValue())) return;
-    event.preventDefault();
-    showToast("プレミアム仕上げを解放するとXで披露できます。");
-  });
-  form.querySelectorAll("input, textarea").forEach((control) => {
-    control.addEventListener("input", updateCreatorCardPreview);
-    control.addEventListener("change", updateCreatorCardPreview);
-  });
-  document.querySelectorAll("[data-creator-card-template]").forEach((button) => button.addEventListener("click", () => {
-    const typeInput = document.querySelector(`input[name="creatorCardType"][value="${button.dataset.creatorCardTemplateType}"]`);
-    if (typeInput) typeInput.checked = true;
-    const text = document.querySelector("#creatorCardText");
-    if (text) {
-      text.value = button.dataset.creatorCardTemplate || "";
-      text.focus();
-    }
-    updateCreatorCardPreview();
-  }));
-  document.querySelectorAll("[data-creator-card-achievement]").forEach((button) => button.addEventListener("click", () => {
-    const selected = button.getAttribute("aria-pressed") === "true";
-    const selectedCount = document.querySelectorAll("[data-creator-card-achievement][aria-pressed='true']").length;
-    if (!selected && selectedCount >= 3) {
-      showToast("カードへ飾れる実績は3件までです。");
-      return;
-    }
-    button.setAttribute("aria-pressed", String(!selected));
-    updateCreatorCardPreview();
-  }));
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const value = creatorCardFormValue();
-    if (creatorCardUsesLockedPremium(value)) {
-      showToast("プレミアム仕上げを解放してからカードを公開してください。");
-      return;
-    }
-    try {
-      await saveTopMessage({
-        name: value.name,
-        text: value.text,
-        creatorType: value.creatorType,
-        xHandle: value.xHandle,
-        cardTheme: value.cardTheme,
-        achievementIds: value.achievementShowcase,
-      });
-    } catch (error) {
-      showToast(error?.message || "推しカードを公開できませんでした。");
-    }
-  });
-  document.querySelector("#deleteTopMessage")?.addEventListener("click", async () => {
-    if (!window.confirm("トップページから推しカードを外しますか？育成や仕上げの権利は失われません。")) return;
-    try {
-      await deleteTopMessage();
-    } catch (error) {
-      showToast(error?.message || "推しカードを外せませんでした。");
-    }
-  });
-  document.querySelector("#creatorCardDownload")?.addEventListener("click", () => {
-    downloadCreatorCard().catch((error) => showToast(error?.message || "カード画像を保存できませんでした。"));
-  });
-  document.querySelector("#creatorCardNativeShare")?.addEventListener("click", () => {
-    downloadCreatorCard({ shareFile: true }).catch((error) => {
-      if (error?.name !== "AbortError") showToast(error?.message || "カード画像を共有できませんでした。");
-    });
-  });
-  updateCreatorCardPreview();
-}
-
 function bindEconomyEvents() {
   document.querySelector("#economyHomeButton")?.addEventListener("click", leaveToLanding);
   document.querySelector("#claimDailyPlayRewardsButton")?.addEventListener("click", claimDailyPlayRewards);
@@ -7611,9 +6790,6 @@ function bindEconomyEvents() {
   document.querySelector("#shopMissionsButton")?.addEventListener("click", () => { state.screen = "missions"; render(); });
   document.querySelector("#missionsBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
   document.querySelector("#shopBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
-  document.querySelectorAll("[data-open-creator-card]").forEach((button) => button.addEventListener("click", () => {
-    openCreatorCard();
-  }));
 }
 
 function bindAchievementEvents() {
@@ -8531,7 +7707,6 @@ async function purchaseShopProduct(productId) {
     expectedState.economyBusy = false;
     render();
     if (result.outcome === "purchased" && isEquipped && !wasEquipped) showToast(`「${product.reaction || product.title || product.name}」を購入し、装備しました。`);
-    else if (result.outcome === "purchased" && product.type === "feature") showToast("推しカードのプレミアム仕上げ3種を解放しました。カードを更新して飾るまでは、公開中のカードはそのままです。");
     else if (result.outcome === "purchased" && product.type === "aiTextTrainingStyle") showToast(`「${product.name}」を解放しました。文字コラトレーニングの準備画面で、窓とセリフを別々に試着・装着できます。`);
     else if (result.outcome === "purchased" && RANCH_DECORATION_TYPES.has(product.type)) showToast(`「${product.name}」を手に入れました。お貢ぎ牧場の管理人カードの編集で選べます。`);
     else if (result.outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
@@ -13877,16 +13052,6 @@ async function resetOnlineState(screen) {
     periodRewardReminderShown: expectedState.periodRewardReminderShown,
     titleCategoryFilter: expectedState.titleCategoryFilter,
     expandedTitleCategories: expectedState.expandedTitleCategories,
-    topMessage: expectedState.topMessage,
-    topMessageEntryId: expectedState.topMessageEntryId,
-    topMessageReady: expectedState.topMessageReady,
-    creatorCardDependenciesSettled: expectedState.creatorCardDependenciesSettled
-      || (
-        expectedState.authReady
-        && expectedState.economyReady
-        && expectedState.achievementsReady
-        && expectedState.topMessageReady
-      ),
     serverTimeOffset: expectedState.serverTimeOffset,
   };
   await cleanupOnlineResources(false, expectedState);
@@ -14176,17 +13341,12 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("hariai-player-safety-updated", () => {
-  topMessageRecords = [];
   leaderboardEntries = [];
-  refreshTopMessages({ silent: true }).catch(() => {});
   if (document.querySelector(".ranking-screen")) refreshLeaderboard(leaderboardPeriod, { force: true, key: leaderboardPeriodKey }).catch(() => {});
 });
 window.addEventListener("hariai-player-safety-auth-changed", () => {
-  topMessageRecords = [];
   leaderboardEntries = [];
-  topMessagesRequestId += 1;
   leaderboardRequestId += 1;
-  refreshTopMessages({ silent: true }).catch(() => {});
 });
 
 window.addEventListener("hariai-ranking-dashboard-updated", () => {
@@ -14265,7 +13425,6 @@ window.HariaiOnline = {
   openDailyMissions,
   openPointShop,
   openAchievements,
-  openCreatorCard,
   getShopProductLabel,
   isActive,
   requestHome,
@@ -14305,12 +13464,6 @@ window.HariaiOnline = {
   refreshRankingDashboard,
   startCrownRun,
   setCrownCustomization,
-  getTopMessages,
-  getTopMessagesStatus,
-  getMutedTopMessageCount,
-  refreshTopMessages,
-  muteTopMessage,
-  clearMutedTopMessages,
   getLeaderboardComments,
   getLeaderboardCommentIdentity,
   saveLeaderboardComment,

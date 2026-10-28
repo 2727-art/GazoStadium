@@ -93,7 +93,7 @@ function loadShowcaseActions({ failSave = false, failRefresh = false } = {}) {
     ${sourceBetween(online, "const CROWN_THEMES", "const SERVER_RANKING_AWARD_MINIMUM_MATCHES")}
     ${sourceBetween(online, "function normalizeCrownTheme", "function normalizeCrownSignatureIds")}
     ${sourceBetween(online, "async function setCrownCustomization", "async function refreshLeaderboard")}
-    ${sourceBetween(online, "async function saveAchievementShowcase", "function normalizeOwnTopMessage")}
+    ${sourceBetween(online, "async function saveAchievementShowcase", "function render()")}
     return { setCrownCustomization, saveAchievementShowcase, state, isBusy: () => rankingDashboardBusy };
   `)(harness);
   return { ...actions, calls, toasts };

@@ -1806,17 +1806,13 @@ a:focus-visible,
 .vl-row-audio { --row-icon: var(--vs-icon-mic); }
 
 /* 既存の区画も、飾りのない夜の面へそろえる */
-.vl-landing .landing-community,
+
 .vl-landing .landing-flea,
 .vl-more {
   max-width: none;
   margin: 0;
 }
 
-.vl-landing .landing-community {
-  border-color: var(--ha-line);
-  background: var(--ha-surface);
-}
 
 .vl-landing .landing-flea {
   border-color: rgba(111, 227, 207, 0.22);
@@ -1886,7 +1882,7 @@ a:focus-visible,
 
 /*
   PC：入口（見出しと例・通常1on1・いま入れる卓・ほかの遊び方・メニュー）は中央の880px列にそろえる。
-  推しカードは左、記録と道具・安心案内は右に分け、それぞれ上から詰めて積む。
+  記録と道具・安心案内を中央に並べ、カード撤去後の余白を残さない。
 */
 @media (min-width: 900px) {
   .hero.vl-landing {
@@ -1947,19 +1943,13 @@ a:focus-visible,
     margin-top: 16px;
   }
 
-  .hero.vl-landing > .landing-community {
-    float: left;
-    clear: left;
-    width: calc(50% - 12px);
-    margin: 24px 0 0;
-  }
 
   .hero.vl-landing > .vl-more,
   .hero.vl-landing > .vl-safe {
-    float: right;
-    clear: right;
-    width: calc(50% - 12px);
-    margin: 24px 0 0;
+    float: none;
+    clear: both;
+    width: min(880px, 100%);
+    margin: 24px auto 0;
   }
 
 }
@@ -1995,15 +1985,7 @@ a:focus-visible,
   }
 }
 
-/* 推しカードの見出しは折り返さず、操作ボタンが入らない時は次の行へ送る */
-.vl-landing .community-message-head {
-  flex-wrap: wrap;
-  row-gap: 8px;
-}
 
-.vl-landing .community-message-head strong {
-  white-space: nowrap;
-}
 
 /* スマホ：タブは画面下に固定。 */
 @media (max-width: 760px) {
@@ -2137,4 +2119,13 @@ a:focus-visible,
   .vl-live i {
     animation: none;
   }
+}
+
+.vl-ranking-invite {
+  width: min(880px, 100%);
+  margin: 24px auto 12px;
+  color: var(--vs-mist);
+  font-size: 14px;
+  line-height: 1.8;
+  text-align: center;
 }

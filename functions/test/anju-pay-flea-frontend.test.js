@@ -17,15 +17,15 @@ function between(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test("retired flea entry and global assets are removed while the shared creator-card showcase remains", () => {
+test("retired flea entry and global assets are removed along with the retired creator-card showcase", () => {
   const app = read("app.js");
   const html = read("index.html");
   const flea = read("flea-market.js");
   assert.doesNotMatch(html, /(?:src|href)="flea-market\.(?:js|css)\?v=/);
   assert.doesNotMatch(app, /renderLandingFleaPanel|fleaMarket(?:Sellers|Browse|Sell)Button|startFleaMarket|pendingFleaMarketDestination|hariai-flea-market-ready/);
-  assert.match(app, /renderLandingTopMessagePanel\(\)/);
-  assert.match(app, /id="topMessagePanel"/);
-  assert.match(app, /openOnlineFeature\("openCreatorCard"\)/);
+  assert.doesNotMatch(app, /renderLandingTopMessagePanel\(\)/);
+  assert.doesNotMatch(app, /id="topMessagePanel"/);
+  assert.doesNotMatch(app, /openOnlineFeature\("openCreatorCard"\)/);
   // Historical frontend source remains available for compatibility tests; it is not globally loaded.
   assert.match(flea, /httpsCallable\(functions, "anjuPayFleaAction"\)/);
   assert.doesNotMatch(flea, /valueMarketAction|valueMarketQueue|valueMarketShop/);
