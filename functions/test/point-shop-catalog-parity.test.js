@@ -72,17 +72,6 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
     "ai-text-training-cosmetics.js",
     "tribute-deco.mjs",
   ]);
-  const online = read("online.js");
-  const topMessageId = online.match(/const TOP_MESSAGE_PRODUCT_ID = "([^"]+)"/)?.[1];
-  const topMessageProduct = online.match(
-    /\{\s*id:\s*TOP_MESSAGE_PRODUCT_ID,\s*type:\s*"([^"]+)"[^}]*\bprice:\s*(\d+)/,
-  );
-  assert.ok(topMessageId && topMessageProduct);
-  browserProducts.push({
-    id: topMessageId,
-    type: topMessageProduct[1],
-    price: Number(topMessageProduct[2]),
-  });
   const browserIds = browserProducts.map(({ id }) => id);
   assert.equal(new Set(browserIds).size, browserIds.length, "browser catalog has duplicate IDs");
 
@@ -90,17 +79,18 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
     .map(({ id, type, price }) => [id, type, price])
     .sort(([firstId], [secondId]) => firstId.localeCompare(secondId));
   const serverRows = Object.values(serverCatalog)
+    .filter(({ id }) => id !== "feature_top_message")
     .map(({ id, type, price }) => [id, type, price])
     .sort(([firstId], [secondId]) => firstId.localeCompare(secondId));
   assert.deepEqual(browserRows, serverRows);
-  assert.equal(browserRows.length, 151);
+  assert.equal(browserRows.length, 150);
 
   const rules = JSON.parse(read("database.rules.json")).rules;
   const economyRules = rules.online.economy["$uid"];
   const inventoryIds = idsAllowedByValidation(
     economyRules.inventory["$productId"][".validate"],
   );
-  assert.deepEqual(inventoryIds, browserIds.sort());
+  assert.deepEqual(inventoryIds, [...browserIds, "feature_top_message"].sort());
 
   const titleIds = browserProducts
     .filter(({ type }) => type === "title")

@@ -20,7 +20,7 @@ const projectId = process.env.CREATOR_CARD_DATABASE_TEST_PROJECT_ID || "demo-cre
 const runsAgainstSafeEmulator = /^demo-[a-z0-9-]+$/.test(projectId)
   && /^(?:127\.0\.0\.1|localhost):\d+$/.test(emulatorHost);
 
-test("creator-card RTDB rules allow public reads but only Admin may mutate cards and indexes", {
+test("retired creator-card rules reject public and owner reads and writes", {
   skip: runsAgainstSafeEmulator
     ? false
     : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* CREATOR_CARD_DATABASE_TEST_PROJECT_ID",
@@ -55,14 +55,11 @@ test("creator-card RTDB rules allow public reads but only Admin may mutate cards
   });
 
   const publicDatabase = environment.unauthenticatedContext().database();
-  const publicSnapshot = await assertSucceeds(
-    get(ref(publicDatabase, `online/topMessages/${entryId}`)),
-  );
-  assert.equal(publicSnapshot.child("name").val(), "ANJU");
+  await assertFails(get(ref(publicDatabase, `online/topMessages/${entryId}`)));
 
   const ownerDatabase = environment.authenticatedContext(ownerUid).database();
-  await assertSucceeds(get(ref(ownerDatabase, `online/topMessageOwners/${entryId}`)));
-  await assertSucceeds(get(ref(ownerDatabase, `online/topMessageEntriesByUser/${ownerUid}`)));
+  await assertFails(get(ref(ownerDatabase, `online/topMessageOwners/${entryId}`)));
+  await assertFails(get(ref(ownerDatabase, `online/topMessageEntriesByUser/${ownerUid}`)));
   await assertFails(set(ref(ownerDatabase, `online/topMessages/${entryId}/growthLevel`), 5));
   await assertFails(remove(ref(ownerDatabase, `online/topMessages/${entryId}`)));
   await assertFails(set(ref(ownerDatabase, `online/topMessageOwners/${entryId}`), ownerUid));

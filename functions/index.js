@@ -96,18 +96,8 @@ const {
   normalizeRetiredTrainingHistory,
   retiredTrainingHistoryHasActivity,
 } = require("./retired-training-history");
-const {
-  CREATOR_CARD_PREMIUM_PRODUCT_ID,
-  CREATOR_CARD_TEXT_MAX_LENGTH,
-  CREATOR_CARD_TYPES,
-  CREATOR_CARD_VERSION,
-  creatorCardActivityCount,
-  creatorCardGrowthLevel,
-  isCreatorCardTheme,
-  isPremiumCreatorCardTheme,
-  isValidCreatorCardText,
-  normalizeCreatorCardXHandle,
-} = require("./creator-card");
+const { CREATOR_CARD_PREMIUM_PRODUCT_ID } = require("./creator-card");
+const { stageCreatorCardRefund } = require("./creator-card-refund");
 const {
   PATRON_TIERS,
   normalizePatronage,
@@ -465,7 +455,6 @@ const ANJU_PAY_LEDGER_REQUIRED = defineBoolean("ANJU_PAY_LEDGER_REQUIRED", {
   default: true,
   description: "Keep true after AnjuPay ledger activation. False is allowed only for the initial compatibility deployment.",
 });
-const CREATOR_CARD_PUBLISH_COOLDOWN_MS = 15_000;
 const CLOUDFLARE_TURN_KEY_ID = defineSecret("CLOUDFLARE_TURN_KEY_ID");
 const CLOUDFLARE_TURN_API_TOKEN = defineSecret("CLOUDFLARE_TURN_API_TOKEN");
 const P2P_DIAGNOSTIC_HMAC_SECRET = defineSecret("P2P_DIAGNOSTIC_HMAC_SECRET");
@@ -1896,6 +1885,10 @@ async function ensureWallet(uid, legacyEconomy = null) {
         now,
       );
       persistAnjuPayOpening(transaction, ref, walletState, activated, now);
+      stageCreatorCardRefund({ transaction, walletRef: ref, wallet: walletState,
+        configSnapshot: ledgerConfigSnapshot, now, stageOpening: stageAnjuPayOpening,
+        appendEntry: appendAnjuPayEntry, metadataPatch: anjuPayWalletMetadataPatch });
+      balance = walletState.balance;
       return;
     }
     if (existing.exists) {
@@ -3178,195 +3171,6 @@ async function redeemDollmasterAchievement(uid, codeValue, configuredCodeValue) 
   };
 }
 
-function isCreatorCardEntryId(value) {
-  return /^[-0-9A-Z_a-z]{16,40}$/.test(String(value || ""));
-}
-
-function creatorCardGrowthFromState(achievementState) {
-  return creatorCardGrowthLevel(creatorCardActivityCount(
-    achievementState?.progress?.achievementStats,
-    achievementState?.marketStats,
-  ));
-}
-
-async function ensureCreatorCardEntryId(uid) {
-  const indexRef = realtime.ref(`online/topMessageEntriesByUser/${uid}`);
-  const proposedEntryId = realtime.ref("online/topMessages").push().key;
-  if (!isCreatorCardEntryId(proposedEntryId)) {
-    throw new HttpsError("internal", "推しカードの公開枠を準備できませんでした。");
-  }
-  const result = await indexRef.transaction((current) => (
-    isCreatorCardEntryId(current) ? current : proposedEntryId
-  ));
-  const entryId = String(result.snapshot.val() || "");
-  if (!result.committed || !isCreatorCardEntryId(entryId)) {
-    throw new HttpsError("internal", "推しカードの公開枠を確認できませんでした。");
-  }
-  const ownerRef = realtime.ref(`online/topMessageOwners/${entryId}`);
-  const ownerSnapshot = await ownerRef.get();
-  if (ownerSnapshot.exists() && String(ownerSnapshot.val() || "") !== uid) {
-    throw new HttpsError("failed-precondition", "推しカードの所有情報を確認できませんでした。");
-  }
-  if (!ownerSnapshot.exists()) await ownerRef.set(uid);
-  return entryId;
-}
-
-function creatorCardInputName(value) {
-  if (typeof value !== "string") {
-    throw new HttpsError("invalid-argument", "表示名は1行16文字以内で入力してください。");
-  }
-  const raw = value.trim();
-  if (!raw || raw.length > 16 || /[\r\n]/.test(raw)) {
-    throw new HttpsError("invalid-argument", "表示名は1行16文字以内で入力してください。");
-  }
-  return raw;
-}
-
-function creatorCardInputText(value) {
-  const text = typeof value === "string" ? value.trim() : "";
-  if (!isValidCreatorCardText(text)) {
-    throw new HttpsError(
-      "invalid-argument",
-      `紹介文はURL・メールアドレスを含まない1行${CREATOR_CARD_TEXT_MAX_LENGTH}文字以内で入力してください。`,
-    );
-  }
-  return text;
-}
-
-async function publishCreatorCard(uid, data) {
-  const name = creatorCardInputName(data?.name);
-  const text = creatorCardInputText(data?.text);
-  const creatorType = data?.creatorType;
-  if (typeof creatorType !== "string" || !CREATOR_CARD_TYPES.includes(creatorType)) {
-    throw new HttpsError("invalid-argument", "活動札を選び直してください。");
-  }
-  const cardTheme = data?.cardTheme;
-  if (!isCreatorCardTheme(cardTheme)) {
-    throw new HttpsError("invalid-argument", "カードテーマを選び直してください。");
-  }
-  if (data?.xHandle != null && typeof data.xHandle !== "string") {
-    throw new HttpsError("invalid-argument", "Xのユーザー名は英数字と_の15文字以内で入力してください。");
-  }
-  const rawXHandle = String(data?.xHandle || "").trim().replace(/^@+/, "");
-  const xHandle = normalizeCreatorCardXHandle(rawXHandle);
-  if (rawXHandle && !xHandle) {
-    throw new HttpsError("invalid-argument", "Xのユーザー名は英数字と_の15文字以内で入力してください。");
-  }
-  if (!Array.isArray(data?.achievementIds) || data.achievementIds.length > 3) {
-    throw new HttpsError("invalid-argument", "カードへ飾る実績は3件まで選んでください。");
-  }
-  if (!data.achievementIds.every((id) => typeof id === "string")) {
-    throw new HttpsError("invalid-argument", "カードへ飾る実績を選び直してください。");
-  }
-  const rawAchievementIds = data.achievementIds;
-  const [achievementState, economy] = await Promise.all([
-    ensureAchievementState(uid),
-    readLegacyEconomy(uid),
-  ]);
-  const premiumOwned = economy.inventory?.[CREATOR_CARD_PREMIUM_PRODUCT_ID] === true;
-  if (isPremiumCreatorCardTheme(cardTheme) && !premiumOwned) {
-    throw new HttpsError("failed-precondition", "プレミアム仕上げを先に解放してください。");
-  }
-  const selectedAchievementIds = sanitizeAchievementIds(rawAchievementIds, {
-    unlocked: achievementState.profile.unlocked,
-  });
-  if (selectedAchievementIds.length !== rawAchievementIds.length) {
-    throw new HttpsError("failed-precondition", "未解除の実績はカードへ飾れません。");
-  }
-  const equippedTitleId = String(economy.equipped?.title || "");
-  const titleId = economy.inventory?.[equippedTitleId] === true
-    && PRODUCT_CATALOG[equippedTitleId]?.type === "title"
-    ? equippedTitleId
-    : "";
-  const now = Date.now();
-  const record = {
-    schemaVersion: CREATOR_CARD_VERSION,
-    name,
-    titleId,
-    text,
-    creatorType,
-    cardTheme,
-    growthLevel: creatorCardGrowthFromState(achievementState),
-    achievementShowcase: selectedAchievementIds.join(","),
-    updatedAt: now,
-    ...(xHandle ? { xHandle } : {}),
-  };
-  const entryId = await ensureCreatorCardEntryId(uid);
-  const cardRef = realtime.ref(`online/topMessages/${entryId}`);
-  let rateLimited = false;
-  const publishResult = await cardRef.transaction((current) => {
-    const previousUpdatedAt = Number(current?.updatedAt || 0);
-    if (
-      previousUpdatedAt > 0
-      && now - previousUpdatedAt < CREATOR_CARD_PUBLISH_COOLDOWN_MS
-    ) {
-      rateLimited = true;
-      return undefined;
-    }
-    return Number(current?.schemaVersion || 0) === CREATOR_CARD_VERSION
-      ? {
-        ...record,
-        growthLevel: Math.max(
-          record.growthLevel,
-          Number(current?.growthLevel || 1),
-        ),
-      }
-      : record;
-  });
-  if (!publishResult.committed) {
-    if (rateLimited) {
-      throw new HttpsError(
-        "resource-exhausted",
-        "推しカードは15秒ほど待ってからもう一度更新してください。",
-      );
-    }
-    throw new HttpsError("internal", "推しカードを公開できませんでした。");
-  }
-  return {
-    saved: true,
-    entryId,
-    card: publishResult.snapshot.val() || record,
-  };
-}
-
-async function deleteCreatorCard(uid) {
-  const entryId = String((await realtime.ref(`online/topMessageEntriesByUser/${uid}`).get()).val() || "");
-  if (!isCreatorCardEntryId(entryId)) return { deleted: false };
-  const owner = String((await realtime.ref(`online/topMessageOwners/${entryId}`).get()).val() || "");
-  if (owner !== uid) {
-    throw new HttpsError("failed-precondition", "推しカードの所有情報を確認できませんでした。");
-  }
-  await realtime.ref(`online/topMessages/${entryId}`).remove();
-  return { deleted: true, entryId };
-}
-
-async function syncCreatorCardGrowth(uid, achievementStateValue = null) {
-  const entryId = String((await realtime.ref(`online/topMessageEntriesByUser/${uid}`).get()).val() || "");
-  if (!isCreatorCardEntryId(entryId)) return false;
-  const owner = String((await realtime.ref(`online/topMessageOwners/${entryId}`).get()).val() || "");
-  if (owner !== uid) return false;
-  const achievementState = achievementStateValue || await ensureAchievementState(uid);
-  const growthLevel = creatorCardGrowthFromState(achievementState);
-  let changed = false;
-  const result = await realtime.ref(`online/topMessages/${entryId}`).transaction((current) => {
-    changed = false;
-    // A cold local cache starts at null; return null to let the server retry
-    // with its existing card. Returning undefined would abort before that read.
-    if (current == null) return null;
-    if (Number(current.schemaVersion || 0) !== CREATOR_CARD_VERSION) {
-      return undefined;
-    }
-    const nextGrowthLevel = Math.max(Number(current.growthLevel || 1), growthLevel);
-    if (Number(current.growthLevel || 0) === nextGrowthLevel) return current;
-    changed = true;
-    return {
-      ...current,
-      growthLevel: nextGrowthLevel,
-    };
-  });
-  return result.committed && changed;
-}
-
 async function acknowledgeAchievements(uid, idsValue) {
   const ids = sanitizeAchievementIds(idsValue, {
     maximum: ACHIEVEMENT_DEFINITIONS.length,
@@ -3999,7 +3803,6 @@ async function initializeEconomy(uid) {
   ]);
   await bestEffort("initializeEconomy public achievements", [
     syncAchievementPublicSurfaces(uid, profile),
-    syncCreatorCardGrowth(uid, achievementState),
   ]);
   return {
     outcome: "ready",
@@ -4306,6 +4109,9 @@ async function claimDailyPlayRewards(uid) {
 }
 
 async function purchaseProduct(uid, productId) {
+  if (productId === CREATOR_CARD_PREMIUM_PRODUCT_ID) {
+    return throwRetiredCommunityMode(HttpsError, "creator_card");
+  }
   const product = PRODUCT_CATALOG[productId];
   if (!product) throw new HttpsError("invalid-argument", "存在しない商品です。");
   const economy = await readLegacyEconomy(uid);
@@ -5591,10 +5397,8 @@ async function duplicateVerifiedMatchResult(uid, {
   );
   const progress = normalizeEconomyProgress(progressSnapshot.data());
   const profile = normalizeAchievementProfile(profileSnapshot.data());
-  const marketStats = normalizeMarketStats(marketSnapshot.data());
   await bestEffort("recordVerifiedMatch duplicate", [
     mirrorEconomyProgress(uid, progress),
-    syncCreatorCardGrowth(uid, { progress, profile, marketStats }),
   ]);
 
   const projectionStatus = claimSnapshot.get("profileProjectionStatus");
@@ -6044,13 +5848,6 @@ async function recordVerifiedMatch(uid, data) {
   });
   const postMatchOperations = participants.flatMap((participantUid) => [
     mirrorEconomyProgress(participantUid, progressResults[participantUid]),
-    // The match transaction supplies the newest battle state. Market growth is
-    // monotonic, so its already-loaded stats cannot lower an existing card.
-    syncCreatorCardGrowth(participantUid, {
-      ...achievementStates[participantUid],
-      progress: progressResults[participantUid],
-      profile: profileResults[participantUid],
-    }),
     ...(newlyUnlockedResults[participantUid]?.length
       ? [syncAchievementPublicSurfaces(participantUid, profileResults[participantUid])]
       : []),
@@ -11272,6 +11069,9 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
   try {
+    if (action === "publish_creator_card" || action === "delete_creator_card") {
+      return throwRetiredCommunityMode(HttpsError, "creator_card");
+    }
     if (action === "initialize") {
       return await diagnoseAccountOperation(request, "wallet_initialize", async () => {
         await consumeEconomyInitializeRate(uid);
@@ -11314,16 +11114,6 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "get_achievements") return await getAchievements(uid, { syncPublic: request.data?.syncPublic === true, deferTributeBackfill: true });
     if (action === "ack_achievements") return await acknowledgeAchievements(uid, request.data?.achievementIds);
     if (action === "set_achievement_showcase") return await setAchievementShowcase(uid, request.data?.achievementIds);
-    if (action === "publish_creator_card") {
-      if (!request.app) {
-        throw new HttpsError(
-          "failed-precondition",
-          "推しカードの公開には通信保護が必要です。ページを再読み込みしてください。",
-        );
-      }
-      return await publishCreatorCard(uid, request.data);
-    }
-    if (action === "delete_creator_card") return await deleteCreatorCard(uid);
     if (action === "sync_achievement_showcase") {
       return { synced: true, achievements: await getAchievements(uid, { syncPublic: true, deferTributeBackfill: true }) };
     }
@@ -16056,9 +15846,6 @@ async function performMarketAction(uid, data, appCheckVerified) {
     ...Object.entries(achievementResults).map(([participantUid, profile]) => (
       syncAchievementPublicSurfaces(participantUid, profile)
     )),
-    ...Object.keys(achievementResults).map((participantUid) => (
-      syncCreatorCardGrowth(participantUid)
-    )),
   ]);
   await retryRealtimeWrite(() => mirrorMarketRoom(result.room, {
     seenRoles: isTerminalMarketState(result.status) ? [] : [result.role],
@@ -16279,7 +16066,7 @@ exports.expireTributeContracts = onSchedule({
   }
 });
 
-// マイスタジアム: 観客は推しカードの成長と同じ正本（検証済みの正式完走数）から読み直す。
+// マイスタジアム: 観客は検証済みの正式完走数から読み直す。
 const stadiumService = createStadiumService({
   firestore,
   HttpsError,

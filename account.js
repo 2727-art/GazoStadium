@@ -34,6 +34,8 @@ const ANJU_PAY_MAX_BALANCE = 999_999_999;
 const ANJU_PAY_CATEGORIES = new Set(["opening", "earn", "spend", "market", "flea", "tip", "tribute"]);
 const ANJU_PAY_STATUSES = new Set(["posted", "held", "settled", "refunded", "partial", "capped"]);
 const ANJU_PAY_LABELS = Object.freeze({
+  creator_card_refund: "推しカード終了に伴う返還",
+  anju_pay_creator_card_refund: "推しカード終了に伴う返還",
   opening: "AnjuPay開始残高",
   opening_balance: "AnjuPay開始残高",
   anju_pay_opening: "AnjuPay開始残高",

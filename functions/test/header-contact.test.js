@@ -19,7 +19,7 @@ test("the header links to the operator's X account for support and requests", ()
   assert.match(link, /target="_blank" rel="noopener noreferrer"/);
   assert.match(link, /aria-label="ご要望・お問い合わせ[^"]*@lasmemodaisuki[^"]*新しいタブ[^"]*"/);
   assert.match(link, /<span class="header-contact-full">ご要望・お問い合わせ<\/span><span class="header-contact-short">問い合わせ<\/span>/);
-  assert.match(index, /velvet\.css\?v=[^"]*-header-contact-v1"/);
+  assert.match(index, /velvet\.css\?v=[^"]*-header-contact-v1[^"]*"/);
 });
 
 test("narrow screens stack a short label under the X icon and keep the whole brand name", () => {
