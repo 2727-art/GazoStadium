@@ -259,7 +259,7 @@ test("client wiring: consent on the application, settings, start sheet, moves, e
 
 test("cache keys and the design record", () => {
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*ranch-othello-v1(?:-[a-z0-9-]+)?"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=[^"]*ranch-othello-v1"/);
+  assert.match(client, /from "\.\/tribute-share\.mjs\?v=[^"]*ranch-othello-v1(?:-[a-z0-9-]+)?"/);
   const index = read("index.html");
   for (const name of ["tribute.css", "tribute.js"]) {
     assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-othello-v1(?:-[a-z0-9-]+)?"`), name);

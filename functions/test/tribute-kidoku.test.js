@@ -117,7 +117,7 @@ test("limits live in a payer-only document that the payer's thread subscribes to
   assert.match(client, /acceptNoDecline: data\.get\("acceptNoDecline"\) === "on",/);
   assert.match(client, /<input type="checkbox" name="ignoreUnpaid"/);
   assert.match(sourceBlock(client, "function declarationTags", "// 経った時間"), /未払いは既読無視[^]*高額請求/);
-  // 財布募集の画像: 宣言と「高額請求」で札が増えても、型と称号を落とさず2段目に並べ、紹介を1行減らしてカードに収める。
+  // 受付カード: 宣言と「高額請求」で札が増えても、型と称号を落とさず2段目に並べ、紹介を1行減らしてカードに収める。
   const recruit = sourceBlock(share, "export async function renderRecruitImage", "// 今日のひとこと");
   assert.match(recruit, /if \(tagRows === 2 \|\| nameX \+ width > right\) return;/);
   assert.match(share, /wrapLines\(ctx, intro, innerWidth, tagRows === 2 \? 2 : 3\)/);

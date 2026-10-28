@@ -191,7 +191,7 @@ function drawWax(seal, { ink, layout, at }) {
   seal.restore();
 }
 
-// rough: かすれを付けるか（財布募集の画像では、読みやすさを優先して付けない）。
+// rough: かすれを付けるか（受付カードでは、読みやすさを優先して付けない）。
 function drawSeal(ctx, { x, y, size, rotation = 0, label, name, at, shape, ink, surface = "dark", multiply = false, seed = 7, rough = true }) {
   const look = normalizeDecorations({ sealShape: shape, sealInk: ink });
   const layout = sealTextLayout(look.sealShape, label, name);
@@ -1159,7 +1159,8 @@ export async function renderOthelloImage(data, options = {}) {
   return canvas;
 }
 
-// ───────────── 財布募集の画像 ─────────────
+// ───────────── 受付カード ─────────────
+// 2026-10-28 に「財布募集の画像」から改名した（ユーザー決定）。界隈が探すハッシュタグ #財布募集 は残す。
 // 管理人が自分のカードを X に貼るための画像。管理人の端末の中で描き、サーバーへは送らない。
 // URL は入れない（招待リンクは投稿の文に付ける）。中の人の札は略さず全文で入れ、AnjuPay だけで現金がないことを必ず書く。
 // 枠は SVG の画像を使わず canvas で描く（端末によっては、画像を重ねた canvas を書き出せなくなるため）。

@@ -137,7 +137,7 @@ import {
   renderOthelloImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1";
+} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1";
 import {
   CARD_FRAMES,
   FRAME_PALETTES,
@@ -670,8 +670,8 @@ function renderInvite(profile) {
     <span class="tribute-eyebrow">招待リンク</span>
     <p>Xのフォロワーを、あなたの管理人カードへ直接案内できます。開いた人は年齢確認のあと、このカードに着きます。</p>
     <div class="tribute-invite-link"><input readonly value="${escapeHtml(url)}" aria-label="招待リンク" data-invite-url /><button class="button button-ghost button-small" type="button" data-t="copy-invite">コピー</button></div>
-    <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="post-invite">Xで告知する</button><button class="button button-ghost button-small" type="button" data-t="recruit-open">財布募集の画像を作る</button></div>
-    <small>告知の文には、中の人の札が必ず入ります。財布募集の画像は、飾った管理人カードを1枚にして X に貼れます。${profile.accepting ? "" : "いまは受付を止めているので、受付を始めてから告知してください。"}</small>
+    <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="post-invite">Xで告知する</button><button class="button button-ghost button-small" type="button" data-t="recruit-open">受付カードを作る</button></div>
+    <small>告知の文には、中の人の札が必ず入ります。受付カードは、飾った管理人カードを1枚の画像にして X に貼れます。${profile.accepting ? "" : "いまは受付を止めているので、受付を始めてから告知してください。"}</small>
   </div>`;
 }
 
@@ -1041,7 +1041,7 @@ function renderCardEditor() {
     <div data-achievement-section>${renderCardAchievementPicker(card)}</div>
     <fieldset><legend>宣言</legend>
       <label class="tribute-check"><input type="checkbox" name="ignoreUnpaid" ${card.ignoreUnpaid === true ? "checked" : ""} /><span>「未払いは既読無視」を宣言する<small>財布の画面と、掲示板のカードに札が出ます。返事をするかどうかは、いつでもあなたが決められます。</small></span></label>
-      <label class="tribute-check"><input type="checkbox" name="postsScreenshots" ${card.postsScreenshots === true ? "checked" : ""} /><span>「スクショを載せる」を宣言する<small>掲示板のカード・申し込み・財布募集の画像に札が出ます。財布が写る画面を X に載せてよいのは、財布が申し込みで許した契約だけです（スレッドに「スクショ掲載 可」の札が出ます）。</small></span></label>
+      <label class="tribute-check"><input type="checkbox" name="postsScreenshots" ${card.postsScreenshots === true ? "checked" : ""} /><span>「スクショを載せる」を宣言する<small>掲示板のカード・申し込み・受付カードに札が出ます。財布が写る画面を X に載せてよいのは、財布が申し込みで許した契約だけです（スレッドに「スクショ掲載 可」の札が出ます）。</small></span></label>
     </fieldset>
     <fieldset><legend>最後に動いた時</legend>
       <label class="tribute-check"><input type="checkbox" name="showsActivity" ${card.showsActivity === true ? "checked" : ""} /><span>掲示板と管理人の詳細に、最後に動いた時を出す<small>「動き 1時間以内／○時間前／○日前」と出ます。財布が、受理してもらえそうかの目安にします。出さなくても、掲示板は動いた順に並びます。</small></span></label>
@@ -1191,7 +1191,7 @@ function renderDecorationSettings(card) {
     </fieldset>`;
   }
   return `<fieldset class="tribute-deco"><legend>牧場の飾り</legend>
-    <div class="tribute-deco-group"><h3>カードの枠 <small>掲示板・詳細・招待・財布募集の画像</small></h3>
+    <div class="tribute-deco-group"><h3>カードの枠 <small>掲示板・詳細・招待・受付カード</small></h3>
       <div class="tribute-deco-tiles">${CARD_FRAMES.map((frame) => decorationTile("frame", frame, look.frame, frameSwatch(frame.id, look))).join("")}</div></div>
     <div class="tribute-deco-group" data-frame-colors>${renderFrameColors(look)}</div>
     <div class="tribute-deco-group"><h3>受取印の形 <small>受け取る時の印・レシート・貢ぎ報告の画像</small></h3>
@@ -3072,7 +3072,7 @@ async function refreshSharePreview() {
 function sharePreviewMarkup(sheet) {
   if (sheet.error) return `<p class="tribute-form-error" role="alert">${escapeHtml(sheet.error)}</p>`;
   if (!sheet.previewUrl) return `<span class="tribute-share-wait">画像を作っています…</span>`;
-  return `<img src="${escapeHtml(sheet.previewUrl)}" alt="${sheet.type === "recruit" ? "作った財布募集の画像" : "作った貢ぎ報告の画像"}" width="1080" height="1350" />${sheet.rendering ? '<span class="tribute-share-wait is-over">作り直しています…</span>' : ""}`;
+  return `<img src="${escapeHtml(sheet.previewUrl)}" alt="${sheet.type === "recruit" ? "作った受付カード" : "作った貢ぎ報告の画像"}" width="1080" height="1350" />${sheet.rendering ? '<span class="tribute-share-wait is-over">作り直しています…</span>' : ""}`;
 }
 
 // 見本だけを差し替える（シート全体を描き直すと、選んでいる項目の位置が飛ぶため）。
@@ -3169,7 +3169,7 @@ async function loadRecruit(sheet) {
     sheet.blob = blob;
     sheet.previewUrl = URL.createObjectURL(blob);
     const stamp = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll("-", "");
-    sheet.fileName = `omitsugi-wanted-${stamp}.png`;
+    sheet.fileName = `omitsugi-accepting-${stamp}.png`;
   } catch (error) {
     if (state.sheet !== sheet) return;
     sheet.error = friendlyError(error, "画像を作れませんでした。");
@@ -3179,8 +3179,8 @@ async function loadRecruit(sheet) {
 }
 
 function renderRecruitSheet(sheet, wrap) {
-  if (sheet.status === "loading") return wrap("財布募集の画像", `<p class="tribute-empty">あなたの管理人カードを開いています…</p>`);
-  return wrap("財布募集の画像", `<div class="tribute-share">
+  if (sheet.status === "loading") return wrap("受付カード", `<p class="tribute-empty">あなたの管理人カードを開いています…</p>`);
+  return wrap("受付カード", `<div class="tribute-share">
     <div class="tribute-share-body">
       <div class="tribute-share-preview" data-share-preview>${sharePreviewMarkup(sheet)}</div>
       <div class="tribute-share-options"><p class="tribute-note">あなたの管理人カード（枠・中の人の札・入場料・管理中の人数・今日のひとこと・実績）を1枚の画像にします。受取印の形と朱肉で「受付中」を押します。</p>

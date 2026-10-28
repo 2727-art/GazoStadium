@@ -219,7 +219,7 @@ test("the card shows the frame and up to three achievements, and the editor lets
 });
 
 test("the recruit image is drawn on the manager's device with the disclosure, the payer's control and no URL", () => {
-  const recruit = sourceBlock(share, "// ───────────── 財布募集の画像 ─────────────", "export function canvasToPngBlob");
+  const recruit = sourceBlock(share, "// ───────────── 受付カード ─────────────", "export function canvasToPngBlob");
   assert.doesNotMatch(recruit, /https?:\/\/|x\.com|gazostadium|workers\.dev|web\.app/);
   assert.doesNotMatch(recruit, /new Image\(|drawImage\(svg|data:image\/svg/, "frames are drawn on the canvas, not from SVG images");
   assert.match(recruit, /manager\.disclosureLabel/);
@@ -237,7 +237,7 @@ test("the recruit image is drawn on the manager's device with the disclosure, th
   assert.match(sheet, /text: `\$\{inviteText\(card\)\}\\n\$\{url\}`/, "the invite link goes in the post text");
   assert.match(sheet, /画像にURLは入りません/);
   assert.doesNotMatch(sheet, /fetch\(|uploadBytes|storage/i, "the image is never uploaded");
-  assert.match(sourceBlock(client, "function renderInvite", "// 今日のひとこと（管理人だけ）"), /data-t="recruit-open">財布募集の画像を作る<\/button>/);
+  assert.match(sourceBlock(client, "function renderInvite", "// 今日のひとこと（管理人だけ）"), /data-t="recruit-open">受付カードを作る<\/button>/);
 });
 
 test("the AnjuPay store sells the ranch shelf with a confirmation, without a fund share, and the design doc records the rules", () => {
@@ -255,7 +255,7 @@ test("the AnjuPay store sells the ranch shelf with a confirmation, without a fun
 
   assert.match(design, /牧場の飾り/);
   assert.match(design, /金庫の飾り/);
-  assert.match(design, /財布募集の画像/);
+  assert.match(design, /受付カード/);
   assert.match(design, /実績（3つまで）|実績を3つまで/);
 });
 
