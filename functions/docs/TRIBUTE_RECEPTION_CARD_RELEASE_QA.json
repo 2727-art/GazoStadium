@@ -1,0 +1,100 @@
+{
+  "checkedAt": "2026-10-28T09:51:47.404Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "1929d11",
+  "implementationCommit": "1929d11",
+  "baseCommit": "810f4a3",
+  "decisions": {
+    "rename": "財布募集の画像 -> 受付カード in every screen",
+    "reason": "the image already says 財布受付 / 受付中 / ACCEPTING WALLETS; matches the 2026-10-27 decision to accept wallets rather than look for them; it is the manager card on one image; short enough for a phone button",
+    "kept": [
+      "the image itself",
+      "the hashtag #お貢ぎ牧場 #財布募集 in the image and the post text"
+    ],
+    "fileName": "omitsugi-accepting-<date>.png (was omitsugi-wanted-<date>.png)",
+    "decidedBy": "user, 2026-10-28 JST"
+  },
+  "scope": {
+    "functions": [],
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "online.js",
+      "tribute-share.mjs"
+    ],
+    "cacheKey": "ranch-reception-card-v1",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2322,
+    "passed": 2288,
+    "failed": 0,
+    "skipped": 34,
+    "newFiles": [
+      "functions/test/tribute-reception-card.test.js"
+    ]
+  },
+  "preview": {
+    "width": "375x812",
+    "consoleErrors": 0,
+    "horizontalOverflow": false,
+    "checked": [
+      "受付カード sheet title, 1080x1350 image, alt text 作った受付カード",
+      "invite area button 受付カードを作る and its note",
+      "card editor hints for the frame and the screenshot declaration",
+      "no 財布募集の画像 anywhere on the screens"
+    ]
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "online.js",
+      "tribute-share.mjs"
+    ]
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 1929d11 and origin/main contained)",
+    "order": [
+      "git push origin HEAD:main (810f4a3..1929d11)",
+      "hosting"
+    ],
+    "workersBuild": {
+      "commit": "1929d11",
+      "conclusion": "success",
+      "completedAt": "2026-10-28T09:51:30Z"
+    },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-reception-card-release.cjs",
+      "checkedAt": "2026-10-28T09:51:47.404Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-reception-card-v1 on the manifest tribute.js and online.js and on tribute-share.mjs",
+      "newNameServed": true,
+      "oldNameServed": false,
+      "hashtagKept": true,
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "screens left open may show the old name for up to an hour until reloaded",
+    "earlier release records keep the old name as it was at the time"
+  ]
+}
