@@ -48,6 +48,19 @@ function moduleVersion(source, name) {
 
 const isScript = (result) => /javascript|ecmascript/i.test(result.contentType);
 
+// 2026-10-28 の読み込みの見直し（main #16）から、tribute.css は data-src、tribute.js は機能の一覧（featureManifest）に載る。
+// src・href に無い時は、ページの中の引用符で囲まれた参照を探す。
+function assetUrl(html, name, origin) {
+  const direct = assetReference(html, name, origin);
+  if (direct) return direct;
+  for (const match of html.matchAll(/["']([^"'\s<>]+)["']/g)) {
+    if (match[1].split("?")[0] !== name) continue;
+    const url = new URL(match[1].replace(/&amp;/g, "&"), `${origin}/`);
+    if (url.origin === origin) return url.href;
+  }
+  return null;
+}
+
 async function verifyOrigin(origin, expected, nonce) {
   const pages = await Promise.all(ENTRY_PATHS.map((entry) => fetchText(`${origin}${entry}${entry.includes("?") ? "&" : "?"}releaseCheck=${nonce}`)));
   const indexOk = pages.every((result) => result.status === 200 && /text\/html/i.test(result.contentType) && sha256LF(result.body) === expected.html);
@@ -55,7 +68,7 @@ async function verifyOrigin(origin, expected, nonce) {
   const previousMarkers = PREVIOUS_MARKERS.every((marker) => html.includes(marker));
   const files = [];
   for (const name of [...CHANGED_FILES, ...UNCHANGED_FILES]) {
-    const url = assetReference(html, name, origin);
+    const url = assetUrl(html, name, origin);
     if (!url || (CHANGED_FILES.includes(name) && !url.endsWith(MARKER))) {
       files.push({ file: name, url, ok: false, error: `Missing cache key${CHANGED_FILES.includes(name) ? ` ending ${MARKER}` : ""}` });
       continue;
