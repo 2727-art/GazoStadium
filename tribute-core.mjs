@@ -103,7 +103,20 @@ export const RANCH_LAYOUT = Object.freeze({
   ].map((spot) => Object.freeze(spot))),
   fence: Object.freeze([0.2908, 0.6707]),
   stake: Object.freeze([0.3409, 0.4379]),
+  // 13頭目からは、同じ立ち位置の右手前・左手前・右奥・左奥に置く（Lv1・10・30 の絵で芝の上に収まることを確かめた）。
+  crowd: Object.freeze([[0.045, 0.03], [-0.045, 0.03], [0.04, -0.025], [-0.04, -0.025]].map((offset) => Object.freeze(offset))),
 });
+
+// n 頭目（0 から）の立ち位置。12頭までは決まった立ち位置、その先は立ち位置の隣に並べる。
+export function ranchSpot(index) {
+  const { spots, crowd } = RANCH_LAYOUT;
+  const position = Math.max(0, Math.floor(Number(index) || 0));
+  const base = spots[position % spots.length];
+  const ring = Math.floor(position / spots.length);
+  if (!ring) return base;
+  const [dx, dy] = crowd[(ring - 1) % crowd.length];
+  return [base[0] + dx, base[1] + dy];
+}
 
 // そのレベルに必要な経験値の合計。Lv30 より上は、1段ごとに100ずつ増える。
 export function ranchThreshold(level) {
@@ -1181,6 +1194,8 @@ export function viewContract(contract, uid, now = Date.now()) {
     // 牧場（設計書16.4）: 放牧の同意と、管理人が選んだ動物（選ぶまでは契約ごとに決まった1種類）。
     allowGrazing: raw.allowGrazing === true,
     ranchAnimal: RANCH_ANIMALS.includes(raw.ranchAnimal) ? raw.ranchAnimal : defaultRanchAnimal(raw.contractId),
+    // 管理人が最後に動物をなでた時刻（財布の「牧場をのぞく」に出る）。
+    pattedAt: integer(raw.pattedAt),
     // 財布が書いた鳴き声（サーバーの mooLinesView と同じ）。
     mooLines: Array.isArray(raw.mooLines) ? raw.mooLines.map((line) => cleanText(line, RANCH_MOO.length)).filter(Boolean).slice(0, RANCH_MOO.lines) : [],
     othello: status === "active" ? othelloView(raw) : null,

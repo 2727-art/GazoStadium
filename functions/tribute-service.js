@@ -165,6 +165,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "set_ranch_animal",
   "set_moo",
   "ranch_peek",
+  "ranch_pat",
   "receive",
   "share_info",
   "set_word",
@@ -677,6 +678,8 @@ function viewContract(contract, uid, now) {
     ranchAnimal: RANCH_ANIMALS.includes(contract.ranchAnimal) ? contract.ranchAnimal : defaultRanchAnimal(contract.contractId),
     // 財布が書いた鳴き声。管理人の牧場の吹き出しに、語り手の一言と交互に出る。
     mooLines: mooLinesView(contract),
+    // 管理人が最後に動物をなでた時刻。財布の「牧場をのぞく」に出る。
+    pattedAt: integer(contract.pattedAt, 0, Number.MAX_SAFE_INTEGER, 0),
     othello: status === "active" ? othelloView(contract) : null,
     othelloResult: status === "active" ? othelloResultView(contract) : null,
     othelloRecord: othelloRecordView(contract.othelloRecord),
@@ -3066,6 +3069,19 @@ function createTributeService(deps) {
         const animal = String(data?.animal || "");
         if (!RANCH_ANIMALS.includes(animal)) fail("invalid-argument", "動物を選び直してください。");
         setContract(ctx, { ranchAnimal: animal });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 管理人が動物をなでる（設計書16.14）。言葉を書かずに、ひと押しで「見ている」を伝える。
+    // 財布の「牧場をのぞく」に、最後になでてもらった日が出る。契約ごとに1日1回まで（日本時間）。
+    // 経験値は付けない（押すだけで牧場が育たないように）。出来事は残さず、通知もしない。放牧に同意した財布だけ。
+    ranch_pat: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        if (ctx.contract.allowGrazing !== true) fail("failed-precondition", "この財布は牧場に放牧されていません。");
+        if (ctx.contract.patDayKey === ctx.dateKey) return { ok: true, contract: view(ctx), unchanged: true };
+        setContract(ctx, { pattedAt: ctx.now, patDayKey: ctx.dateKey });
         return { ok: true, contract: view(ctx) };
       },
     },

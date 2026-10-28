@@ -186,7 +186,7 @@ async function ranchRenderer() {
   vm.runInContext([
     /const RANCH_ASSET_KEY = [^\n]*\n/.exec(client)[0],
     /const RANCH_WANDER = [^\n]*\n/.exec(client)[0],
-    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "renderRanch", "renderRanchPeek"].map((name) => extract(client, name)),
+    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "renderRanch", "renderRanchPeek"].map((name) => extract(client, name)),
   ].join("\n"), context);
   return { core, context };
 }
@@ -267,7 +267,7 @@ test("client wiring, preview, styles, art, cache keys and the design record", ()
   assert.match(client, /"ranch-peek": \(\) => \{/);
 
   for (const selector of [".tribute-ranch-weather-fx {", ".tribute-ranch.is-rain .tribute-ranch-weather-fx::before", ".tribute-ranch.is-snow .tribute-ranch-weather-fx::before", ".tribute-ranch.is-autumn .tribute-ranch-ground", "@keyframes ranch-say-moo", ".tribute-ranch-peek-body {"]) assert.ok(styles.includes(selector), selector);
-  assert.match(styles, /\.tribute-ranch-weather-fx::before,\n  \.tribute-ranch-weather-fx::after \{ animation: none !important; \}\n\}/, "no falling rain or snow with reduced motion");
+  assert.match(styles, /\.tribute-ranch-weather-fx::before,\n  \.tribute-ranch-weather-fx::after \{ animation: none !important; \}\n/, "no falling rain or snow with reduced motion");
 
   assert.match(art, /def goat\(pose, group, tier=0\):/);
   assert.match(art, /def chicken\(pose, group, tier=0\):/);

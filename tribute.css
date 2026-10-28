@@ -1770,7 +1770,8 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
   text-align: center;
   opacity: 0;
   pointer-events: none;
-  animation: ranch-bubble var(--cycle, 18s) linear var(--bubble-delay, 0s) infinite;
+  /* 吹き出しの出方は頭数で変わる（tribute.js の ranchBubbleStyle が作る ranch-bubble-頭数）。 */
+  animation: var(--bubble, ranch-bubble) var(--cycle, 18s) linear var(--bubble-delay, 0s) infinite;
 }
 .tribute-ranch-animal.is-selected .tribute-ranch-bubble { animation: none; opacity: 1; }
 .tribute-ranch-card { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid rgba(126, 224, 138, 0.4); border-radius: 12px; background: rgba(126, 224, 138, 0.06); }
@@ -1880,6 +1881,31 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 @keyframes ranch-fall {
   to { background-position: 113px 131px, -86px 232px; }
 }
+/* 13頭目からは立ち位置の隣に並ぶので、少し小さく出す。 */
+.tribute-ranch-scene.is-crowded .tribute-ranch-animal { width: 14%; }
+.tribute-ranch-scene.is-crowded .tribute-ranch-name { font-size: clamp(0.5rem, 1.6vw, 0.6rem); }
+/* なでる（設計書16.14）。管理人の画面では押した直後に一度だけハートが浮かぶ。財布の画面では、今日なでてもらった印。 */
+.tribute-ranch-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.tribute-ranch-heart {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  color: #ff6fa8;
+  font-size: clamp(0.9rem, 3.4vw, 1.3rem);
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  transform: translateX(-50%);
+  opacity: 0;
+  animation: ranch-heart 2.4s ease-out forwards;
+}
+.tribute-ranch-heart.is-today { opacity: 1; animation: ranch-float 2.8s ease-in-out infinite; }
+.tribute-ranch-peek .tribute-ranch-pat { color: #ffb3d4; font-size: 0.8rem; }
+@keyframes ranch-heart {
+  0% { opacity: 0; transform: translate(-50%, 30%) scale(0.6); }
+  20% { opacity: 1; transform: translate(-50%, 0) scale(1.1); }
+  100% { opacity: 0; transform: translate(-50%, -90%) scale(1); }
+}
 /* 財布の「牧場をのぞく」。自分の動物だけを少し大きく出す。 */
 .tribute-ranch-peek-body { display: grid; gap: 14px; }
 .tribute-ranch-peek-body > p { margin: 0; font-size: 0.86rem; }
@@ -1928,4 +1954,7 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
   .tribute-ranch-bubble .is-moo,
   .tribute-ranch-weather-fx::before,
   .tribute-ranch-weather-fx::after { animation: none !important; }
+  /* 動きを減らす時も、のぞく画面の1頭と、なでた印は止めて出す。 */
+  .tribute-ranch-peek .tribute-ranch-bubble { opacity: 1; }
+  .tribute-ranch-heart { animation: none; opacity: 1; }
 }
