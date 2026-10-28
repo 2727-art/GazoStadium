@@ -687,7 +687,23 @@
     rankingComments = [];
     rankingCommentsStatus = "idle";
     setLandingChrome();
-    app.innerHTML = renderLanding();
+    const initialLanding = app.querySelector?.(".vl-landing");
+    if (initialLanding && initialLanding.dataset.landingBound !== "1") {
+      // Keep the already-painted heading and image. Replacing them here would
+      // restart the entrance animation and move LCP to the end of JS loading.
+      let regular = false;
+      try { regular = window.localStorage.getItem("hariai.ranch.regular.v1") === "1"; } catch {}
+      if (regular && !initialLanding.querySelector("#tributeResumeButton")) {
+        const template = document.createElement("template");
+        template.innerHTML = renderLanding();
+        const resume = template.content.querySelector("#tributeResumeButton");
+        if (resume) initialLanding.prepend(resume);
+      }
+    } else {
+      app.innerHTML = renderLanding();
+    }
+    const landing = app.querySelector?.(".vl-landing");
+    if (landing) landing.dataset.landingBound = "1";
     window.HariaiAudio?.setBgm?.("lobby");
     window.dispatchEvent(new Event("hariai-landing-rendered"));
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
