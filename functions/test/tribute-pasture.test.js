@@ -180,7 +180,7 @@ async function ranchRenderer(storage = new Map()) {
   vm.runInContext([
     /const RANCH_ASSET_KEY = [^\n]*\n/.exec(client)[0],
     /const RANCH_WANDER = [^\n]*\n/.exec(client)[0],
-    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanch"].map((name) => extract(client, name)),
+    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "renderRanch"].map((name) => extract(client, name)),
   ].join("\n"), context);
   return context;
 }
@@ -234,8 +234,9 @@ test("client and server wiring, assets, privacy of the art scripts, cache keys a
   assert.equal((client.match(/\$\{vaultTag\(card\.vault\)\}\$\{ranchTag\(card\)\}/g) || []).length, 3, "board card, manager detail and my card");
   assert.match(client, /<input type="checkbox" name="allowGrazing" \$\{checked\("allowGrazing", true\)\} \/>/);
   assert.match(client, /allowGrazing: data\.get\("allowGrazing"\) === "on",/);
-  assert.match(client, /data-sheet="grazing-settings">牧場の設定<\/button>/);
-  assert.match(client, /case "grazing-settings": \{/);
+  // 第2段から、放牧の設定は財布の「牧場をのぞく」の中にある（tribute-ranch-peek.test.js）。
+  assert.match(client, /data-sheet="ranch-peek">牧場をのぞく<\/button>/);
+  assert.match(client, /case "ranch-peek": \{/);
   assert.match(client, /mutate\("set_grazing"/);
   assert.match(client, /mutate\("set_ranch_animal"/);
   assert.match(client, /case "grazing_changed":/);
@@ -250,7 +251,7 @@ test("client and server wiring, assets, privacy of the art scripts, cache keys a
   const names = [];
   for (const time of ["day", "evening", "night"]) {
     for (let level = 1; level <= 30; level += 1) names.push(`ranch-lv${level}-${time}.webp`);
-    for (const animal of ["cow", "pig", "sheep"]) {
+    for (const animal of ["cow", "pig", "sheep", "goat", "chicken", "rabbit"]) {
       for (const pose of ["stand", "walk1", "walk2", "eat", "sleep"]) {
         for (const tier of [0, 1, 2, 3, 4]) names.push(`${animal}-${pose}${tier ? `-t${tier}` : ""}-${time}.webp`);
       }
@@ -265,7 +266,7 @@ test("client and server wiring, assets, privacy of the art scripts, cache keys a
     assert.ok(size > 300 && size < 40_000, `${name}: ${size}`);
     total += size;
   }
-  assert.ok(total < 4_000_000, `all ranch art: ${total}`);
+  assert.ok(total < 5_000_000, `all ranch art: ${total}`);
   assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith(".webp")).sort(), [...names].sort());
   assert.ok(fs.existsSync(path.join(root, "art/tribute-ranch/render_ranch.py")));
   assert.ok(JSON.parse(read("firebase.json")).hosting.ignore.includes("art/**"));

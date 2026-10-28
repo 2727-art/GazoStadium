@@ -5,7 +5,7 @@
 #
 # 1回の実行で、その時間帯の絵をすべて描く。
 #   ranch-lv{1..30}-{時間帯}.webp   芝の島と、そのレベルまでの施設（背景は透明。空は画面側で描く）
-#   {cow|pig|sheep}-{stand|walk1|walk2|eat|sleep}[-t{1..4}]-{時間帯}.webp   動物（足元が絵の決まった位置に来る）。-t は、なつきの飾り
+#   {cow|pig|sheep|goat|chicken|rabbit}-{stand|walk1|walk2|eat|sleep}[-t{1..4}]-{時間帯}.webp   動物（足元が絵の決まった位置に来る）。-t は、なつきの飾り
 #   prop-{letter|hay|stake}-{時間帯}.webp   小物
 # layout を渡すと、何も描かずに、動物の立ち位置と足元の位置を画面の割合で書き出す（tribute-core.mjs に写す）。
 import json
@@ -21,7 +21,7 @@ argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 OUT = argv[0] if argv else "."
 TIME = argv[1] if len(argv) > 1 else "day"
 LAYOUT_ONLY = TIME == "layout"
-# 確かめる時だけ: RANCH_LEVELS="10,20,30" で描くレベルを絞り、RANCH_SPRITES="cow-stand" で描く動物としぐさを絞る。
+# 確かめる時だけ: RANCH_LEVELS="10,20,30" で描くレベルを絞り（"0" で背景を描かない）、RANCH_SPRITES="cow-stand" で描く動物としぐさを絞る（"goat" のように動物だけでもよい）。
 ONLY_LEVELS = {int(value) for value in os.environ.get("RANCH_LEVELS", "").split(",") if value.strip()}
 ONLY_SPRITES = {value.strip() for value in os.environ.get("RANCH_SPRITES", "").split(",") if value.strip()}
 if LAYOUT_ONLY:
@@ -311,7 +311,105 @@ def sheep(pose, group, tier=0):
     return root
 
 
-ANIMALS = {"cow": cow, "pig": pig, "sheep": sheep}
+# 第2段で増やした動物（やぎ・にわとり・うさぎ）。
+def goat(pose, group, tier=0):
+    root = empty((0, 0, 0), group=group)
+    coat = mat("goat_coat", (0.86, 0.64, 0.44), 0.65, sheen=0.3)
+    cream = mat("goat_cream", (1.0, 0.95, 0.86), 0.6, sheen=0.3)
+    muzzle = mat("goat_muzzle", (1.0, 0.8, 0.76), 0.5)
+    horn = mat("goat_horn", (0.9, 0.84, 0.72), 0.4)
+    hoof = mat("goat_hoof", (0.42, 0.33, 0.3), 0.5)
+    lift = body_lift(pose)
+    body = empty((0, 0, lift), parent=root, group=group)
+    sphere((0, 0, 0.82), (0.7, 0.5, 0.48), coat, body, group)
+    sphere((0.18, 0, 0.66), (0.46, 0.4, 0.3), cream, body, group)
+    rcone((-0.66, 0, 1.02), 0.1, 0.24, cream, rot=(0, math.radians(-50), 0), parent=body, group=group)
+    legs(body, group, 0.36, 0.24, coat, hoof, 0.4, pose)
+    neck = head_pivot(body, group, (0.5, 0, 1.08), pose)
+    head = empty((0.2, 0, 0.32), parent=neck, group=group)
+    sphere((0, 0, 0), (0.48, 0.44, 0.46), coat, head, group)
+    sphere((0.32, 0, -0.14), (0.22, 0.27, 0.2), cream, head, group)
+    sphere((0.5, 0, -0.1), (0.04, 0.07, 0.04), muzzle, head, group, seg=10)
+    rcone((0.34, 0, -0.44), 0.09, 0.34, mat("goat_beard", (0.62, 0.44, 0.3), 0.7), rot=(math.pi, 0, 0), parent=head, group=group, tip=0.15)
+    for side in (-1, 1):
+        rcone((-0.16, side * 0.17, 0.52), 0.075, 0.44, horn, rot=(side * -0.12, math.radians(-55), 0), parent=head, group=group, tip=0.15)
+        sphere((-0.06, side * 0.5, 0.08), (0.1, 0.22, 0.06), coat, head, group)
+        sphere((-0.03, side * 0.52, 0.08), (0.06, 0.15, 0.03), muzzle, head, group)
+    face(head, 0.46, group, closed=pose == "sleep", spread=0.36)
+    fondness(body, head, group, tier, collar=((0.86, 0, 0.92), 0.26), bell=(0.92, -0.12, 0.8), ribbon=(-0.08, 0.36, 0.3), top=0.46, head_r=0.46)
+    return root
+
+
+def chicken(pose, group, tier=0):
+    root = empty((0, 0, 0), group=group)
+    feather = mat("hen_feather", (1.0, 0.98, 0.94), 0.75, sheen=0.4)
+    comb = mat("hen_comb", (0.96, 0.32, 0.32), 0.45)
+    beak = mat("hen_beak", (1.0, 0.74, 0.28), 0.4)
+    foot = mat("hen_foot", (1.0, 0.7, 0.32), 0.5)
+    lift = {"sleep": -0.18, "walk1": 0.05, "walk2": 0.0}.get(pose, 0.0)
+    body = empty((0, 0, lift), parent=root, group=group)
+    sphere((0, 0, 0.7), (0.58, 0.5, 0.5), feather, body, group)
+    for y in (-0.13, 0, 0.13):
+        rcone((-0.55, y, 1.0), 0.13, 0.5, feather, rot=(-y * 2.2, math.radians(-34), 0), parent=body, group=group, tip=0.3)
+    for side in (-1, 1):
+        sphere((-0.04, side * 0.47, 0.72), (0.36, 0.1, 0.25), feather, body, group)
+    if pose != "sleep":
+        # 脚は2本。歩く時は交互に持ち上げる
+        for side in (-1, 1):
+            step = 0.1 if (pose == "walk1") == (side < 0) and pose in ("walk1", "walk2") else 0.0
+            pivot = empty((0.06, side * 0.2, 0.3 + step), parent=body, group=group)
+            rcyl((0, 0, -0.15), 0.05, 0.3, foot, parent=pivot, group=group, round_ratio=0.3)
+            sphere((0.08, 0, -0.29), (0.15, 0.09, 0.03), foot, pivot, group, seg=12)
+    if pose == "eat":
+        # ついばむ: 頭を前に低く下げる
+        neck = empty((0.55, 0, 0.55), rot=(0, math.radians(35), 0), parent=body, group=group)
+    else:
+        neck = head_pivot(body, group, (0.3, 0, 1.05), pose)
+    head = empty((0.08, 0, 0.2), parent=neck, group=group)
+    sphere((0, 0, 0), (0.36, 0.34, 0.36), feather, head, group)
+    for x, z, r in [(-0.12, 0.34, 0.08), (0.0, 0.4, 0.1), (0.12, 0.35, 0.08)]:
+        sphere((x, 0, z), (r, 0.05, r * 1.1), comb, head, group, seg=16)
+    rcone((0.38, 0, -0.02), 0.08, 0.18, beak, rot=(0, math.radians(90), 0), parent=head, group=group, tip=0.15)
+    sphere((0.3, 0, -0.18), (0.05, 0.04, 0.08), comb, head, group, seg=12)
+    face(head, 0.36, group, closed=pose == "sleep", spread=0.42, height=0.12)
+    # 首輪と鈴は首につける（ついばむ時も頭と一緒に動く）
+    fondness(neck, head, group, tier, collar=((0.1, 0, -0.05), 0.22), bell=(0.27, 0, -0.17), ribbon=(-0.1, 0.24, 0.26), top=0.38, head_r=0.36)
+    return root
+
+
+def rabbit(pose, group, tier=0):
+    root = empty((0, 0, 0), group=group)
+    fur = mat("rabbit_fur", (0.8, 0.78, 0.84), 0.75, sheen=0.5)
+    white = mat("rabbit_white", (1.0, 0.97, 0.94), 0.75, sheen=0.4)
+    pink = mat("rabbit_pink", (1.0, 0.7, 0.75), 0.6)
+    nose = mat("rabbit_nose", (0.95, 0.5, 0.58), 0.4)
+    # 歩く時は跳ねる（1コマ目は宙、2コマ目は着地して少しつぶれる）
+    lift = {"sleep": -0.06, "walk1": 0.2, "walk2": 0.0}.get(pose, 0.0)
+    body = empty((0, 0, lift), parent=root, group=group)
+    if pose == "walk2":
+        body.scale = (1.06, 1.06, 0.92)
+    sphere((-0.05, 0, 0.55), (0.6, 0.48, 0.48), fur, body, group)
+    sphere((0.3, 0, 0.45), (0.3, 0.3, 0.3), white, body, group)
+    sphere((-0.64, 0, 0.7), (0.16, 0.16, 0.16), white, body, group, seg=16)
+    for side in (-1, 1):
+        sphere((0.36, side * 0.2, 0.08), (0.14, 0.08, 0.08), fur, body, group, seg=16)
+        sphere((-0.25, side * 0.33, 0.08), (0.26, 0.11, 0.08), fur, body, group, seg=16)
+    neck = head_pivot(body, group, (0.35, 0, 0.86), pose)
+    head = empty((0.12, 0, 0.22), parent=neck, group=group)
+    sphere((0, 0, 0), (0.42, 0.42, 0.4), fur, head, group)
+    sphere((0.32, 0, -0.12), (0.15, 0.21, 0.12), white, head, group)
+    sphere((0.45, 0, -0.05), (0.04, 0.06, 0.04), nose, head, group, seg=10)
+    for side in (-1, 1):
+        lean = -1.25 if pose == "sleep" else -0.15
+        ear = empty((-0.06, side * 0.15, 0.3), rot=(side * -0.22, lean, 0), parent=head, group=group)
+        sphere((0, 0, 0.36), (0.1, 0.13, 0.4), fur, ear, group)
+        sphere((0.06, 0, 0.36), (0.05, 0.08, 0.3), pink, ear, group, seg=16)
+    face(head, 0.42, group, closed=pose == "sleep", spread=0.36)
+    fondness(body, head, group, tier, collar=((0.42, 0, 0.84), 0.25), bell=(0.58, 0, 0.72), ribbon=(-0.04, 0.3, 0.3), top=0.4, head_r=0.42)
+    return root
+
+
+ANIMALS = {"cow": cow, "pig": pig, "sheep": sheep, "goat": goat, "chicken": chicken, "rabbit": rabbit}
 POSES = ("stand", "walk1", "walk2", "eat", "sleep")
 
 
@@ -907,7 +1005,7 @@ set_visible(everything, False)
 # なつき0は名前に段階を付けない（前からの名前のまま）。1〜4は -t1〜-t4。
 for kind, build in ANIMALS.items():
     for pose in POSES:
-        if ONLY_SPRITES and f"{kind}-{pose}" not in ONLY_SPRITES:
+        if ONLY_SPRITES and kind not in ONLY_SPRITES and f"{kind}-{pose}" not in ONLY_SPRITES:
             continue
         for tier in FONDNESS_TIERS:
             group = []

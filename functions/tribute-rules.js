@@ -44,7 +44,11 @@ const RANCH_FONDNESS = Object.freeze([
 const RANCH_XP = Object.freeze({ accept: 5, servedDay: 3, receive: 1, confirm: 2, plea: 1, extend: 2 });
 const RANCH_XP_PAIR_DAY = 10;
 // 放牧される財布の動物。管理人が契約ごとに選び、選ぶまでは契約ごとに決まった1種類。
-const RANCH_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
+// 第2段でヤギ・ニワトリ・ウサギを足した。選ぶ前の動物は第1段の3種から決める（動物を増やしても、今の契約の動物は変わらない）。
+const RANCH_ANIMALS = Object.freeze(["cow", "pig", "sheep", "goat", "chicken", "rabbit"]);
+const RANCH_DEFAULT_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
+// 財布の鳴き声（設計書16.5）。財布が自分で書く、20文字までの一言を3つまで。
+const RANCH_MOO = Object.freeze({ length: 20, lines: 3 });
 
 // そのレベルに必要な経験値の合計。Lv30 より上は、1段ごとに100ずつ増える。
 function ranchThreshold(level) {
@@ -74,7 +78,7 @@ function ranchFondness(days) {
 function defaultRanchAnimal(contractId) {
   let sum = 0;
   for (const char of String(contractId || "")) sum = (sum * 31 + char.charCodeAt(0)) % 9973;
-  return RANCH_ANIMALS[sum % RANCH_ANIMALS.length];
+  return RANCH_DEFAULT_ANIMALS[sum % RANCH_DEFAULT_ANIMALS.length];
 }
 
 const OTHELLO_RATES = Object.freeze([1, 5, 10]);
@@ -522,6 +526,22 @@ function normalizeCheer(value) {
   if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
   if (boardSexualWord(text)) return { error: CHEER_SEXUAL_MESSAGE };
   return { text };
+}
+
+// 財布の鳴き声。1つ20文字まで・3つまで。空の行と同じ行は外し、全部空なら消す。
+// 管理人の牧場の吹き出しに出るので、応援欄と同じく、連絡先などの禁止表現と性的な言葉は通さない。
+const MOO_SEXUAL_MESSAGE = "鳴き声には性的な言葉は書けません。";
+
+function normalizeMooLines(value) {
+  if (!Array.isArray(value)) return { error: "鳴き声を確かめられません。開き直してください。" };
+  const lines = [...new Set(value.slice(0, RANCH_MOO.lines * 2).map((line) => cleanLine(line, RANCH_MOO.length)).filter(Boolean))];
+  if (lines.length > RANCH_MOO.lines) return { error: `鳴き声は${RANCH_MOO.lines}つまでです。` };
+  for (const line of lines) {
+    const reason = forbiddenReason(line);
+    if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+    if (boardSexualWord(line)) return { error: MOO_SEXUAL_MESSAGE };
+  }
+  return { lines };
 }
 
 // 今日のひとこと。30文字まで、連絡先などの禁止表現と性的な言葉は通さない。
@@ -1073,6 +1093,8 @@ module.exports = {
   RANCH_XP,
   RANCH_XP_PAIR_DAY,
   RANCH_ANIMALS,
+  RANCH_DEFAULT_ANIMALS,
+  RANCH_MOO,
   ranchLevelFor,
   ranchThreshold,
   ranchFondness,
@@ -1131,6 +1153,7 @@ module.exports = {
   normalizeTodayWord,
   normalizeRankingWord,
   normalizeCheer,
+  normalizeMooLines,
   boardSexualWord,
   BOARD_SEXUAL_MESSAGE,
   normalizeSeals,

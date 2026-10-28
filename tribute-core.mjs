@@ -49,8 +49,15 @@ export const RANCH_FONDNESS = Object.freeze([
 ]);
 export const RANCH_XP = Object.freeze({ accept: 5, servedDay: 3, receive: 1, confirm: 2, plea: 1, extend: 2 });
 export const RANCH_XP_PAIR_DAY = 10;
-export const RANCH_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
-export const RANCH_ANIMAL_LABELS = Object.freeze({ cow: "牛", pig: "豚", sheep: "羊" });
+// 第2段でヤギ・ニワトリ・ウサギを足した。選ぶ前の動物は第1段の3種から決める（サーバーの RANCH_DEFAULT_ANIMALS と同じ）。
+export const RANCH_ANIMALS = Object.freeze(["cow", "pig", "sheep", "goat", "chicken", "rabbit"]);
+export const RANCH_DEFAULT_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
+export const RANCH_ANIMAL_LABELS = Object.freeze({ cow: "牛", pig: "豚", sheep: "羊", goat: "ヤギ", chicken: "ニワトリ", rabbit: "ウサギ" });
+// 財布の鳴き声（設計書16.5。サーバーの RANCH_MOO と同じ）。20文字までの一言を3つまで。
+export const RANCH_MOO = Object.freeze({ length: 20, lines: 3 });
+// 天気と季節（設計書16.6）。
+export const RANCH_SEASON_LABELS = Object.freeze({ spring: "春", summer: "夏", autumn: "秋", winter: "冬" });
+export const RANCH_WEATHER_LABELS = Object.freeze({ sunny: "晴れ", cloudy: "曇り", rain: "雨", snow: "雪" });
 // レベルで増える施設（見た目だけ）。
 export const RANCH_FACILITIES = Object.freeze([
   Object.freeze({ level: 2, label: "柵" }),
@@ -125,7 +132,7 @@ export function ranchLevelFor(xp) {
 export function defaultRanchAnimal(contractId) {
   let sum = 0;
   for (const char of String(contractId || "")) sum = (sum * 31 + char.charCodeAt(0)) % 9973;
-  return RANCH_ANIMALS[sum % RANCH_ANIMALS.length];
+  return RANCH_DEFAULT_ANIMALS[sum % RANCH_DEFAULT_ANIMALS.length];
 }
 
 // 次のレベルまでの進み具合。天井はない。artLevel は絵のレベル（Lv30 まで）。
@@ -155,13 +162,31 @@ export function ranchTimeOfDay(now = Date.now()) {
   return "night";
 }
 
+// 天気と季節（設計書16.6）。日本時間の日付だけで決まる（同じ日は誰が見ても同じ。サーバーには何も足さない）。
+// 季節は月（3〜5月 春・6〜8月 夏・9〜11月 秋・12〜2月 冬）、天気は日付から決まる晴れ・曇り・雨（冬は雨の代わりに雪）。
+export function ranchWeather(now = Date.now()) {
+  const key = jstDateKey(now);
+  const month = Number(key.slice(5, 7));
+  const season = month >= 3 && month <= 5 ? "spring" : month >= 6 && month <= 8 ? "summer" : month >= 9 && month <= 11 ? "autumn" : "winter";
+  const day = Math.floor(Date.parse(`${key}T00:00:00Z`) / 86_400_000);
+  let hash = Math.imul(day ^ 0x9e3779b9, 0x85ebca6b);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35);
+  hash ^= hash >>> 16;
+  const roll = (hash >>> 0) % 100;
+  const weather = roll < 50 ? "sunny" : roll < 78 ? "cloudy" : season === "winter" ? "snow" : "rain";
+  return { season, weather, label: `${RANCH_SEASON_LABELS[season]}・${RANCH_WEATHER_LABELS[weather]}` };
+}
+
 function jstHour(now) {
   return Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo", hour: "2-digit", hourCycle: "h23" }).format(new Date(now)));
 }
 
 // 動物のようす（設計書16.5）。いまの契約の状態だけで決める。語り手の一言は三人称の事実だけ（財布の言葉として作らない）。
 // 優先の順: 出かけている → 眠っている → つながれている → 願い出 → 届け物 → 未払い → 今日の献上 → 3日以上なにもない → のんびり。
-export function ranchAnimalMood(contract, now = Date.now()) {
+// 財布の「牧場をのぞく」（payer）では、管理人の画面にだけ出る事実（未払い・3日以上なにもない）を出さない。
+// のんびりしている時の一言は、その日の天気で変わる。
+export function ranchAnimalMood(contract, now = Date.now(), { payer = false } = {}) {
   const order = contract?.workOrder;
   if (order && !order.done && (order.kind !== "contest" || order.accepted)) return { mood: "away", line: "{name}は出稼ぎに出ている。" };
   const hour = jstHour(now);
@@ -169,10 +194,14 @@ export function ranchAnimalMood(contract, now = Date.now()) {
   if (contract?.hold) return { mood: "tied", line: "{name}はつながれて、おとなしくしている。" };
   if (contract?.plea && !contract.plea.granted) return { mood: "plea", line: "{name}が柵のそばで、許しを待っている。" };
   if (Number(contract?.awaitingReceipt) > 0) return { mood: "letter", line: "{name}の届け物が、受け取りを待っている。" };
-  if (Array.isArray(contract?.pendingRequests) && contract.pendingRequests.length) return { mood: "restless", line: "{name}は落ち着かない様子。" };
+  if (!payer && Array.isArray(contract?.pendingRequests) && contract.pendingRequests.length) return { mood: "restless", line: "{name}は落ち着かない様子。" };
   if (Number(contract?.todayTributed) > 0) return { mood: "eat", line: "{name}は干し草をもらってご機嫌。" };
   const last = String(contract?.lastServedDayKey || "") || jstDateKey(Number(contract?.acceptedAt) || now);
-  if (jstDateKey(now - 3 * 86_400_000) >= last) return { mood: "gaze", line: "{name}は柵の外を見ている。" };
+  if (!payer && jstDateKey(now - 3 * 86_400_000) >= last) return { mood: "gaze", line: "{name}は柵の外を見ている。" };
+  const weather = ranchWeather(now).weather;
+  if (weather === "rain") return { mood: "idle", line: "{name}は屋根の下で、雨の音を聞いている。" };
+  if (weather === "snow") return { mood: "idle", line: "{name}は雪を見上げている。" };
+  if (weather === "cloudy") return { mood: "idle", line: "{name}は草の上でのんびりしている。" };
   return { mood: "idle", line: "{name}は日なたでのんびりしている。" };
 }
 
@@ -1152,6 +1181,8 @@ export function viewContract(contract, uid, now = Date.now()) {
     // 牧場（設計書16.4）: 放牧の同意と、管理人が選んだ動物（選ぶまでは契約ごとに決まった1種類）。
     allowGrazing: raw.allowGrazing === true,
     ranchAnimal: RANCH_ANIMALS.includes(raw.ranchAnimal) ? raw.ranchAnimal : defaultRanchAnimal(raw.contractId),
+    // 財布が書いた鳴き声（サーバーの mooLinesView と同じ）。
+    mooLines: Array.isArray(raw.mooLines) ? raw.mooLines.map((line) => cleanText(line, RANCH_MOO.length)).filter(Boolean).slice(0, RANCH_MOO.lines) : [],
     othello: status === "active" ? othelloView(raw) : null,
     othelloResult: status === "active" ? othelloResultView(raw) : null,
     othelloRecord: othelloRecordView(raw.othelloRecord),
@@ -1667,6 +1698,17 @@ export function rankingWordProblem(value) {
 export function cheerProblem(value) {
   if (!String(value ?? "").trim()) return "応援を入力してください。";
   return publicLineProblem(value, CHEER.length, "応援", "応援欄は同意前の人も見るため、性的な言葉は書けません。");
+}
+
+// 財布の鳴き声を保存する前の確認（サーバーの normalizeMooLines と同じ）。空の行は外す。
+export function mooProblem(lines) {
+  const list = (Array.isArray(lines) ? lines : []).map((line) => String(line ?? "").normalize("NFKC").trim()).filter(Boolean);
+  if (list.length > RANCH_MOO.lines) return `鳴き声は${RANCH_MOO.lines}つまでです。`;
+  for (const line of list) {
+    const problem = publicLineProblem(line, RANCH_MOO.length, "鳴き声", "鳴き声には性的な言葉は書けません。");
+    if (problem) return problem;
+  }
+  return "";
 }
 
 export function wordAgeLabel(at, now = Date.now()) {

@@ -28,6 +28,7 @@ const {
   normalizeManagerCard,
   normalizeTodayWord,
   normalizeCheer,
+  normalizeMooLines,
   normalizeSeals,
   normalizeStyles,
   sealFor,
@@ -84,6 +85,7 @@ const {
   RANCH_XP,
   RANCH_XP_PAIR_DAY,
   RANCH_ANIMALS,
+  RANCH_MOO,
   ranchLevelFor,
   defaultRanchAnimal,
 } = require("./tribute-rules");
@@ -161,6 +163,8 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "work_claim",
   "set_grazing",
   "set_ranch_animal",
+  "set_moo",
+  "ranch_peek",
   "receive",
   "share_info",
   "set_word",
@@ -258,6 +262,13 @@ function servedTotalView(contract, now) {
   if (contract.servedTotal !== undefined && contract.servedTotal !== null) return integer(contract.servedTotal, 0, Number.MAX_SAFE_INTEGER, 0);
   const acceptedAt = integer(contract.acceptedAt, 0, Number.MAX_SAFE_INTEGER, 0);
   return acceptedAt > 0 ? Math.min(integer(contract.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0), Math.floor(Math.max(0, now - acceptedAt) / DAY_MS) + 1) : 0;
+}
+
+// 財布の鳴き声（設計書16.5）。保存した時に確かめてあるので、ここでは長さと数だけそろえる。
+function mooLinesView(contract) {
+  return Array.isArray(contract.mooLines)
+    ? contract.mooLines.map((line) => cleanLine(line, RANCH_MOO.length)).filter(Boolean).slice(0, RANCH_MOO.lines)
+    : [];
 }
 
 function ranchXpOf(data) {
@@ -664,6 +675,8 @@ function viewContract(contract, uid, now) {
     // 牧場に放牧されるか（財布が決める）と、管理人が選んだ動物（選ぶまでは契約ごとに決まった1種類）。
     allowGrazing: contract.allowGrazing === true,
     ranchAnimal: RANCH_ANIMALS.includes(contract.ranchAnimal) ? contract.ranchAnimal : defaultRanchAnimal(contract.contractId),
+    // 財布が書いた鳴き声。管理人の牧場の吹き出しに、語り手の一言と交互に出る。
+    mooLines: mooLinesView(contract),
     othello: status === "active" ? othelloView(contract) : null,
     othelloResult: status === "active" ? othelloResultView(contract) : null,
     othelloRecord: othelloRecordView(contract.othelloRecord),
@@ -3045,7 +3058,7 @@ function createTributeService(deps) {
         return { ok: true, contract: view(ctx) };
       },
     },
-    // 放牧される財布の動物を、管理人が選ぶ（牛・豚・羊）。管理人の牧場の見た目だけで、出来事は残さない。
+    // 放牧される財布の動物を、管理人が選ぶ（牛・豚・羊・ヤギ・ニワトリ・ウサギ）。管理人の牧場の見た目だけで、出来事は残さない。
     set_ranch_animal: {
       roles: ["manager"],
       statuses: ["active"],
@@ -3053,6 +3066,22 @@ function createTributeService(deps) {
         const animal = String(data?.animal || "");
         if (!RANCH_ANIMALS.includes(animal)) fail("invalid-argument", "動物を選び直してください。");
         setContract(ctx, { ranchAnimal: animal });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 財布の鳴き声（設計書16.5）。財布が自分で書く、20文字までの一言を3つまで。空にすると消える。
+    // 応援欄と同じ確認（禁止表現・連絡先・性的な言葉）を通す。管理人の牧場の見た目だけで、出来事は残さない。
+    set_moo: {
+      roles: ["payer"],
+      statuses: ["pending", "active"],
+      write(ctx, _extra, data) {
+        const normalized = normalizeMooLines(data?.lines);
+        if (normalized.error) fail("invalid-argument", normalized.error);
+        const before = mooLinesView(ctx.contract);
+        if (before.length === normalized.lines.length && before.every((line, index) => line === normalized.lines[index])) {
+          return { ok: true, contract: view(ctx), unchanged: true };
+        }
+        setContract(ctx, { mooLines: normalized.lines });
         return { ok: true, contract: view(ctx) };
       },
     },
@@ -3710,6 +3739,21 @@ function createTributeService(deps) {
     };
   }
 
+  // 財布の「牧場をのぞく」（設計書16.2）。管理人の牧場レベル（管理人カードの札と同じ情報）だけを返す。
+  // ほかの財布の動物・頭数・経験値は返さない。自分の動物は、契約の見え方（動物・なつき・鳴き声）で描く。読むだけ。
+  async function ranchPeekAction(uid, data) {
+    const contractId = requireContractId(data?.contractId);
+    const [contractSnapshot, ownSnapshot] = await Promise.all([contractRef(contractId).get(), profileRef(uid).get()]);
+    requireAge(readProfile(ownSnapshot));
+    if (!contractSnapshot.exists) fail("not-found", "契約が見つかりません。");
+    const contract = object(contractSnapshot.data());
+    const managerUid = String(contract.managerUid || "");
+    if (contract.payerUid !== uid || !managerUid) fail("permission-denied", "牧場をのぞけるのは、その契約の財布だけです。");
+    if (!OPEN_STATUSES.includes(contract.status)) fail("failed-precondition", "終わった契約では、牧場をのぞけません。");
+    const managerProfile = readProfile(await profileRef(managerUid).get());
+    return { ok: true, contractId, ranchLevel: ranchLevelFor(managerProfile.ranchXp) };
+  }
+
   async function ledgerAction(uid) {
     requireAge(await readOwnProfile(uid));
     const [asPayer, asManager] = await Promise.all([
@@ -4264,6 +4308,7 @@ function createTributeService(deps) {
       case "set_declaration": return setDeclarationAction(uid, data);
       case "receipts": return receiptsAction(uid, data);
       case "share_info": return shareInfoAction(uid, data);
+      case "ranch_peek": return ranchPeekAction(uid, data);
       case "set_word": return setWordAction(uid, data);
       case "set_own_words": return setOwnWordsAction(uid, data);
       case "ledger": return ledgerAction(uid);
