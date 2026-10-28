@@ -1678,3 +1678,143 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .tribute-event.is-contest-lost .tribute-work-card { border-style: solid; border-color: rgba(255, 143, 196, 0.6); background: rgba(255, 79, 163, 0.08); }
 .tribute-event.is-contest-lost .tribute-work-card strong { color: #ff8fc4; }
 .tribute-tally .is-contest { border-color: rgba(232, 194, 122, 0.5); background: rgba(232, 194, 122, 0.08); color: #f3d28a; }
+
+/* わたしの牧場（ranch-pasture-v1、設計書16）: 管理人の「契約」画面のいちばん上。空は時間帯で色を変え、芝の島と動物は Blender で描いた絵。 */
+.tribute-tag.is-ranch { display: inline-flex; gap: 4px; align-items: center; border-color: rgba(126, 224, 138, 0.55); color: #c9f5cf; }
+.tribute-tag.is-ranch i { font-style: normal; font-size: 0.68em; padding: 0 3px; border-radius: 4px; background: rgba(126, 224, 138, 0.2); }
+.tribute-check.is-grazing small { display: block; margin-top: 2px; font-size: 0.74rem; }
+.tribute-ranch { display: grid; gap: 8px; border-color: rgba(126, 224, 138, 0.4); }
+.tribute-ranch-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.tribute-ranch-head strong { color: #c9f5cf; font-size: 1.15rem; }
+.tribute-ranch-head small { color: var(--tr-mist); font-size: 0.78rem; }
+.tribute-ranch-meter { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.tribute-ranch-meter i { display: block; height: 100%; width: var(--ratio, 0%); border-radius: inherit; background: linear-gradient(90deg, #7ee08a, #f3d28a); }
+.tribute-ranch-scene {
+  position: relative;
+  aspect-ratio: 960 / 600;
+  overflow: hidden;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #9fd4f7 0%, #d8effc 70%, #eaf7ff 100%);
+  isolation: isolate;
+}
+.tribute-ranch.is-morning .tribute-ranch-scene { background: linear-gradient(180deg, #b8dcf5 0%, #fde6d4 75%, #fff2e4 100%); }
+.tribute-ranch.is-evening .tribute-ranch-scene { background: linear-gradient(180deg, #6f6fb8 0%, #e79aa8 55%, #fbc890 100%); }
+.tribute-ranch.is-night .tribute-ranch-scene {
+  background:
+    radial-gradient(1.5px 1.5px at 12% 18%, #fff 60%, transparent 62%),
+    radial-gradient(1px 1px at 28% 9%, #fff 60%, transparent 62%),
+    radial-gradient(1.5px 1.5px at 47% 22%, #fff 60%, transparent 62%),
+    radial-gradient(1px 1px at 63% 12%, #fff 60%, transparent 62%),
+    radial-gradient(1.5px 1.5px at 81% 20%, #fff 60%, transparent 62%),
+    radial-gradient(1px 1px at 92% 6%, #fff 60%, transparent 62%),
+    radial-gradient(14px 14px at 86% 14%, #fff8d8 50%, rgba(255, 248, 216, 0.25) 60%, transparent 72%),
+    linear-gradient(180deg, #141a3c 0%, #2b3472 70%, #3b4486 100%);
+}
+.tribute-ranch-ground { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; }
+.tribute-ranch-animal,
+.tribute-ranch-prop.is-stake {
+  position: absolute;
+  left: var(--x1);
+  top: var(--y1);
+  width: 17%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -72.26%);
+}
+.tribute-ranch-animal { padding: 0; border: 0; background: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.tribute-ranch-animal:not(.is-still) { animation: ranch-wander 16s ease-in-out var(--delay, 0s) infinite alternate; }
+.tribute-ranch-sprite { position: absolute; inset: 0; display: block; }
+.tribute-ranch-animal:not(.is-still) .tribute-ranch-sprite { animation: ranch-face 32s steps(1, end) var(--delay, 0s) infinite; }
+.tribute-ranch-sprite img,
+.tribute-ranch-prop { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; user-select: none; }
+.tribute-ranch-sprite .is-still { opacity: 0; }
+.tribute-ranch-sprite .is-step-a { animation: ranch-step 0.7s steps(1, end) infinite; }
+.tribute-ranch-animal.is-restless { animation-duration: 6s; }
+.tribute-ranch-animal.is-restless .tribute-ranch-sprite .is-step-a { animation-duration: 0.4s; }
+.tribute-ranch-prop.is-hay { width: 52%; height: 52%; inset: auto auto 6% 54%; }
+.tribute-ranch-prop.is-letter { width: 46%; height: 46%; inset: -6% auto auto 27%; animation: ranch-float 2.4s ease-in-out infinite; }
+.tribute-ranch-prop.is-stake { width: 11%; transform: translate(-50%, -72.26%); }
+.tribute-ranch-zz { position: absolute; top: 4%; right: 14%; color: #fff; font: 700 clamp(0.6rem, 2.4vw, 0.9rem) / 1 var(--tr-font, sans-serif); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); animation: ranch-float 3s ease-in-out infinite; }
+.tribute-ranch-zz b { font-size: 1.3em; }
+.tribute-ranch-name {
+  position: absolute;
+  left: 50%;
+  top: 76%;
+  transform: translateX(-50%);
+  max-width: 120%;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(23, 18, 28, 0.62);
+  color: #fff;
+  font-size: clamp(0.5rem, 1.9vw, 0.68rem);
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tribute-ranch-animal.is-selected .tribute-ranch-name { background: #ff4fa3; }
+.tribute-ranch-bubble {
+  position: absolute;
+  left: 50%;
+  bottom: 92%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(260%, 10rem);
+  padding: 3px 7px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #3a2b33;
+  font-size: clamp(0.52rem, 2vw, 0.68rem);
+  line-height: 1.35;
+  white-space: normal;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  animation: ranch-bubble var(--cycle, 18s) linear var(--bubble-delay, 0s) infinite;
+}
+.tribute-ranch-animal.is-selected .tribute-ranch-bubble { animation: none; opacity: 1; }
+.tribute-ranch-card { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid rgba(126, 224, 138, 0.4); border-radius: 12px; background: rgba(126, 224, 138, 0.06); }
+.tribute-ranch-card > div:first-child { display: flex; align-items: baseline; gap: 8px; }
+.tribute-ranch-card strong { color: #c9f5cf; }
+.tribute-ranch-card small { color: var(--tr-mist); }
+.tribute-ranch-card p { margin: 0; font-size: 0.86rem; }
+.tribute-ranch-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
+.tribute-ranch-kinds button { min-width: 3.2rem; padding: 4px 12px; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 999px; background: none; color: var(--tr-mist); font: inherit; font-size: 0.82rem; }
+.tribute-ranch-kinds button[aria-pressed="true"] { border-color: #7ee08a; color: var(--tr-text); background: rgba(126, 224, 138, 0.14); }
+.tribute-ranch-away { margin: 0; color: var(--tr-mist); font-size: 0.8rem; }
+.tribute-ranch-diary h3 { margin: 0 0 4px; font-size: 0.86rem; color: var(--tr-text); }
+.tribute-ranch-diary ul { margin: 0; padding-left: 1.1em; display: grid; gap: 2px; font-size: 0.82rem; }
+.tribute-ranch-diary p { margin: 0; color: var(--tr-mist); font-size: 0.8rem; }
+.tribute-ranch-rule { color: var(--tr-mist); font-size: 0.72rem; }
+@keyframes ranch-wander {
+  from { left: var(--x1); top: var(--y1); }
+  to { left: var(--x2); top: var(--y2); }
+}
+@keyframes ranch-face {
+  0% { transform: scaleX(var(--face, 1)); }
+  50% { transform: scaleX(calc(var(--face, 1) * -1)); }
+}
+@keyframes ranch-step {
+  0% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes ranch-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6%); }
+}
+@keyframes ranch-bubble {
+  0% { opacity: 0; }
+  3%, 22% { opacity: 1; }
+  25%, 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tribute-ranch-animal,
+  .tribute-ranch-sprite,
+  .tribute-ranch-sprite img,
+  .tribute-ranch-prop,
+  .tribute-ranch-zz { animation: none !important; }
+  .tribute-ranch-sprite .is-step-a,
+  .tribute-ranch-sprite .is-step-b { opacity: 0; }
+  .tribute-ranch-sprite .is-still { opacity: 1; }
+  .tribute-ranch-bubble { animation: none; }
+}

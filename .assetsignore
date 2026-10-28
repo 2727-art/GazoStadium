@@ -31,6 +31,8 @@ ui-debug.log
 
 # Build inputs and retired standalone modes are not public entries.
 scripts/
+# 絵を描くためのスクリプト（Blender）。描いた絵は assets/ に置く。
+art/
 market.js
 market.css
 market-transfer.mjs

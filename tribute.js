@@ -46,6 +46,10 @@ import {
   PURPOSES,
   RECEIVABLE_KINDS,
   RECITE_TARGETS,
+  RANCH_ANIMALS,
+  RANCH_ANIMAL_LABELS,
+  RANCH_FACILITIES,
+  RANCH_LAYOUT,
   REWARD_WORD,
   SEAL_WORD_PREFIX,
   REPORT_REASON_LABELS,
@@ -105,6 +109,12 @@ import {
   stylesLabel,
   normalizeXProfile,
   purposeLabel,
+  ranchAnimalMood,
+  ranchDiary,
+  ranchLevelFor,
+  ranchProgress,
+  ranchSnapshot,
+  ranchTimeOfDay,
   purposesFor,
   ranchOpenUrl,
   rankingWordProblem,
@@ -129,7 +139,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -222,6 +232,8 @@ function createState() {
     ledger: { status: "idle", asPayer: [], asManager: [] },
     // kind: 番付加算（score）か貢がれ総額（gross）か。画面を移っても選んだ方を覚えておく。
     ranking: { status: "idle", managers: [], monthKey: "", kind: "score" },
+    // わたしの牧場（設計書16）: 押した動物と、この画面を開いた時に作った日報。
+    ranch: { selected: "", diary: null },
     vault: { status: "idle", data: null, pendingMove: null, moveError: "" },
     // 管理人カードの編集で使う、持っている飾り・解除済みの実績・金庫のいちばん高い段階（編集を開いた時に読む）。
     decorations: { status: "idle", owned: [], achievements: [], vaultBestTier: 0 },
@@ -334,6 +346,12 @@ function disclosureTag(disclosure) {
 }
 
 // 金庫の段階（外に見せるのは段階だけ）。
+// 牧場レベルの札（設計書16.3）。関係の積み重ねで上がり、Pay の額では上がらない。
+function ranchTag(card) {
+  const level = Number(card?.ranchLevel) || 0;
+  return level > 0 ? `<span class="tribute-tag is-ranch" title="牧場レベル：財布との関係の積み重ねで上がります"><i aria-hidden="true">牧</i>Lv.${level}</span>` : "";
+}
+
 function vaultTag(vault) {
   const tier = vaultTierInfo(vault?.level);
   return tier ? `<span class="tribute-tag is-vault is-vault-${escapeHtml(tier.id)}" title="金庫の段階：${escapeHtml(tier.label)}"><i aria-hidden="true">庫</i>${escapeHtml(tier.label)}</span>` : "";
@@ -469,6 +487,7 @@ function renderHub() {
   const firstSteps = isFirstTimeWallet(profile) ? renderStartGuide() : "";
   const endedPanel = ended.length ? `<details class="tribute-panel tribute-ended"><summary>終わった契約（${ended.length}）</summary>${ended.map(renderContractRow).join("")}</details>` : "";
   return frame(`<div class="tribute-hub">
+    ${renderRanch(open, profile)}
     ${refund}
     ${firstSteps}
     ${hasContracts ? `${renderTodo(open, profile)}${lists}${me}` : `${me}${lists}`}
@@ -565,7 +584,7 @@ function renderMyPanel(profile, { boardNotice = true } = {}) {
       </div>
       <div class="tribute-me-manager">
         <span class="tribute-eyebrow">管理人として</span>
-        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${vaultTag(card.vault)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${escapeHtml(boardStatusLabel(profile))}</small></div></div>
+        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${vaultTag(card.vault)}${ranchTag(card)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${escapeHtml(boardStatusLabel(profile))}</small></div></div>
           <div class="tribute-row">
             <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
             <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
@@ -710,6 +729,155 @@ function renderBoardNotice(profile) {
   return "";
 }
 
+// ───────────── わたしの牧場（設計書16） ─────────────
+// 管理人の「契約」画面のいちばん上。放牧に同意した財布が動物になって歩き、契約の今の状態から決まったしぐさと、
+// 語り手の一言（三人称の事実だけ）が出る。牧場レベルは関係の積み重ねで上がり、Pay の額では上がらない。
+// 来ないと減る・弱る仕組み、通知、連続日数は入れない。絵は art/tribute-ranch/render_ranch.py で描いた。
+const RANCH_ASSET_KEY = "ranch-pasture-v1";
+const RANCH_WANDER = Object.freeze([[0.06, 0.025], [-0.06, 0.03], [0.05, -0.03], [-0.05, -0.025]]);
+
+function ranchImage(name) {
+  return `assets/tribute-ranch/${name}.webp?v=${RANCH_ASSET_KEY}`;
+}
+
+function ranchName(contract) {
+  return managerNickname(contract) || contract.payer.walletName;
+}
+
+// 放牧されている財布（管理人の進行中の契約で、財布が同意したものだけ）。
+function ranchHerd(contracts) {
+  return contracts
+    .filter((contract) => contract.role === "manager" && contract.status === "active" && contract.allowGrazing)
+    .sort((left, right) => left.contractId.localeCompare(right.contractId));
+}
+
+function ranchPercent(value) {
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+// 日報は、この画面を開いた時に一度だけ作る（前に見た時の数は、この端末にだけ残す）。
+function ranchDiaryLines(herd) {
+  if (state.ranch.diary) return state.ranch.diary;
+  const rows = herd.map((contract) => ({
+    contractId: contract.contractId,
+    name: ranchName(contract),
+    tributeCount: contract.tributeCount,
+    totalTributed: contract.totalTributed,
+    wordOfferings: contract.wordOfferings,
+    workOrdersDone: contract.workOrdersDone,
+    contestWon: contract.contestRecord?.won,
+  }));
+  const current = ranchSnapshot(rows);
+  const key = `tribute-ranch-seen:${state.uid}`;
+  let previous = null;
+  try {
+    previous = JSON.parse(window.localStorage.getItem(key) || "null");
+  } catch {
+    previous = null;
+  }
+  // 見本では、前に見た時を少し前の数にして、日報の見え方を確かめる。
+  if (previewScreen) previous = ranchSnapshot(rows.slice(1).map((row, index) => ({ ...row, tributeCount: Math.max(0, row.tributeCount - (index === 0 ? 2 : 0)), totalTributed: Math.max(0, row.totalTributed - (index === 0 ? 150 : 0)), wordOfferings: Math.max(0, row.wordOfferings - (index === 1 ? 1 : 0)) })));
+  const lines = ranchDiary(previous, current);
+  try {
+    window.localStorage.setItem(key, JSON.stringify(current));
+  } catch { /* 残せない時は、次に開いた時に日報が出ないだけ。 */ }
+  state.ranch.diary = lines;
+  return lines;
+}
+
+function renderRanchAnimal(entry, index) {
+  const { contract, mood, spot } = entry;
+  const name = ranchName(contract);
+  const animal = contract.ranchAnimal;
+  const light = entry.light;
+  const still = ["sleep", "tied", "plea", "gaze", "eat"].includes(mood.mood);
+  const wander = RANCH_WANDER[index % RANCH_WANDER.length];
+  const pose = mood.mood === "sleep" ? "sleep" : mood.mood === "eat" ? "eat" : "stand";
+  const sprite = still
+    ? `<img src="${escapeHtml(ranchImage(`${animal}-${pose}-${light}`))}" alt="" draggable="false" />`
+    : `<img class="is-step-b" src="${escapeHtml(ranchImage(`${animal}-walk2-${light}`))}" alt="" draggable="false" /><img class="is-step-a" src="${escapeHtml(ranchImage(`${animal}-walk1-${light}`))}" alt="" draggable="false" /><img class="is-still" src="${escapeHtml(ranchImage(`${animal}-stand-${light}`))}" alt="" draggable="false" />`;
+  const props = [
+    mood.mood === "eat" ? `<img class="tribute-ranch-prop is-hay" src="${escapeHtml(ranchImage(`prop-hay-${light}`))}" alt="" draggable="false" />` : "",
+    mood.mood === "letter" ? `<img class="tribute-ranch-prop is-letter" src="${escapeHtml(ranchImage(`prop-letter-${light}`))}" alt="" draggable="false" />` : "",
+    mood.mood === "sleep" ? '<span class="tribute-ranch-zz" aria-hidden="true">z<b>z</b></span>' : "",
+  ].join("");
+  const line = mood.line.replaceAll("{name}", name);
+  const selected = state.ranch.selected === contract.contractId;
+  const style = [
+    `--x1:${ranchPercent(spot[0])}`,
+    `--y1:${ranchPercent(spot[1])}`,
+    `--x2:${ranchPercent(spot[0] + (still ? 0 : wander[0]))}`,
+    `--y2:${ranchPercent(spot[1] + (still ? 0 : wander[1]))}`,
+    `--face:${wander[0] > 0 ? -1 : 1}`,
+    `--delay:${-(index * 3.7).toFixed(1)}s`,
+    `--bubble-delay:${(index * 6).toFixed(0)}s`,
+    `z-index:${Math.round(spot[1] * 100)}`,
+  ].join(";");
+  return `<button type="button" class="tribute-ranch-animal is-${mood.mood}${still ? " is-still" : ""}${selected ? " is-selected" : ""}" data-t="ranch-animal" data-contract="${escapeHtml(contract.contractId)}" style="${style}" aria-pressed="${selected}" aria-label="${escapeHtml(`${name}（${RANCH_ANIMAL_LABELS[animal] || ""}）：${line}`)}">
+      <span class="tribute-ranch-sprite">${sprite}</span>${props}<span class="tribute-ranch-name">${escapeHtml(name)}</span><span class="tribute-ranch-bubble" aria-hidden="true">${escapeHtml(line)}</span>
+    </button>`;
+}
+
+function renderRanch(open, profile) {
+  if (!profile.card) return "";
+  const now = Date.now();
+  const progress = ranchProgress(profile.ranch?.xp);
+  const time = ranchTimeOfDay(now);
+  const light = time === "morning" ? "day" : time;
+  const herd = ranchHerd(open);
+  const placed = [];
+  const away = [];
+  let next = 0;
+  let staked = false;
+  let fenced = false;
+  for (const contract of herd) {
+    const mood = ranchAnimalMood(contract, now);
+    if (mood.mood === "away") {
+      away.push(contract);
+      continue;
+    }
+    let spot;
+    if (mood.mood === "tied" && !staked) {
+      spot = [RANCH_LAYOUT.stake[0] + 0.045, RANCH_LAYOUT.stake[1] + 0.02];
+      staked = true;
+    } else if (mood.mood === "plea" && !fenced) {
+      spot = RANCH_LAYOUT.fence;
+      fenced = true;
+    } else {
+      spot = RANCH_LAYOUT.spots[next % RANCH_LAYOUT.spots.length];
+      next += 1;
+    }
+    placed.push({ contract, mood, spot, light });
+  }
+  const selected = placed.find((entry) => entry.contract.contractId === state.ranch.selected)
+    || (away.find((contract) => contract.contractId === state.ranch.selected) ? { contract: away.find((contract) => contract.contractId === state.ranch.selected), mood: { mood: "away", line: "{name}は出稼ぎに出ている。" } } : null);
+  const diary = ranchDiaryLines(herd);
+  const upcoming = RANCH_FACILITIES.find((facility) => facility.level > progress.level);
+  const stake = staked ? `<img class="tribute-ranch-prop is-stake" style="--x1:${ranchPercent(RANCH_LAYOUT.stake[0])};--y1:${ranchPercent(RANCH_LAYOUT.stake[1])};z-index:${Math.round(RANCH_LAYOUT.stake[1] * 100)}" src="${escapeHtml(ranchImage(`prop-stake-${light}`))}" alt="" draggable="false" />` : "";
+  const card = selected ? (() => {
+    const name = ranchName(selected.contract);
+    return `<div class="tribute-ranch-card">
+      <div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(RANCH_ANIMAL_LABELS[selected.contract.ranchAnimal] || "")}</small></div>
+      <p>${escapeHtml(selected.mood.line.replaceAll("{name}", name))}</p>
+      <div class="tribute-ranch-kinds" role="group" aria-label="動物を選ぶ">${RANCH_ANIMALS.map((animal) => `<button type="button" data-t="ranch-kind" data-contract="${escapeHtml(selected.contract.contractId)}" data-animal="${animal}" aria-pressed="${selected.contract.ranchAnimal === animal}" ${state.busy ? "disabled" : ""}>${escapeHtml(RANCH_ANIMAL_LABELS[animal])}</button>`).join("")}</div>
+      <button class="button button-ghost button-small" type="button" data-t="open-thread" data-contract="${escapeHtml(selected.contract.contractId)}">スレッドへ</button>
+    </div>`;
+  })() : "";
+  return `<section class="tribute-panel tribute-ranch is-${time}" aria-label="わたしの牧場">
+    <div class="tribute-ranch-head"><span class="tribute-eyebrow">わたしの牧場</span><strong>牧場 Lv.${progress.level}</strong><small>${progress.next === null ? "いちばん上のレベル" : `次の Lv まで あと ${progress.toNext}`}</small></div>
+    <div class="tribute-ranch-meter" aria-hidden="true"><i style="--ratio:${ranchPercent(progress.ratio)}"></i></div>
+    <div class="tribute-ranch-scene" style="--cycle:${Math.max(18, placed.length * 6)}s">
+      <img class="tribute-ranch-ground" src="${escapeHtml(ranchImage(`ranch-lv${progress.level}-${light}`))}" alt="牧場 Lv.${progress.level}の芝の島" draggable="false" />
+      ${stake}${placed.map((entry, index) => renderRanchAnimal(entry, index)).join("")}
+    </div>
+    ${card}
+    ${away.length ? `<p class="tribute-ranch-away">出稼ぎに出ている：${away.map((contract) => `<button type="button" class="tribute-link" data-t="ranch-animal" data-contract="${escapeHtml(contract.contractId)}">${escapeHtml(ranchName(contract))}</button>`).join("・")}</p>` : ""}
+    ${herd.length ? "" : '<p class="tribute-note">放牧に同意した財布が、ここで暮らします。財布は申し込みとスレッドの設定で選べます。</p>'}
+    <div class="tribute-ranch-diary"><h3>日報</h3>${diary.length ? `<ul>${diary.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : '<p>前に見た時から、変わったことはありません。</p>'}</div>
+    <small class="tribute-ranch-rule">牧場は、財布を迎える・仕えた日・受け取り・確認・願い出への返事・延長で育ちます。Pay の額では上がらず、来なくても何も減りません。${upcoming ? ` 次は Lv.${upcoming.level} で「${escapeHtml(upcoming.label)}」。` : ""}</small>
+  </section>`;
+}
+
 // 今日のひとこと（管理人だけ）。掲示板のカードに24時間出て、出すとカードが上に並ぶ。
 function renderWordForm(profile) {
   const word = profile.card?.word;
@@ -801,7 +969,7 @@ function renderManagerCard(card, { compact = false, preview = false } = {}) {
     : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame, card.frameColor)}>`;
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
     ${face}
-      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${rankHeart(card.grossRank)}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${rankHeart(card.grossRank)}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${ranchTag(card)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
       ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
@@ -890,7 +1058,7 @@ function renderManagerDetail() {
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
     <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame, card.frameColor)}>
-      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${rankHeart(card.grossRank, " is-large")}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${declarationTags(card)}</div></div></div>
+      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${rankHeart(card.grossRank, " is-large")}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${ranchTag(card)}${declarationTags(card)}</div></div></div>
       ${cardAchievementsMarkup(card.achievements, " is-large")}
       ${wordBubble(card.word, " is-large")}
       <p class="tribute-profile-intro">${escapeHtml(card.intro || "（紹介文なし）")}</p>
@@ -1005,6 +1173,7 @@ function renderApply() {
       <small>管理人のスレッドに出て、言葉選びの手がかりになります。ご褒美にも使われます。契約の「言われたい言葉」でいつでも変えられます。</small></label>
     <label class="tribute-check"><input type="checkbox" name="allowReportRequests" ${checked("allowReportRequests")} /><span>残高報告を求められてもよい</span></label>
     <label class="tribute-check is-hold"><input type="checkbox" name="allowHolds" ${checked("allowHolds", true)} /><span>お預けを受ける<small>管理人が「お預け」にすると、自分からは差し出せなくなり、「貢がせてください」と願い出て許されると1回だけ差し出せます。請求に応えるのはいつもどおりです。契約の「お預けの設定」でいつでも外せます。</small></span></label>
+    <label class="tribute-check is-grazing"><input type="checkbox" name="allowGrazing" ${checked("allowGrazing", true)} /><span>牧場に放牧される<small>管理人の牧場で、あなたが動物（牛・豚・羊）になって暮らします。見られるのは管理人だけで、ほかの財布には見えません。契約の「牧場の設定」でいつでも外せます。</small></span></label>
     <label class="tribute-check is-othello"><input type="checkbox" name="allowOthello" ${checked("allowOthello", true)} /><span>貢ぎオセロを受ける<small>管理人と交互に打つオセロです。始めるかどうかと1枚あたりの額は管理人が決め、終わった時の石の差が罰金になります（1回の限度額まで）。降参でき、契約の「貢ぎオセロの設定」で外すと進行中の対局は罰金なしで終わります。</small></span></label>
     <label class="tribute-check is-work"><input type="checkbox" name="allowWorkOrders" ${checked("allowWorkOrders", true)} /><span>出稼ぎ命令を受ける<small>管理人が「1on1を○回完走して稼いでこい」と命じられます。命令ではPayは動かず、期限も罰もありません。命令の後に完走した数を、あなたが報告します。契約の「出稼ぎの設定」でいつでも外せます。</small></span></label>
     <label class="tribute-check"><input type="checkbox" name="rankOptIn" ${checked("rankOptIn")} /><span>この管理人の番付に財布名で載る</span></label>
@@ -1576,7 +1745,7 @@ function renderEvent(event, view, statuses) {
         <span class="tribute-bubble">${escapeHtml(event.text)}</span>${mine && view.role === "payer" && view.peerReadSeq >= Number(event.seq) ? '<span class="tribute-read">既読</span>' : ""}${time}</li>`;
     case "applied":
       // 限度額は出さない（管理人も読む出来事のため）。
-      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_CEILING_LABELS[event.tone] || "普通まで")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}${event.allowWorkOrders ? " ・ 出稼ぎ命令 可" : ""}${event.allowHolds ? " ・ お預け 可" : ""}${event.allowOthello ? " ・ 貢ぎオセロ 可" : ""}`);
+      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_CEILING_LABELS[event.tone] || "普通まで")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}${event.allowWorkOrders ? " ・ 出稼ぎ命令 可" : ""}${event.allowHolds ? " ・ お預け 可" : ""}${event.allowOthello ? " ・ 貢ぎオセロ 可" : ""}${event.allowGrazing ? " ・ 放牧 可" : ""}`);
     case "accepted": {
       const collarNo = Number(event.collarNo) || 0;
       const collar = collarNo
@@ -1656,6 +1825,8 @@ function renderEvent(event, view, statuses) {
       return system(event.reason === "purpose"
         ? "性的な名目の許可が外れたので、性的な言葉の復唱を取り下げました。"
         : `${escapeHtml(managerName)}が復唱を取り下げました。`);
+    case "grazing_changed":
+      return system(`${escapeHtml(payerName)}が牧場に${event.allowGrazing ? "放牧されるようにしました" : "放牧されないようにしました"}。`);
     case "othello_setting":
       return system(`${escapeHtml(payerName)}が貢ぎオセロを${event.allowOthello ? "受ける" : "受けない"}ようにしました。`);
     case "othello_start":
@@ -1961,6 +2132,7 @@ function renderThreadActionButtons(view) {
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="want-words">言われたい言葉</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="holds-settings">お預けの設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="othello-settings">貢ぎオセロの設定</button>
+      <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="grazing-settings">牧場の設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button>
@@ -2732,6 +2904,17 @@ function renderSheet() {
         <p class="tribute-form-error" data-form-error role="alert"></p>
         <button class="button button-primary" type="submit" ${state.busy || left < 1 ? "disabled" : ""}>抵抗する</button>
       </form>`);
+    }
+    case "grazing-settings": {
+      if (view.role !== "payer") return "";
+      const allow = view.allowGrazing;
+      return wrap("牧場の設定", `<div class="tribute-confirm">
+        <p>${escapeHtml(view.manager.personaName)}の牧場に、あなたが動物になって放牧されるかを決めます。決めるのはあなただけで、いつでも変えられます。</p>
+        <p>いま：<b>${allow ? "放牧されている" : "放牧されていない"}</b></p>
+        <p class="tribute-note">牧場では、あなたの献上・言葉の献上・お預けなどの今の状態が、動物のしぐさになります。見られるのは管理人だけで、ほかの財布には見えません。外すと、その場で牧場からいなくなります。</p>
+        <button class="button ${allow ? "button-ghost" : "button-primary"}" type="button" data-t="set-grazing" data-allow="${allow ? "0" : "1"}" ${state.busy ? "disabled" : ""}>${allow ? "放牧されないようにする" : "放牧される"}</button>
+        <button class="button button-ghost" type="button" data-t="sheet-close">閉じる</button>
+      </div>`);
     }
     case "othello-settings": {
       if (view.role !== "payer") return "";
@@ -4045,6 +4228,7 @@ async function handleSubmit(form) {
           allowWorkOrders: data.get("allowWorkOrders") === "on",
           allowHolds: data.get("allowHolds") === "on",
           allowOthello: data.get("allowOthello") === "on",
+          allowGrazing: data.get("allowGrazing") === "on",
           acceptNoDecline: data.get("acceptNoDecline") === "on",
           walletName: String(data.get("walletName") || ""),
         },
@@ -4719,6 +4903,32 @@ async function handleClick(target) {
       openSheet("give", { othello: true, amount: othelloPayable(view, result), purpose: "penalty", step: "hold" });
       return;
     }
+    case "set-grazing": {
+      const allow = target.dataset.allow === "1";
+      const result = await mutate("set_grazing", contractPayload({ allowGrazing: allow }), {
+        success: allow ? "牧場に放牧されるようにしました。" : "牧場に放牧されないようにしました。",
+      });
+      if (result) closeSheet();
+      return;
+    }
+    // わたしの牧場: 動物を押すと、名前・ようす・動物を選ぶ・スレッドへが出る。もう一度押すと閉じる。
+    case "ranch-animal":
+      state.ranch.selected = state.ranch.selected === target.dataset.contract ? "" : String(target.dataset.contract || "");
+      render();
+      return;
+    case "ranch-kind": {
+      const contractId = String(target.dataset.contract || "");
+      const animal = String(target.dataset.animal || "");
+      await mutate("set_ranch_animal", { contractId, animal }, {
+        success: `動物を「${RANCH_ANIMAL_LABELS[animal] || ""}」にしました。`,
+        after: (result) => {
+          const row = state.contracts.find((contract) => contract.contractId === contractId);
+          if (row) row.ranchAnimal = result?.contract?.ranchAnimal || animal;
+          if (state.screen === "hub") render();
+        },
+      });
+      return;
+    }
     case "set-othello": {
       const allow = target.dataset.allow === "1";
       const result = await mutate("set_othello", contractPayload({ allowOthello: allow }), {
@@ -5379,6 +5589,7 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   xHandle: "mio_sama_ranch",
   accepting: true,
   vault: { level: 4, id: "treasury", label: "宝物庫" },
+  ranchLevel: 6,
   activeContracts: 4,
   showsActivity: true,
   lastActiveAt: Date.now(),
@@ -5462,6 +5673,7 @@ function previewRaw(role, status = "active") {
     workOrdersDone: role === "payer" ? 0 : 1,
     // 貢ぎオセロ: 管理人の見本は自分の手番の対局、財布の見本は差し出す罰金。
     allowOthello: true,
+    allowGrazing: true,
     othelloSeq: role === "payer" ? 2 : 3,
     othello: role === "manager" ? previewOthelloGame(now) : null,
     othelloResult: role === "payer" ? { gameSeq: 2, penalty: 15, stones: 3, rate: 5, resigned: false, finishedAt: now - 20 * 60_000 } : null,
@@ -5579,6 +5791,38 @@ function previewThread(contractId) {
   return { raw, events: previewEvents(raw) };
 }
 
+// 見本の牧場の財布（管理人の進行中の契約）。食べる・届け物・つながれている・のんびり・出稼ぎ中を1頭ずつ。
+function previewHerd(now) {
+  const base = (index, extra) => ({
+    ...previewRaw("manager"),
+    contractId: String(5 + index).repeat(40),
+    payerWalletName: ["ポチ財布", "しもべ1号", "名無しの財布", "ミルク", "モブ財布"][index],
+    collarNo: 4 + index,
+    allowGrazing: true,
+    ranchAnimal: ["pig", "sheep", "cow", "pig", "sheep"][index],
+    hold: null,
+    plea: null,
+    reciteOrder: null,
+    extension: null,
+    workOrder: null,
+    pendingRequests: {},
+    awaitingReceipt: 0,
+    todayTributed: 0,
+    totalTributed: 300 + index * 120,
+    tributeCount: 4 + index,
+    wordOfferings: index,
+    ...extra,
+  });
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now));
+  return [
+    base(0, { todayKey: today, todayTributed: 150 }),
+    base(1, { awaitingReceipt: 1, todayKey: today }),
+    base(2, { hold: { since: now - 3_600_000, note: "" }, todayKey: today }),
+    base(3, { todayKey: today }),
+    base(4, { workOrder: { orderSeq: 1, target: 3, note: "", issuedAt: now - 3_600_000, reportedCount: 1, reportedAt: now - 600_000, doneAt: 0 } }),
+  ];
+}
+
 function previewCall(action, payload) {
   const now = previewNow();
   const monthKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit" }).format(new Date(now));
@@ -5595,6 +5839,8 @@ function previewCall(action, payload) {
           publicManagerId: "f".repeat(24),
           hidden: false,
           vault: { ...previewVault },
+          // わたしの牧場: ranch は Lv10（施設がそろった牧場）、ほかは Lv5。
+          ranch: { xp: previewScreen === "ranch" ? 1_450 : 230, level: ranchLevelFor(previewScreen === "ranch" ? 1_450 : 230) },
           counts: { payerOpen: 1, managerActive: 1, managerPending: 1 },
           receiptCount: 3,
           // hub-refund: 返金待ち（運営からの返金と管理口座の返金）の見え方を確かめる。
@@ -5618,6 +5864,7 @@ function previewCall(action, payload) {
               ...(previewScreen === "newcomer" ? [] : [viewContract(previewRaw("payer"), "preview-me", now)]),
               viewContract(previewRaw("manager"), "preview-me", now),
               viewContract(previewRaw("manager", "pending"), "preview-me", now),
+              ...(["hub", "ranch"].includes(previewScreen) ? previewHerd(now).map((raw) => viewContract(raw, "preview-me", now)) : []),
             ].map((contract) => (contract.role === "manager" ? { ...contract, nickname: previewNicknames.get(contract.contractId) || "" } : contract)),
       });
     case "board":
@@ -6074,6 +6321,17 @@ function previewCall(action, payload) {
       });
       return Promise.resolve({ ok: true, contract: view });
     }
+    case "set_grazing": {
+      const view = previewThreadChange((raw, push) => {
+        raw.allowGrazing = payload.allowGrazing === true;
+        push({ type: "grazing_changed", actor: "payer", allowGrazing: raw.allowGrazing });
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "set_ranch_animal": {
+      const row = state.contracts.find((contract) => contract.contractId === payload.contractId);
+      return Promise.resolve({ ok: true, contract: { ...(row || {}), ranchAnimal: payload.animal } });
+    }
     case "set_holds": {
       const view = previewThreadChange((raw, push) => {
         raw.allowHolds = payload.allowHolds === true;
@@ -6283,6 +6541,7 @@ function startPreview(screen) {
     receipts: () => navigate("receipts"),
     ledger: () => navigate("ledger"),
     ranking: () => navigate("ranking"),
+    ranch: () => navigate("hub"),
     "ranking-gross": () => {
       state.ranking.kind = "gross";
       navigate("ranking");

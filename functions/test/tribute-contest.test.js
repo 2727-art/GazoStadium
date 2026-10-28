@@ -312,7 +312,7 @@ test("the work panel: an offer to answer, progress toward wins, judging after th
 });
 
 test("cache keys and the design record", () => {
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*ranch-contest-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*ranch-contest-v1(?:-[a-z0-9-]+)?"/);
   const index = read("index.html");
   for (const name of ["tribute.css", "tribute.js"]) {
     assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-contest-v1(?:-[a-z0-9-]+)?"`), name);

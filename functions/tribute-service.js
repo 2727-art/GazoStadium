@@ -81,6 +81,11 @@ const {
   othelloNextTurn,
   othelloOutcome,
   normalizeOthelloStart,
+  RANCH_XP,
+  RANCH_XP_PAIR_DAY,
+  RANCH_ANIMALS,
+  ranchLevelFor,
+  defaultRanchAnimal,
 } = require("./tribute-rules");
 const {
   ACHIEVEMENT_BY_ID,
@@ -154,6 +159,8 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "work_decline",
   "work_judge",
   "work_claim",
+  "set_grazing",
+  "set_ranch_animal",
   "receive",
   "share_info",
   "set_word",
@@ -237,6 +244,12 @@ function eventId(seq) {
   return `e${String(seq).padStart(7, "0")}`;
 }
 
+// 牧場の経験値（設計書16.3）。記録のない管理人（公開より前から続けている人）は、迎えた財布の数 × 5 から始める。
+function ranchXpOf(data) {
+  if (data.ranchXp === undefined || data.ranchXp === null) return integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0) * RANCH_XP.accept;
+  return integer(data.ranchXp, 0, Number.MAX_SAFE_INTEGER, 0);
+}
+
 function readProfile(snapshot) {
   const data = snapshot?.exists ? object(snapshot.data()) : {};
   const counts = object(data.counts);
@@ -265,6 +278,7 @@ function readProfile(snapshot) {
     operatorRefundClaimCount: integer(data.operatorRefundClaimCount, 0, Number.MAX_SAFE_INTEGER, 0),
     refundClaimCount: integer(data.refundClaimCount, 0, Number.MAX_SAFE_INTEGER, 0),
     collarCount: integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    ranchXp: ranchXpOf(data),
     word: {
       text: cleanLine(object(data.word).text, LIMITS.todayWord),
       at: integer(object(data.word).at, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -354,6 +368,8 @@ function publicCard(profile, monthKey, now) {
     xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
     accepting: profile.accepting,
     vault: vaultBadge(profile),
+    // 牧場レベルの札（設計書16.3）。額ではなく、関係の積み重ねで上がる。
+    ranchLevel: ranchLevelFor(profile.ranchXp),
     activeContracts: profile.counts.managerActive,
     // 最後に動いた時は、管理人が出すと選んだカードだけ相手に渡す。出さないカードも、掲示板は動いた順に並ぶ。
     showsActivity: card.showsActivity === true,
@@ -371,6 +387,8 @@ function ownProfileView(profile, monthKey, now) {
     accepting: profile.accepting,
     publicManagerId: profile.publicManagerId,
     hidden: profileIsHidden(profile, monthKey),
+    // 自分の牧場の経験値とレベル（管理人の「わたしの牧場」の欄）。
+    ranch: { xp: profile.ranchXp, level: ranchLevelFor(profile.ranchXp) },
     // 自分の金庫（額は本人にだけ）。いちばん高く届いた段階までの金庫の飾りを使える。
     vault: {
       qualified: profile.vaultQualifiedAt > 0,
@@ -628,6 +646,9 @@ function viewContract(contract, uid, now) {
     allowWorkOrders: contract.allowWorkOrders === true,
     allowHolds: contract.allowHolds === true,
     allowOthello: contract.allowOthello === true,
+    // 牧場に放牧されるか（財布が決める）と、管理人が選んだ動物（選ぶまでは契約ごとに決まった1種類）。
+    allowGrazing: contract.allowGrazing === true,
+    ranchAnimal: RANCH_ANIMALS.includes(contract.ranchAnimal) ? contract.ranchAnimal : defaultRanchAnimal(contract.contractId),
     othello: status === "active" ? othelloView(contract) : null,
     othelloResult: status === "active" ? othelloResultView(contract) : null,
     othelloRecord: othelloRecordView(contract.othelloRecord),
@@ -669,6 +690,8 @@ function viewContract(contract, uid, now) {
     recitesDone: integer(contract.recitesDone, 0, Number.MAX_SAFE_INTEGER, 0),
     wordOfferings: integer(contract.wordOfferings, 0, Number.MAX_SAFE_INTEGER, 0),
     wordOffersToday: contract.wordOfferDayKey === jstDateKey(now) ? integer(contract.wordOfferDayCount, 0, 1_000, 0) : 0,
+    // 最後に仕えた日（献上か言葉の献上をした日本時間の日）。牧場の動物のようすに使う。
+    lastServedDayKey: [String(contract.todayKey || ""), String(contract.wordOfferDayKey || "")].filter((key) => /^\d{4}-\d{2}-\d{2}$/.test(key)).sort().at(-1) || "",
     extension: status === "active" ? extensionView(contract) : null,
     eventSeq,
     unread: Math.max(0, eventSeq - readSeq),
@@ -911,6 +934,22 @@ function createTributeService(deps) {
     return { servedMonthKey: ctx.monthKey, servedDays: countedToday ? days : days + 1, servedDayKey: ctx.dateKey };
   }
 
+  // 牧場の経験値（設計書16.3）。管理人のプロフィールに積む。組ごとに1日 RANCH_XP_PAIR_DAY まで（日本時間）。下がらない。
+  function grantRanchXp(ctx, points) {
+    const pair = ctx.pair.value;
+    const used = pair.ranchXpDayKey === ctx.dateKey ? integer(pair.ranchXpDay, 0, RANCH_XP_PAIR_DAY, 0) : 0;
+    const give = Math.min(points, RANCH_XP_PAIR_DAY - used);
+    if (give <= 0) return;
+    patchPair(ctx, { ranchXpDayKey: ctx.dateKey, ranchXpDay: used + give });
+    patchProfile(ctx, "manager", { ranchXp: ctx.profiles.manager.value.ranchXp + give });
+  }
+
+  // その日初めての献上・言葉の献上か（仕えた日が1日増えるか）。servedDayPatch を当てる前に読む。
+  function newServedDay(ctx) {
+    const pair = ctx.pair.value;
+    return !(pair.servedMonthKey === ctx.monthKey && pair.servedDayKey === ctx.dateKey);
+  }
+
   // 貢ぎオセロの決着（設計書15.2）。戦績は組と契約の両方に残し、財布が負けた時だけ罰金を残す（自動では引き落とさない）。
   function finishOthello(ctx, game, board, { resigned = false } = {}) {
     const outcome = othelloOutcome(board, game.rate, { resigned });
@@ -972,6 +1011,7 @@ function createTributeService(deps) {
       setContract(ctx, { plea: null });
     }
     pushEvent(ctx, { type: grant ? "plea_granted" : "plea_denied", actor: "manager", pleaSeq: plea.pleaSeq, amount: plea.amount, ...(note ? { note } : {}) });
+    grantRanchXp(ctx, RANCH_XP.plea);
     setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
     markManagerActive(ctx);
     return { ok: true, contract: view(ctx) };
@@ -1477,6 +1517,8 @@ function createTributeService(deps) {
     const receiptId = extra.receiptId || hashId("receipt", ctx.contractId, opKey);
     ctx.extraWrites.push((transaction) => transaction.create(receiptRef(ctx.payerUid, receiptId), receipt));
     // 貢ぎ帳と番付
+    // 牧場の経験値: 仕えた日が1日増えた（設計書16.3）。
+    if (newServedDay(ctx)) grantRanchXp(ctx, RANCH_XP.servedDay);
     patchPair(ctx, {
       total: integer(pair.total, 0, Number.MAX_SAFE_INTEGER, 0) + amount,
       count: pairCountBefore + 1,
@@ -2060,6 +2102,8 @@ function createTributeService(deps) {
         allowWorkOrders: application.allowWorkOrders,
         allowHolds: application.allowHolds,
         allowOthello: application.allowOthello,
+        allowGrazing: application.allowGrazing,
+        ranchAnimal: "",
         othello: null,
         othelloSeq: 0,
         othelloResult: null,
@@ -2111,6 +2155,7 @@ function createTributeService(deps) {
         allowWorkOrders: application.allowWorkOrders,
         allowHolds: application.allowHolds,
         allowOthello: application.allowOthello,
+        allowGrazing: application.allowGrazing,
         createdAt: now,
       });
       transaction.set(profileRef(uid), {
@@ -2273,6 +2318,8 @@ function createTributeService(deps) {
           managerPersonaName: managerName(ctx),
         });
         const collarNo = ensureCollar(ctx);
+        // 牧場の経験値: 新しい財布を迎えた（設計書16.3）。
+        grantRanchXp(ctx, RANCH_XP.accept);
         // 貢ぎオセロの戦績は組ごと（契約をまたぐ）。前の契約の戦績を、この契約に写して見せる。
         if (ctx.pair.value.othelloRecord) setContract(ctx, { othelloRecord: othelloRecordView(ctx.pair.value.othelloRecord) });
         pushEvent(ctx, { type: "accepted", actor: "manager", expiresAt: ctx.contract.expiresAt, collarNo });
@@ -2818,6 +2865,7 @@ function createTributeService(deps) {
         });
         pushEvent(ctx, { type: "word_offering", actor: "payer", text: normalized.text });
         // 言葉の献上も、仕えた日として数える（Pay は動かないので、額の記録は変えない）。
+        if (newServedDay(ctx)) grantRanchXp(ctx, RANCH_XP.servedDay);
         patchPair(ctx, { ...servedDayPatch(ctx), rankOptIn: ctx.contract.rankOptIn === true, walletName: payerName(ctx) });
         return { ok: true, contract: view(ctx) };
       },
@@ -2891,6 +2939,7 @@ function createTributeService(deps) {
         setContract(ctx, { reciteOrder: null });
         pushEvent(ctx, { type: "recite_confirm", actor: "manager", orderSeq: order.orderSeq, target: order.target, seal, ...sealLook(card), ...rewardMarks });
         if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
+        grantRanchXp(ctx, RANCH_XP.confirm);
         markManagerActive(ctx);
         return { ok: true, contract: view(ctx) };
       },
@@ -2934,6 +2983,7 @@ function createTributeService(deps) {
           extendedDays: integer(ctx.contract.extendedDays, 0, Number.MAX_SAFE_INTEGER, 0) + extension.days,
         });
         pushEvent(ctx, { type: "extend_accepted", actor: "manager", days: extension.days, expiresAt });
+        grantRanchXp(ctx, RANCH_XP.extend);
         markManagerActive(ctx);
         return { ok: true, contract: view(ctx) };
       },
@@ -2951,6 +3001,29 @@ function createTributeService(deps) {
       },
     },
     // 出稼ぎ命令を受けるか。決めるのは預ける側だけで、いつでも変えられる。外すと、まだ果たしていない命令はその場で消える。
+    // 牧場に放牧されるか（設計書16.4）。決めるのは財布で、いつでも変えられる。外すと、その場で牧場から消える。
+    set_grazing: {
+      roles: ["payer"],
+      statuses: ["pending", "active"],
+      write(ctx, _extra, data) {
+        const allow = data?.allowGrazing === true;
+        if ((ctx.contract.allowGrazing === true) === allow) return { ok: true, contract: view(ctx), unchanged: true };
+        setContract(ctx, { allowGrazing: allow });
+        pushEvent(ctx, { type: "grazing_changed", actor: "payer", allowGrazing: allow });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 放牧される財布の動物を、管理人が選ぶ（牛・豚・羊）。管理人の牧場の見た目だけで、出来事は残さない。
+    set_ranch_animal: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        const animal = String(data?.animal || "");
+        if (!RANCH_ANIMALS.includes(animal)) fail("invalid-argument", "動物を選び直してください。");
+        setContract(ctx, { ranchAnimal: animal });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
     // 貢ぎオセロを受けるか（設計書15.2）。決めるのは財布。外すと、進行中の対局は罰金なしで終わる。
     set_othello: {
       roles: ["payer"],
@@ -3232,6 +3305,7 @@ function createTributeService(deps) {
         });
         // ご褒美の一言は返事なので、既読無視を終える。
         if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
+        grantRanchXp(ctx, RANCH_XP.confirm);
         markManagerActive(ctx);
         return { ok: true, contract: view(ctx) };
       },
@@ -3392,6 +3466,7 @@ function createTributeService(deps) {
         });
         // ご褒美の一言は返事なので、既読無視を終える。
         if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
+        grantRanchXp(ctx, RANCH_XP.receive);
         markManagerActive(ctx);
         return { ok: true, contract: view(ctx) };
       },

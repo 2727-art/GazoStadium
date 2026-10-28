@@ -25,6 +25,29 @@ const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 
 // 貢ぎオセロ（設計書15.2）。盤は64文字（"." 空き・"M" 管理人の石・"P" 財布の石＝Payのコイン）。左上から右へ、上の段から並べる。
 // 運の要素は入れない。罰金は終わった時の石の差 × 1枚あたりの額（財布の1回の限度額まで）。
+// 牧場経営（設計書16）。経験値は管理人と財布の間で起きた事実で積み、Pay の額では上げない。下がらない。
+// 組ごとに1日10まで（日本時間）。レベルは経験値の合計で決まる（Lv1〜Lv10）。
+const RANCH_LEVELS = Object.freeze([0, 20, 60, 120, 200, 320, 480, 700, 1000, 1400]);
+const RANCH_XP = Object.freeze({ accept: 5, servedDay: 3, receive: 1, confirm: 2, plea: 1, extend: 2 });
+const RANCH_XP_PAIR_DAY = 10;
+// 放牧される財布の動物。管理人が契約ごとに選び、選ぶまでは契約ごとに決まった1種類。
+const RANCH_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
+
+function ranchLevelFor(xp) {
+  const value = Math.max(0, Math.floor(Number(xp) || 0));
+  let level = 1;
+  RANCH_LEVELS.forEach((need, index) => {
+    if (value >= need) level = index + 1;
+  });
+  return level;
+}
+
+function defaultRanchAnimal(contractId) {
+  let sum = 0;
+  for (const char of String(contractId || "")) sum = (sum * 31 + char.charCodeAt(0)) % 9973;
+  return RANCH_ANIMALS[sum % RANCH_ANIMALS.length];
+}
+
 const OTHELLO_RATES = Object.freeze([1, 5, 10]);
 const OTHELLO_HANDICAPS = Object.freeze(["none", "manager_corner", "payer_corner"]);
 const OTHELLO_DIRECTIONS = Object.freeze([[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]);
@@ -789,6 +812,7 @@ function normalizeApplication(value, { entryFee = 0 } = {}) {
       allowHolds: value?.allowHolds === true,
       // 貢ぎオセロを受けるか（設計書15.2）。始めるかどうかは管理人だけが決める。
       allowOthello: value?.allowOthello === true,
+      allowGrazing: value?.allowGrazing === true,
       walletName: normalizeWalletName(value?.walletName),
     },
   };
@@ -1014,6 +1038,12 @@ module.exports = {
   othelloNextTurn,
   othelloOutcome,
   normalizeOthelloStart,
+  RANCH_LEVELS,
+  RANCH_XP,
+  RANCH_XP_PAIR_DAY,
+  RANCH_ANIMALS,
+  ranchLevelFor,
+  defaultRanchAnimal,
   MAX_MANAGER_STYLES,
   normalizeStyles,
   SIGIL_COLORS,

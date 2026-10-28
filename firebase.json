@@ -136,6 +136,7 @@
       ".claude/**",
       "**/node_modules/**",
       "scripts/**",
+      "art/**",
       "market.js",
       "market.css",
       "market-transfer.mjs",
