@@ -1,0 +1,132 @@
+{
+  "checkedAt": "2026-10-28T11:01:31.630Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "763709f",
+  "implementationCommit": "763709f",
+  "baseCommit": "5a417a6",
+  "alsoPushed": [
+    "48c69cf (ranch view release record)"
+  ],
+  "decisions": {
+    "reason": "a manager reached Lv4 right after release; Lv10 at 1,400 points would be reached within one or two months",
+    "levels": "Lv1-10 unchanged; from Lv11 each step needs 100 more (Lv11 1,900, Lv15 4,900, Lv20 10,900, Lv25 19,400, Lv30 30,400); art up to Lv30; numbers keep rising after Lv30 without a ceiling",
+    "fondness": "per wallet, from lifetime served days across contracts: 7 bell, 30 ribbon, 100 flower crown, 365 gold crown; never from Pay amounts",
+    "olderPairs": "start from min(tribute count, days since first tribute including that day)",
+    "order": "before stage 2",
+    "decidedBy": "user, 2026-10-28 JST (all recommended options)"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "ranchImages": {
+      "total": 324,
+      "newOrChanged": 279,
+      "bytes": 3057682
+    },
+    "cacheKey": "ranch-growth-v1",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2336,
+    "passed": 2302,
+    "failed": 0,
+    "skipped": 34,
+    "newFiles": [
+      "functions/test/tribute-ranch-growth.test.js"
+    ]
+  },
+  "preview": {
+    "width": "375x812",
+    "consoleErrors": 0,
+    "horizontalOverflow": false,
+    "checked": [
+      "ranch preview at Lv30 (night and switched to day)",
+      "five fondness tiers on the herd (3, 12, 45, 120, 400 days)",
+      "tap card fondness line",
+      "evening art via a composite of Lv30 in three lights"
+    ]
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "279 new or redrawn ranch images"
+    ],
+    "unchangedImagesMatched": 45,
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "tributeActionHash": "d5a1ac1ae19e3aec8e9d24318afdab28c4cb06ed"
+    }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 763709f and origin/main contained)",
+    "order": [
+      "functions:tributeAction",
+      "git push origin HEAD:main (5a417a6..763709f)",
+      "hosting"
+    ],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": {
+        "tributeAction": {
+          "before": "d5a1ac1ae19e3aec8e9d24318afdab28c4cb06ed",
+          "after": "cb402dbd6d63aa6fecfe29da947abcdb5ba073d7"
+        }
+      }
+    },
+    "workersBuild": {
+      "commit": "763709f",
+      "conclusion": "success",
+      "completedAt": "2026-10-28T11:00:48Z"
+    },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-ranch-growth-release.cjs",
+      "checkedAt": "2026-10-28T11:01:31.630Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "imagesPerRoute": 324,
+      "imagesByteIdentical": true,
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-growth-v1 on the manifest tribute.js, the tribute.css data-src, tribute-core.mjs and the ranch images",
+      "coreChecks": {
+        "30400 points": "Lv30",
+        "40000 points": "Lv33",
+        "45 days": "リボン"
+      },
+      "imageContentType": "image/webp",
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "fondness on real animals can only be checked by signed-in managers; covered by tests and previews",
+    "cows no longer wear a bell until 7 days served",
+    "next: stage 2"
+  ]
+}
