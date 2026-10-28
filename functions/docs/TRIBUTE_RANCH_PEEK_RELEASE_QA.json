@@ -1,0 +1,138 @@
+{
+  "checkedAt": "2026-10-28T11:53:19.407Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "6a4afcb",
+  "implementationCommit": "6a4afcb",
+  "baseCommit": "5c46e38",
+  "decisions": {
+    "request": "第2段の実装に入ってください (ranch stage 2, design 16.11)",
+    "peek": "the wallet opens 牧場をのぞく from its thread: the manager's ranch art and level with only its own animal, under its wallet name; manager-only facts (unpaid requests, 3 quiet days) are not shown; the grazing switch moved into this sheet",
+    "mooLines": "set_moo by the wallet (pending or active): up to 3 lines of 20 characters, checked like cheers, no thread event; the manager's bubbles alternate narrator facts with them in 「」, not while sleeping; nothing is written in the wallet's voice for wallets that wrote nothing",
+    "weather": "from the Japan date only: season by month, sunny about 50%, cloudy about 30%, rain about 20% (snow instead in winter); CSS overlays and ground tints, stopped with reduced motion; idle lines follow the weather",
+    "animals": "goat, chicken and rabbit added (labels ヤギ, ニワトリ, ウサギ); the default before the manager picks still hashes over cow, pig and sheep so no current animal changes",
+    "decidedBy": "design section 16 (user, 2026-10-28); details as recommended"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "newActions": [
+      "set_moo",
+      "ranch_peek (read-only, returns the level only)"
+    ],
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "ranchImages": {
+      "total": 549,
+      "new": 225,
+      "newBytes": 710284,
+      "totalBytes": 3767966,
+      "assetKeyUnchanged": "ranch-growth-v1"
+    },
+    "cacheKey": "ranch-peek-v1",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2345,
+    "passed": 2311,
+    "failed": 0,
+    "skipped": 34,
+    "newFiles": [
+      "functions/test/tribute-ranch-peek.test.js"
+    ]
+  },
+  "preview": {
+    "width": "375x812",
+    "horizontalOverflow": false,
+    "checked": [
+      "manager ranch with goat, rabbit and chicken, the 秋・雨 label and moo bubbles in 「」",
+      "rain, snow and spring petals by switching the season and weather classes",
+      "wallet peek (?tributePreview=ranch-peek): one animal, wallet name, fondness line, no manager controls",
+      "saving moo lines (blank lines dropped) and the URL and sexual-word errors",
+      "grazing off and on inside the peek"
+    ]
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "225 new animal images (404 before the release)"
+    ],
+    "unchangedImagesMatched": 324,
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "unchangedSinceLastRelease": true,
+      "tributeActionHash": "cb402dbd6d63aa6fecfe29da947abcdb5ba073d7"
+    }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 6a4afcb and origin/main contained)",
+    "order": [
+      "functions:tributeAction",
+      "git push origin HEAD:main (5c46e38..6a4afcb)",
+      "hosting"
+    ],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": {
+        "tributeAction": {
+          "before": "cb402dbd6d63aa6fecfe29da947abcdb5ba073d7",
+          "after": "d3335d2614419ea700e7adeccc9e223eef4f3676"
+        }
+      }
+    },
+    "workersBuild": {
+      "commit": "6a4afcb",
+      "conclusion": "success",
+      "completedAt": "2026-10-28T11:48:17Z"
+    },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-ranch-peek-release.cjs",
+      "checkedAt": "2026-10-28T11:53:19.407Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "imagesPerRoute": 549,
+      "imagesByteIdentical": true,
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-peek-v1 on the manifest tribute.js, the tribute.css data-src and tribute-core.mjs; images still use ranch-growth-v1",
+      "coreChecks": {
+        "animals": "cow,pig,sheep,goat,chicken,rabbit",
+        "defaults": "cow,pig,sheep",
+        "weather on 2026-10-28": "秋・雨",
+        "moo checks": "もー ok; example.com rejected; four lines rejected"
+      },
+      "clientChecks": "牧場をのぞく button, ranch_peek call and set_moo form present in the delivered tribute.js",
+      "imageContentType": "image/webp",
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "the peek, moo lines and new animals on real contracts can only be checked by signed-in wallets and managers; covered by tests and previews",
+    "an empty folder C:\\assets left by a Blender run with a relative output path; the user can delete it",
+    "the stage plan in design 16.11 is complete"
+  ]
+}
