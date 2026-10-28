@@ -1,0 +1,135 @@
+{
+  "checkedAt": "2026-10-28T12:44:36.756Z",
+  "status": "firebase-verified-workers-pending",
+  "project": "gazostadium",
+  "sourceCommit": "04a0937",
+  "implementationCommit": "04a0937",
+  "baseCommit": "35de7dc",
+  "decisions": {
+    "request": "すべておすすめで進めてください (after the stage 2 improvement ideas)",
+    "done": "the recommended items: pat (なでる) and three small fixes",
+    "notDone": "ranch photo for X, ranch-level ranking (left for the user)",
+    "pat": "the manager pats a grazing wallet's animal once a day per contract (JST); the wallet's peek shows today's pat or the last pat date; no ranch points, thread event, notification, count comparison or board refresh; animals away cannot be patted",
+    "fixes": [
+      "animals 13 and up stand next to the twelve spots, a little smaller (ranchSpot); 24 fit on the grass at Lv1, Lv10 and Lv30",
+      "speech bubbles take turns by herd size so two never show at once",
+      "reduced motion keeps the peek's one bubble and the pat mark (the manager's selected animal already kept its bubble)"
+    ],
+    "decidedBy": "user, 2026-10-28 JST"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "newActions": [
+      "ranch_pat"
+    ],
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "ranchImages": {
+      "total": 549,
+      "changed": 0,
+      "assetKeyUnchanged": "ranch-growth-v1"
+    },
+    "cacheKey": "ranch-pat-v1",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2352,
+    "passed": 2318,
+    "failed": 0,
+    "skipped": 34,
+    "newFiles": [
+      "functions/test/tribute-ranch-pat.test.js"
+    ]
+  },
+  "preview": {
+    "width": "375x812",
+    "consoleErrors": 0,
+    "horizontalOverflow": false,
+    "checked": [
+      "ranch-crowd: 20 animals in 20 places, at most one bubble at a time over 16 samples",
+      "ranch: pat button, toast, heart, then 今日はなでました; patted-today and away animals",
+      "ranch-peek: 今日、ミオ様になでてもらった。 with the heart mark"
+    ]
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "unchangedImagesMatched": 549,
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "unchangedSinceLastRelease": true,
+      "tributeActionHash": "d3335d2614419ea700e7adeccc9e223eef4f3676"
+    }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 04a0937 and origin/main contained)",
+    "order": [
+      "functions:tributeAction",
+      "git push origin HEAD:main (35de7dc..04a0937)",
+      "hosting"
+    ],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": {
+        "tributeAction": {
+          "before": "d3335d2614419ea700e7adeccc9e223eef4f3676",
+          "after": "ee272f51d1cc1f2b8c3ff1fdddfe9296bad60109"
+        }
+      }
+    },
+    "workersBuild": {
+      "commit": "04a0937",
+      "conclusion": "failure",
+      "completedAt": "2026-10-28T12:43:35Z",
+      "note": "failed as soon as it started, like the transient failures of 77e936e and 810f4a3 earlier the same day (both cleared on the next push); same kind of change as 6a4afcb, which built; logs are in the Cloudflare dashboard, which I cannot sign in to; the release record push starts a new build"
+    },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-ranch-pat-release.cjs",
+      "checkedAt": "2026-10-28T12:44:36.756Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "previous release (35de7dc)",
+        "https://hariaistadium.com": "previous release (35de7dc)"
+      },
+      "imagesPerRoute": 549,
+      "imagesByteIdentical": true,
+      "privateFiles404": true,
+      "olderRoutesCompatible": "the stage 2 client works with the new tributeAction (it never calls ranch_pat)"
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-pat-v1 on a freshly fetched index.html (the tab still held an index.html from 40 minutes earlier; HTML is cached for an hour by the Firebase default, unchanged)",
+      "clientChecks": "ranch_pat call, bubble turns, heart and crowded styles present in the delivered tribute.js and tribute.css",
+      "coreChecks": {
+        "ranchSpot(12)": "0.5627,0.5735 (next to spot 1)",
+        "viewContract pattedAt": "passed through"
+      },
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "check workers.dev and hariaistadium.com after the build started by the record push",
+    "pats on real contracts can only be checked by signed-in managers and wallets; covered by tests and previews",
+    "ranch photo for X and ranch-level ranking remain as ideas"
+  ]
+}
