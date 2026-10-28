@@ -36,10 +36,10 @@ test("Realtime Database browser traffic stays on the Firebase SDK", () => {
 test("cache busters load one App Check module generation", () => {
   const html = read("index.html");
   assert.doesNotMatch(html, /src="(?:flea-market|danwaku-note|free-table)\.js\?v=/);
-  for (const moduleName of ["account", "strategy", "online", "ai-text-training", "market"]) {
+  for (const moduleName of ["account", "strategy", "online", "ai-text-training", "market-records"]) {
     assert.match(html, new RegExp(`${moduleName}\\.js\\?v=[^"]*app-check-v3`));
   }
-  for (const assetName of ["styles.css", "app.js", "account.js", "strategy.js", "online.js", "market.js"]) {
+  for (const assetName of ["styles.css", "app.js", "account.js", "strategy.js", "online.js", "market-records.js"]) {
     assert.match(html, new RegExp(`${assetName.replace(".", "\\.")}\\?v=[^"]*ai-text-training-v1`));
   }
   const serviceImporters = [
@@ -166,7 +166,7 @@ test("local integration mode redirects Authentication as well as data services",
   assert.equal(firebaseConfig.emulators.functions.port, 5001);
   const servicesSource = read("firebase-services.js");
   assert.match(servicesSource, /connectAuthEmulator/);
-  assert.match(servicesSource, /connectDatabaseEmulator/);
+  assert.match(read("firebase-database-client.mjs"), /connectDatabaseEmulator/);
   assert.match(servicesSource, /connectFirestoreEmulator/);
   assert.match(servicesSource, /connectFunctionsEmulator/);
   const clientSource = read("firebase-client.js");
@@ -203,7 +203,7 @@ test("offline market preview does not initialize App Check or background Firebas
   assert.match(appCheckSource, /searchParams\.has\("marketPreview"\)/);
   assert.match(appCheckSource, /searchParams\.has\("aiTextTrainingPreview"\)/);
   assert.match(servicesSource, /searchParams\.has\("aiTextTrainingPreview"\)/);
-  assert.match(onlineSource, /if \(!useOfflineMarketPreview\) watchLobbyStats\(\);/);
+  assert.match(read("landing-presence.mjs"), /if \(preview\) return;/);
   assert.match(onlineSource, /if \(useOfflineMarketPreview\) return null;/);
   for (const relativePath of ["online.js", "strategy.js"]) {
     assert.match(firebaseEntrySource(relativePath), /useOfflineMarketPreview/);

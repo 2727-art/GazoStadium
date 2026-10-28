@@ -26,36 +26,14 @@ test("landing keeps snapshot counts on the entry cards and removes the duplicate
   }
 });
 
-test("the initial-only loader retains one lifetime request, bounded timeouts and only the active battle presence source", () => {
-  const online = read("online.js");
-  const loader = sourceBetween(online, "function loadInitialLobbyStats", "function watchLobbyStats");
-  const watcher = sourceBetween(online, "function watchLobbyStats()", "function watchDailyDateRollover");
-  assert.match(online, /let lobbyInitialStatsRequest = null/);
-  assert.match(loader, /if \(lobbyInitialStatsRequest\) return lobbyInitialStatsRequest/);
-  assert.doesNotMatch(loader, /lobbyInitialStatsRequest\s*=\s*null|\.finally\(/);
-  assert.match(online, /const LOBBY_PUBLIC_STATS_REQUEST_TIMEOUT_MS = 20_000/);
-  assert.match(loader, /get\(ref\(database, "\.info\/serverTimeOffset"\)\)/);
-  assert.ok(loader.indexOf('get(ref(database, ".info/serverTimeOffset"))') < loader.indexOf('get(ref(database, "online/publicPresence"))'));
-  assert.match(loader, /get\(ref\(database, "online\/publicPresence"\)\)/);
-  assert.doesNotMatch(loader, /[Ff]reeTablePublicStats|httpsCallable/);
-  assert.match(loader, /URLSearchParams\(location.search\).has\("freeTableInvite"\)/);
-  assert.doesNotMatch(loader, /onValue\(|setInterval\(|ensureAuthenticated|signInAnonymously/);
-  assert.doesNotMatch(online, /publicMarketPresence|aiTextTrainingPublicStats|refreshLobbyPublicStats|getLobbyStatsRefreshStatus|lobbyPublicStatsRefresh|LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS/);
-  assert.match(watcher, /loadInitialLobbyStats\(\)/);
-  assert.doesNotMatch(watcher, /onValue\(|visibilitychange|setInterval\(/);
-  const listener = watcher.slice(watcher.indexOf('window.addEventListener("hariai-landing-rendered"'));
-  assert.match(listener, /renderLobbyStats\(\)/);
-  assert.doesNotMatch(listener, /refreshLobbyStats\(|loadFreeTable|get\(/);
-  assert.match(listener, /loadInitialLobbyStats\(\)/, "home can start the deferred initial snapshot after a retired invite");
-});
-
-test("landing snapshots keep their notification channel without free-table result lamps", () => {
-  const app = read("app.js");
-  const online = read("online.js");
-  const refresh = sourceBetween(online, "function refreshLobbyStats(", "function renderLobbyStats()");
-  assert.match(refresh, /hariai-lobby-stats-updated/);
-  assert.doesNotMatch(app + online, /hariai-free-table-public-stats-updated|updateLandingFreeTableEntrance|refreshFreeTablePublicStats/);
-  assert.match(online, /function formatLobbyStatsUpdatedAt\(/, "battle presence timestamp formatting remains available");
+test("the protected landing loader uses one lifetime request without full game services", () => {
+ const source = read("landing-presence.mjs");
+ assert.match(source, /if \(request\) return request/);
+ assert.match(source, /get\(ref\(database, "online\/publicPresence"\)\)/);
+ assert.match(source, /firebase-database-client/);
+ assert.doesNotMatch(source, /from.*firebase-services|onValue\(|setInterval\(|signInAnonymously/);
+ assert.match(source, /hariai-lobby-stats-updated/);
+ assert.match(read("firebase-database-client.mjs"), /from.*firebase-client/);
 });
 
 test("initial snapshot assets carry a new cache generation and document the one-read lifecycle", () => {

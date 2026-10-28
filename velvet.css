@@ -62,9 +62,9 @@
   --ha-icon-bolt: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'><path d='M13 3 4 14h7l-1 7 9-11h-7z'/></svg>");
   --ha-icon-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12h14M13 6l6 6-6 6'/></svg>");
 
-  --vs-font-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
-  --vs-font-accent: "Playfair Display", "Times New Roman", serif;
-  --vs-font-number: "Oswald", "Arial Narrow", sans-serif;
+  --vs-font-display: "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --vs-font-accent: "Times New Roman", serif;
+  --vs-font-number: "Arial Narrow", sans-serif;
   --vs-font-body: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
 
   --vs-ease-out: cubic-bezier(0.16, 1, 0.3, 1);

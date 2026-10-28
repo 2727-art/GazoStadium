@@ -109,9 +109,9 @@ test("market shop initialization returns fund impact and both recommendation sur
 
 test("patron account, market, and shared styles use one cache generation", () => {
   assert.match(index, /styles\.css\?v=[^"]*patron-circulation-v1/);
-  assert.match(index, /market\.css\?v=[^"]*patron-circulation-v1/);
+  assert.match(index, /market-records\.css\?v=[^"]*patron-circulation-v1/);
   assert.match(index, /account\.js\?v=[^"]*patron-circulation-v1/);
-  assert.match(index, /market\.js\?v=[^"]*patron-circulation-v1/);
+  assert.match(index, /market-records\.js\?v=[^"]*patron-circulation-v1/);
 });
 
 test("certificate output re-applies the half-fee and 10 Pay subsidy ceiling", () => {

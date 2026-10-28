@@ -1687,27 +1687,6 @@ button:disabled {
   box-shadow: 0 18px 46px rgba(77, 213, 202, 0.3);
 }
 
-.hero-danwaku-note-button {
-  grid-column: 1 / -1;
-  min-height: 88px;
-  color: #fff8ff;
-  border-color: rgba(237, 190, 255, 0.72);
-  background:
-    radial-gradient(circle at 18% 20%, rgba(255, 255, 255, 0.22), transparent 31%),
-    linear-gradient(135deg, #39275d 0%, #734978 48%, #9f5f8a 100%);
-  box-shadow: 0 15px 38px rgba(93, 48, 117, 0.26);
-}
-
-.hero-danwaku-note-button:hover {
-  border-color: #fff;
-  box-shadow: 0 18px 44px rgba(122, 70, 137, 0.36);
-}
-
-.hero-danwaku-note-button span i {
-  margin-right: 0.25em;
-  font-style: normal;
-}
-
 .hero-mode-button::after {
   position: absolute;
   top: -48px;
@@ -2034,102 +2013,6 @@ button:disabled {
   left: 2px;
   color: #72dfd5;
   content: "●";
-}
-
-
-.landing-flea {
-  position: relative;
-  max-width: 860px;
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  gap: 22px;
-  margin-top: 18px;
-  padding: 22px;
-  overflow: hidden;
-  border: 1px solid rgba(196, 151, 255, 0.3);
-  border-radius: 22px;
-  background:
-    radial-gradient(circle at 5% 20%, rgba(196, 151, 255, 0.16), transparent 30%),
-    linear-gradient(135deg, rgba(28, 20, 42, 0.95), rgba(12, 20, 29, 0.95));
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.18), inset 0 1px rgba(255, 255, 255, 0.05);
-}
-
-.landing-flea::after {
-  position: absolute;
-  right: -50px;
-  bottom: -70px;
-  width: 180px;
-  height: 180px;
-  border: 1px solid rgba(196, 151, 255, 0.12);
-  border-radius: 50%;
-  content: "";
-}
-
-.landing-flea-mark {
-  min-height: 132px;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 6px;
-  border: 1px solid rgba(196, 151, 255, 0.24);
-  border-radius: 18px;
-  color: #d9bcff;
-  background: rgba(196, 151, 255, 0.07);
-}
-
-.landing-flea-mark span {
-  font-size: 0.64rem;
-  font-weight: 900;
-  letter-spacing: 0.14em;
-}
-
-.landing-flea-mark strong {
-  font-size: 2.3rem;
-  line-height: 1;
-}
-
-.landing-flea-copy {
-  position: relative;
-  z-index: 1;
-  min-width: 0;
-}
-
-.landing-flea-copy h2 {
-  margin: 4px 0 1px;
-  font-size: clamp(1.25rem, 3vw, 1.7rem);
-}
-
-.landing-flea-copy > p {
-  max-width: 650px;
-  margin: 7px 0;
-  color: #aeb6c8;
-  font-size: 0.76rem;
-  line-height: 1.7;
-}
-
-.landing-flea-copy .landing-flea-lead {
-  margin-top: 0;
-  color: #e7d8fb;
-  font-size: 0.94rem;
-  font-weight: 900;
-}
-
-.landing-flea-copy > small {
-  display: block;
-  color: #8e96aa;
-  font-size: 0.65rem;
-  line-height: 1.65;
-}
-
-.landing-flea-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 15px;
-}
-
-.landing-flea-actions .button {
-  min-height: 44px;
 }
 
 
@@ -8567,20 +8450,6 @@ button:disabled {
 
   .hero-mode-button {
     min-height: 66px;
-  }
-
-  .landing-flea {
-    grid-template-columns: 1fr;
-    gap: 14px;
-    padding: 17px;
-  }
-
-  .landing-flea-mark {
-    min-height: 72px;
-  }
-
-  .landing-flea-actions .button {
-    width: 100%;
   }
 
   .audio-studio-card {

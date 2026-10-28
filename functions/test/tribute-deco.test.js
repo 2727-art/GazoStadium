@@ -245,7 +245,7 @@ test("the AnjuPay store sells the ranch shelf with a confirmation, without a fun
   assert.match(online, /<h3 class="shop-ranch-sub">管理人の有料アイコン（四角・金縁）<\/h3><div class="shop-grid">\$\{ranchShelf\("ranchAvatar"\)\}<\/div>/);
   assert.match(online, /<span class="tribute-deco-swatch"\$\{ranchFrameAttr\(product\.deco\)\}><\/span>/, "store swatches get their color variables");
   assert.match(online, /枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。/);
-  assert.match(online, /\.\.\.CHAT_COSMETIC_PRODUCTS,\r?\n  \.\.\.RANCH_DECORATION_PRODUCTS,\r?\n\];/);
+  assert.match(read("shop-products.mjs"), /\.\.\.CHAT_COSMETIC_PRODUCTS,\r?\n  \.\.\.RANCH_DECORATION_PRODUCTS,\r?\n\];/);
   assert.match(online, /<h2 id="shopRanchTitle">お貢ぎ牧場の飾り<\/h2>/);
   assert.doesNotMatch(online, /牧場基金|DECORATION_FUND_PERCENT/);
   assert.match(online, /飾りは見た目だけで、掲示板の並び順・手数料・番付には影響しません。/);

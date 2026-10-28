@@ -147,9 +147,9 @@ test("the sample animation plays once when seen and stays still for reduced moti
 
 test("the hero module ships after app.js and shares the roleplay module instance with online.js", () => {
   const appLine = index.split("\n").findIndex((line) => line.includes('src="app.js?v='));
-  const heroLine = index.split("\n").findIndex((line) => line.includes('src="landing-hero.mjs?v=hero-persona-v1"'));
+  const heroLine = index.split("\n").findIndex((line) => line.includes('src="landing-hero.mjs?v=hero-persona-v1'));
   assert.ok(appLine >= 0 && heroLine === appLine + 1, "the module follows app.js");
-  assert.match(index.split("\n")[heroLine], /<script type="module" src="landing-hero\.mjs\?v=hero-persona-v1"><\/script>/);
+  assert.match(index.split("\n")[heroLine], /<script type="module" src="landing-hero\.mjs\?v=hero-persona-v1[^"]*"><\/script>/);
   // 後のリリースがキャッシュ用の印を末尾へ足しても、ヒーローの印が順に残っていることを確かめる。
   assert.match(index, /app\.js\?v=[^"]*hero-score-90-v1-hero-image-v1-hero-persona-v1-retire-free-table-v1(?:-[^"]*)?"/);
   assert.match(index, /velvet\.css\?v=[^"]*hero-persona-v1(?:-[^"]*)?"/);

@@ -8,11 +8,11 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 
 test("seller-shop assets use the same cache generation", () => {
   const html = read("index.html");
-  assert.match(html, /market\.css\?v=[^"]*seller-shop-v1/);
-  assert.match(html, /market\.js\?v=[^"]*seller-shop-v1/);
-  assert.match(html, /market\.js\?v=[^"]*app-check-v3/);
-  assert.match(html, /market\.css\?v=[^"]*oshijo-closing-v1/);
-  assert.match(html, /market\.js\?v=[^"]*oshijo-closing-v1/);
+  assert.match(html, /market-records\.css\?v=[^"]*seller-shop-v1/);
+  assert.match(html, /market-records\.js\?v=[^"]*seller-shop-v1/);
+  assert.match(html, /market-records\.js\?v=[^"]*app-check-v3/);
+  assert.match(html, /market-records\.css\?v=[^"]*oshijo-closing-v1/);
+  assert.match(html, /market-records\.js\?v=[^"]*oshijo-closing-v1/);
 });
 
 test("seller-shop Firestore collections are server-only", () => {

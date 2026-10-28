@@ -20,7 +20,7 @@ test("battle royale has no playable client or realtime room surface", () => {
 
   assert.equal(fs.existsSync(path.join(root, "royale.js")), false);
   assert.doesNotMatch(index, /src=["']royale\.js/);
-  for (const moduleName of ["account", "strategy", "online", "market"]) {
+  for (const moduleName of ["account", "strategy", "online", "market-records"]) {
     assert.match(index, new RegExp(`${moduleName}\\.js\\?v=[^"]*remove-royale-v1`), moduleName);
   }
   assert.doesNotMatch(index, /src=["']flea-market\.js/, "the subsequently retired flea market is no longer a global module");

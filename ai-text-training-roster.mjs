@@ -1,6 +1,6 @@
 import {
   AI_TEXT_TRAINING_ROUND_COUNT,
-} from "./ai-text-training-core.mjs";
+} from "./ai-text-training-core.mjs?v=ai-text-training-core-v1-beat-edge-hud-v3-defeat-zone-v1-defeat-zone-scripts-v1-mojikora-brushup-v1";
 
 export const AI_TEXT_TRAINING_DRAW_COUNT = AI_TEXT_TRAINING_ROUND_COUNT;
 export const AI_TEXT_TRAINING_ROSTER_MIN_COUNT = AI_TEXT_TRAINING_DRAW_COUNT;

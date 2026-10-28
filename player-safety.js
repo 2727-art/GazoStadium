@@ -1,8 +1,8 @@
-import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import { onValue, ref } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
-import { auth, database, functions, useOfflineMarketPreview } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
+import { auth, database, functions, useOfflineMarketPreview } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
 
 const callable = httpsCallable(functions, "playerSafetyAction");
 const contacts = new Map();

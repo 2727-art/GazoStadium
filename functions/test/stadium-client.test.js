@@ -17,8 +17,8 @@ const account = read("account.js");
 const functionsIndex = read("functions/index.js");
 
 test("index.html loads the stadium screen and styles with cache tokens", () => {
-  assert.match(index, /<link rel="stylesheet" href="stadium\.css\?v=my-stadium-v1[^"]*" \/>/);
-  assert.match(index, /<script type="module" src="stadium\.js\?v=my-stadium-v1[^"]*"><\/script>/);
+  assert.match(index, /<link data-feature-style="stadium\.css" data-src="stadium\.css\?v=my-stadium-v1[^"]*" \/>/);
+  assert.match(index, /"module": "stadium\.js\?v=my-stadium-v1[^"]*"/);
   assert.match(index, /stadium\.js\?v=[^"]*-diorama-v1[^"]*"/);
   assert.match(index, /stadium\.css\?v=[^"]*-diorama-v1[^"]*"/);
   assert.match(index, /app\.js\?v=[^"]*-my-stadium-v1-normal-dm-thread-v1-ranch-nav-v1[^"]*"/);
@@ -30,7 +30,7 @@ test("index.html loads the stadium screen and styles with cache tokens", () => {
 test("the landing tile starts the stadium and the header link returns home from it", () => {
   assert.match(app, /id="stadiumButton"[^>]*><small>完走した数だけ観客が増える<\/small><span>マイスタジアム<\/span>/);
   assert.match(app, /querySelector\("#stadiumButton"\)\?\.addEventListener\("click", \(\) => startStadium\(\)\)/);
-  assert.match(app, /"hariai-stadium-ready"/);
+  assert.match(app, /launchFeature\("stadium"/);
   assert.match(app, /window\.HariaiStadium\?\.isActive\?\.\(\)\) \{\s*window\.HariaiStadium\.requestHome\(\);/);
   assert.match(client, /window\.HariaiStadium = Object\.freeze\(\{\s*start,\s*isActive,\s*requestHome,\s*\}\)/);
   assert.match(client, /window\.dispatchEvent\(new Event\("hariai-stadium-ready"\)\)/);

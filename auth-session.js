@@ -1,5 +1,5 @@
 import { browserLocalPersistence, onAuthStateChanged, setPersistence, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
-import { auth } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
+import { auth } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
 import { AUTH_SESSION_LOCK, createAuthSessionController } from "./auth-session-core.mjs?v=auth-session-v1";
 
 const controller = createAuthSessionController({

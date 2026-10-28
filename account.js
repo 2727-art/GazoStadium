@@ -1,5 +1,6 @@
-import { ensureHariaiUser, assertHariaiUser, runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1";
-import { getPreviousAccount, selectGoogleAccount, useSelectedAccount, runSafeAccountSwitch } from "./account-switch.js?v=account-switch-v1";
+import { getShopProductLabel } from "./shop-products.mjs?v=lazy-loading-v1";
+import { ensureHariaiUser, assertHariaiUser, runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
+import { getPreviousAccount, selectGoogleAccount, useSelectedAccount, runSafeAccountSwitch } from "./account-switch.js?v=account-switch-v1-lazy-loading-v1";
 import {
   GoogleAuthProvider,
   linkWithPopup,
@@ -14,7 +15,7 @@ import {
   auth,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -320,7 +321,7 @@ function historyDetail(entry) {
   const details = entry.details || {};
   const parts = [];
   if (details.productId) {
-    const productLabel = window.HariaiOnline?.getShopProductLabel?.(details.productId);
+    const productLabel = getShopProductLabel(details.productId);
     parts.push(productLabel ? `商品「${productLabel}」` : "AnjuPayストアの商品");
   }
   if (details.missionId) parts.push("デイリーミッション達成");
@@ -1146,7 +1147,7 @@ function renderAnjuPayPolicy() {
   return `<section class="anju-pay-policy" aria-labelledby="anjuPayPolicyTitle">
     <div class="anju-pay-policy-mark" aria-hidden="true">A</div>
     <div><span class="eyebrow">IN-STADIUM CURRENCY</span><h2 id="anjuPayPolicyTitle">貼り合いスタジアムの中だけで使えるAnjuPay</h2>
-      <p>対戦やミッションで稼ぎ、AnjuPayストア、推し値市場、AnjuPayフリマ、対戦後の応援など、ゲーム内で用意された用途に使うゲーム内通貨です。</p>
+      <p>対戦やミッションで稼ぎ、AnjuPayストア、お貢ぎ牧場、対戦後の応援など、ゲーム内で用意された用途に使うゲーム内通貨です。</p>
       <strong>現金での購入・チャージ、換金、自由送金、ゲーム外での利用には対応せず、今後も追加しません。</strong>
     </div>
   </section>`;
@@ -1156,8 +1157,8 @@ function renderAnjuPayQuickActions() {
   return `<nav class="anju-pay-quick-actions" aria-label="AnjuPayの主な使い方">
     <button type="button" data-anju-pay-destination="missions"><span aria-hidden="true">＋</span><small>稼ぐ</small><strong>デイリーミッション</strong></button>
     <button type="button" data-anju-pay-destination="shop"><span aria-hidden="true">◇</span><small>使う</small><strong>AnjuPayストア</strong></button>
-    <button type="button" data-anju-pay-destination="market"><span aria-hidden="true">↔</span><small>商う</small><strong>推し値市場</strong></button>
-    <button type="button" data-anju-pay-destination="patron"><span aria-hidden="true">◆</span><small>支援する</small><strong>市場パトロン</strong></button>
+    <button type="button" data-anju-pay-destination="market"><span aria-hidden="true">↔</span><small>記録を見る</small><strong>旧推し値市場</strong></button>
+    <button type="button" data-anju-pay-destination="patron"><span aria-hidden="true">◆</span><small>実績を見る</small><strong>旧市場パトロン</strong></button>
   </nav>`;
 }
 
@@ -1824,47 +1825,11 @@ function openAccountDestination(destination) {
     window.setTimeout(() => section?.focus({ preventScroll: true }), 320);
     return;
   }
-  const config = destination === "missions"
-    ? { globalName: "HariaiOnline", method: "openDailyMissions", readyEvent: "hariai-online-ready", loading: "デイリーミッションを読み込んでいます…" }
-    : destination === "shop"
-      ? { globalName: "HariaiOnline", method: "openPointShop", readyEvent: "hariai-online-ready", loading: "AnjuPayストアを読み込んでいます…" }
-      : destination === "market"
-        ? { globalName: "HariaiMarket", method: "start", readyEvent: "hariai-market-ready", loading: "推し値市場を読み込んでいます…" }
-        : null;
-  if (!config || !active) return;
-  let opened = false;
-  const invoke = () => {
-    if (opened) return true;
-    const method = window[config.globalName]?.[config.method];
-    if (typeof method !== "function") return false;
-    opened = true;
-    method();
-    return true;
-  };
-  const readyNow = typeof window[config.globalName]?.[config.method] === "function";
-  let readyHandler = null;
-  let fallbackTimer = null;
-  if (!readyNow) {
-    showToast(config.loading);
-    readyHandler = () => {
-      window.clearTimeout(fallbackTimer);
-      window.setTimeout(() => {
-        if (!invoke()) showToast("機能を開けませんでした。ページを読み直してお試しください。");
-      }, 0);
-    };
-    window.addEventListener(config.readyEvent, readyHandler, { once: true });
-  }
+  if (!active) return;
   requestHome();
-  if (readyNow) {
-    window.setTimeout(() => {
-      if (!invoke()) showToast("機能を開けませんでした。ページを読み直してお試しください。");
-    }, 0);
-    return;
-  }
-  fallbackTimer = window.setTimeout(() => {
-    window.removeEventListener(config.readyEvent, readyHandler);
-    if (!invoke()) showToast("機能の読み込みに時間がかかっています。ページを読み直してお試しください。");
-  }, 3_000);
+  if (destination === "missions") window.HariaiApp.openOnlineFeature("openDailyMissions");
+  else if (destination === "shop") window.HariaiApp.openOnlineFeature("openPointShop");
+  else if (destination === "market") document.querySelector("#valueMarketRankingButton")?.click();
 }
 
 function bindEvents() {
@@ -2008,6 +1973,7 @@ window.HariaiAccount = Object.freeze({
   isActive: () => active,
   requestHome,
   start,
+  openRequestedLink: openRequestedAccountRecovery,
 });
 window.dispatchEvent(new Event("hariai-account-ready"));
 
@@ -2025,5 +1991,3 @@ function openRequestedAccountRecovery() {
   } catch { /* Explicit wallet links work even when sessionStorage is unavailable. */ }
   if (requested) start();
 }
-if (document.readyState === "complete") openRequestedAccountRecovery();
-else window.addEventListener("load", openRequestedAccountRecovery, { once: true });

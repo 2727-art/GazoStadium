@@ -76,7 +76,7 @@ test("the two active corrected image-battle modules use a new browser cache key"
   for (const { file } of Object.values(modes)) {
     assert.match(
       html,
-      new RegExp(`src="${file.replace(".", "\\.")}\\?v=[^"]*${marker}[^"]*"`),
+      new RegExp(`"module": "${file.replace(".", "\\.")}\\?v=[^"]*${marker}[^"]*"`),
       `${file} must be reloaded after release`,
     );
   }

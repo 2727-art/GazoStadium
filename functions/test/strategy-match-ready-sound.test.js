@@ -222,7 +222,7 @@ test("audio and Strategy browser assets share the match-ready cache marker", () 
   );
   assert.match(
     indexHtml,
-    new RegExp(`<script type="module" src="strategy\\.js\\?v=[^"]*${marker}[^"]*"></script>`),
+    new RegExp(`"module": "strategy\\.js\\?v=[^"]*${marker}[^"]*"`),
   );
   assert.equal((indexHtml.match(new RegExp(marker, "g")) || []).length, 2);
   assert.doesNotMatch(indexHtml, /<script src="audio\.js" defer><\/script>/u);
