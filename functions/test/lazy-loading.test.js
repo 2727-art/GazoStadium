@@ -61,6 +61,26 @@ test('canceling a pending feature keeps its eventual import from navigating; lat
  await context.launchFeature('online',()=>launched.push('new'));assert.deepEqual(launched,['new']);assert.equal(busy.at(-1),false);
 });
 
+for (const regular of [false, true]) {
+ test(`initial landing retains its painted nodes and binds navigation${regular ? ' with the saved ranch shortcut' : ''}`, () => {
+  const source=read('app.js');const body=acorn.parse(source,{ecmaVersion:'latest'}).body[0].expression.callee.body.body;
+  const node=body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='renderLandingScreen');
+  const bindings=new Map();const inserted=[];let replacements=0;
+  const landing={dataset:{},querySelector:()=>null,prepend:node=>inserted.push(node)};
+  const resume={id:'tributeResumeButton'};
+  const context={navigationVersion:0,setBusy(){},clearRetiredFreeTableInvite(){},setLandingChrome(){},renderLanding:()=>'<button id="tributeResumeButton">saved shortcut</button>',
+   app:{querySelector:()=>landing,set innerHTML(value){replacements++;},focus(){}},
+   window:{localStorage:{getItem:()=>regular?'1':null},dispatchEvent(){},scrollTo(){}},Event:class{},
+   document:{querySelector:selector=>({addEventListener:(_,fn)=>bindings.set(selector,fn)}),createElement:()=>({content:{querySelector:()=>resume}})},
+   startStrategyLab(){},startOnlineBattle(){},startAiTextTraining(){},startRouletteTraining(){},startValueMarketRankings(){},startAccount(){},openAudioStudio(){}};
+  vm.runInNewContext(source.slice(node.start,node.end)+';this.render=renderLandingScreen;',context);
+  context.render();assert.equal(replacements,0);assert.equal(landing.dataset.landingBound,'1');
+  assert.equal(bindings.get('#onlineButton'),context.startOnlineBattle);assert.equal(bindings.get('#strategyLabButton'),context.startStrategyLab);
+  assert.deepEqual(inserted,regular?[resume]:[]);
+  context.render();assert.equal(replacements,1,'subsequent home renders rebuild and rebind the screen');
+ });
+}
+
 function recordsHarness(){
  const calls=[];const responses=new Map();const app={innerHTML:'',focus(){},insertAdjacentHTML(_,html){this.innerHTML+=html;},querySelectorAll:()=>[]};
  const element={addEventListener(){},set disabled(v){},isConnected:true};
