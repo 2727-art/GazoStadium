@@ -22,6 +22,10 @@ const MAX_DURATION_DAYS = DURATION_DAYS_OPTIONS.at(-1);
 export const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 // 出稼ぎ命令の回数（命令の後の1on1の正式完走）。サーバーの WORK_ORDER_TARGETS と同じ。
 export const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
+// 出稼ぎ命令の勝負の型（設計書15.3）。サーバーの CONTEST_TARGETS・CONTEST_DAYS・CONTEST_PENALTIES と同じ。
+export const CONTEST_TARGETS = Object.freeze([1, 3, 5]);
+export const CONTEST_DAYS = Object.freeze([1, 3]);
+export const CONTEST_PENALTIES = Object.freeze([10, 30, 50, 100, 300]);
 // 復唱の回数。サーバーの RECITE_TARGETS と同じ。
 export const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 
@@ -495,9 +499,12 @@ export const GRANTED_LABEL = "願い出て許された献上";
 // 献上の種類の表示。願い出て許された献上は、記録の上は無言の献上（granted の印）。
 export const OTHELLO_PENALTY_LABEL = "貢ぎオセロの罰金";
 
+export const CONTEST_PENALTY_LABEL = "勝負の罰金";
+
 export function tributeKindLabel(record) {
   if (record?.granted === true) return GRANTED_LABEL;
   if (Number(record?.othello) > 0) return OTHELLO_PENALTY_LABEL;
+  if (Number(record?.contest) > 0) return CONTEST_PENALTY_LABEL;
   return KIND_LABELS[record?.kind] || "献上";
 }
 
@@ -763,13 +770,15 @@ function object(value) {
 }
 
 // 出稼ぎ命令。サーバーの workOrderView と同じ。果たした後も、管理人が確認するか次の命令を出すまで残る。
+// 勝負の型（kind: "contest"）は、勝ち数・期限・罰金と、財布が受けたか（acceptedAt）・期限の時刻（deadline）を持つ。
 export function workOrderView(raw) {
   const order = raw?.workOrder && typeof raw.workOrder === "object" ? raw.workOrder : null;
+  const contest = order?.kind === "contest";
   const target = integer(order?.target, 0, 1_000);
   const orderSeq = integer(order?.orderSeq);
-  if (!order || !WORK_ORDER_TARGETS.includes(target) || orderSeq < 1) return null;
+  if (!order || !(contest ? CONTEST_TARGETS : WORK_ORDER_TARGETS).includes(target) || orderSeq < 1) return null;
   const doneAt = integer(order.doneAt);
-  return {
+  const base = {
     orderSeq,
     target,
     note: String(order.note || "").slice(0, LIMITS.requestNote),
@@ -779,6 +788,35 @@ export function workOrderView(raw) {
     done: doneAt > 0,
     doneAt,
   };
+  if (!contest) return base;
+  const days = integer(order.days);
+  const penalty = integer(order.penalty);
+  if (!CONTEST_DAYS.includes(days) || !CONTEST_PENALTIES.includes(penalty)) return null;
+  const acceptedAt = integer(order.acceptedAt);
+  return { ...base, kind: "contest", days, penalty, acceptedAt, accepted: acceptedAt > 0, deadline: acceptedAt > 0 ? integer(order.deadline) : 0 };
+}
+
+// 勝負に負けて残った罰金（未払い）と、勝負の勝ち負けの数。サーバーの workResultView・contestRecordView と同じ。
+export function workResultView(raw) {
+  const result = raw?.workResult && typeof raw.workResult === "object" ? raw.workResult : null;
+  const penalty = integer(result?.penalty, 0, 1_000_000);
+  if (!result || penalty <= 0) return null;
+  return {
+    orderSeq: integer(result.orderSeq),
+    penalty,
+    target: integer(result.target, 0, 1_000),
+    wins: integer(result.wins, 0, 1_000),
+    settledAt: integer(result.settledAt),
+  };
+}
+
+export function contestRecordView(raw) {
+  return { won: integer(raw?.contestWins), lost: integer(raw?.contestLosses) };
+}
+
+// 勝負の期限が過ぎて、まだ決着していないか（管理人が判定できる・財布の報告で負けが決まる）。
+export function contestExpired(order, now = Date.now()) {
+  return Boolean(order?.kind === "contest" && order.accepted && !order.done && order.deadline > 0 && now >= order.deadline);
 }
 
 // 復唱と延長。サーバーの reciteOrderView・extensionView と同じ。
@@ -963,6 +1001,8 @@ export function viewContract(contract, uid, now = Date.now()) {
     reportRequested: integer(raw.reportRequestedAt) > 0,
     workOrder: status === "active" ? workOrderView(raw) : null,
     workOrdersDone: integer(raw.workOrdersDone),
+    workResult: status === "active" ? workResultView(raw) : null,
+    contestRecord: contestRecordView(raw),
     hold: status === "active" ? holdView(raw) : null,
     plea: status === "active" ? pleaView(raw) : null,
     pleaCount: integer(raw.pleaCount),
@@ -1278,9 +1318,17 @@ export const WORK_ORDER_NOTES = Object.freeze({
   sweet: Object.freeze(["1on1で少し稼いできてね♡", "がんばってきたら褒めてあげる。", "{no}号、いってらっしゃい♡"]),
 });
 
-// 契約の強さ（上限）までの候補を、強い順に並べる。
-export function workOrderNotesFor(tone, { collarNo = 0, ngWords = [] } = {}) {
-  const lines = tonesUpTo(tone).reverse().flatMap((key) => WORK_ORDER_NOTES[key]);
+// 勝負の一言の候補（設計書15.3）。完走の一言と同じ決まりで、期限で煽る文は入れない。名前は「賭け」ではなく「勝負」。
+export const CONTEST_NOTES = Object.freeze({
+  harsh: Object.freeze(["負けたら罰金。勝ってから顔を出せ。", "養分のくせに、勝てると思ってるの？", "{no}号、勝負だ。負けたら払え。"]),
+  normal: Object.freeze(["勝ってきなさい。負けたら罰金ね。", "約束の数だけ勝ってくること。", "{no}号、勝負してきて。"]),
+  sweet: Object.freeze(["勝てたら、たくさん褒めてあげる♡", "負けても、約束は守ろうね。", "{no}号、がんばっておいで♡"]),
+});
+
+// 契約の強さ（上限）までの候補を、強い順に並べる。kind が "contest" なら勝負の一言。
+export function workOrderNotesFor(tone, { collarNo = 0, ngWords = [], kind = "run" } = {}) {
+  const notes = kind === "contest" ? CONTEST_NOTES : WORK_ORDER_NOTES;
+  const lines = tonesUpTo(tone).reverse().flatMap((key) => notes[key]);
   const number = Number.isSafeInteger(Number(collarNo)) && Number(collarNo) > 0 ? String(Number(collarNo)) : "";
   return lines
     .filter((line) => !line.includes("{no}") || number)
@@ -1352,6 +1400,9 @@ export const CONTRACT_TODOS = Object.freeze([
   // 貢ぎオセロ（設計書15.2）: 自分の手番と、財布の罰金。
   Object.freeze({ kind: "othello_turn", label: "オセロの手番", count: (contract) => (contract.status === "active" && contract.othello && contract.othello.turn === contract.role ? 1 : 0) }),
   Object.freeze({ kind: "othello_penalty", label: "オセロの罰金", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.othelloResult ? 1 : 0) }),
+  // 出稼ぎの勝負（設計書15.3）: 管理人には期限の過ぎた勝負の判定、財布には負けた勝負の罰金。
+  Object.freeze({ kind: "contest_judge", label: "勝負の判定", count: (contract) => (contract.role === "manager" && contract.status === "active" && contestExpired(contract.workOrder) ? 1 : 0) }),
+  Object.freeze({ kind: "contest_penalty", label: "勝負の罰金", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.workResult ? 1 : 0) }),
   Object.freeze({ kind: "recite", label: "復唱", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reciteOrder && !contract.reciteOrder.done ? 1 : 0) }),
   Object.freeze({ kind: "withdraw", label: "使用許可の申請", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.escrowWithdrawRequest ? 1 : 0) }),
   Object.freeze({ kind: "report", label: "残高報告の依頼", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reportRequested ? 1 : 0) }),

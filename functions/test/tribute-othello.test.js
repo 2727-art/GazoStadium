@@ -239,7 +239,7 @@ test("client wiring: consent on the application, settings, start sheet, moves, e
     assert.match(client, new RegExp(`case "${type}":`), type);
     assert.match(service, new RegExp(`type: "${type}"`), type);
   }
-  assert.match(client, /kind: sheet\.othello \? "othello" : sheet\.granted \? "granted" : sheet\.requestId \? "request" : "silent",/);
+  assert.match(client, /kind: sheet\.othello \? "othello" : sheet\.contest \? "contest" : sheet\.granted \? "granted" : sheet\.requestId \? "request" : "silent",/);
   assert.match(client, /openSheet\("give", \{ othello: true, amount: othelloPayable\(view, result\), purpose: "penalty", step: "hold" \}\);/);
   assert.match(client, /if \(sheet\.mode === "othello"\) return `omitsugi-othello-\$\{stamp\}\.png`;/);
   assert.match(client, /\? await renderOthelloImage\(shareOthelloData\(sheet\), sheet\.options\)/);
@@ -258,7 +258,7 @@ test("client wiring: consent on the application, settings, start sheet, moves, e
 });
 
 test("cache keys and the design record", () => {
-  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*ranch-othello-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*ranch-othello-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-share\.mjs\?v=[^"]*ranch-othello-v1"/);
   const index = read("index.html");
   for (const name of ["tribute.css", "tribute.js"]) {

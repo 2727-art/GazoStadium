@@ -1666,3 +1666,15 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .tribute-othello-finish strong { color: #ff8fc4; }
 .tribute-othello-move { font-size: 0.78rem; color: var(--tr-mist); }
 .tribute-tally .is-othello { border-color: rgba(232, 194, 122, 0.5); }
+
+/* 出稼ぎの勝負（ranch-contest-v1、設計書15.3）: 完走の緑に、罰金の金を足して見分ける。負けた勝負は桃色の縁。 */
+.tribute-work-order.is-contest { border-color: rgba(232, 194, 122, 0.55); }
+.tribute-work-order.is-contest .tribute-work-head strong { color: #f3d28a; }
+.tribute-contest-terms { margin: 0; color: #f3d28a; font-size: 0.84rem; font-weight: 700; overflow-wrap: anywhere; }
+.tribute-contest-result { border-color: rgba(255, 143, 196, 0.6); background: linear-gradient(160deg, rgba(255, 79, 163, 0.1), var(--tr-panel) 60%); }
+.tribute-contest-result .tribute-work-head strong { color: #ff8fc4; }
+.tribute-event.is-work-order.is-contest .tribute-work-card { border-color: rgba(232, 194, 122, 0.65); background: rgba(232, 194, 122, 0.08); }
+.tribute-event.is-work-order.is-contest .tribute-work-card strong { color: #f3d28a; }
+.tribute-event.is-contest-lost .tribute-work-card { border-style: solid; border-color: rgba(255, 143, 196, 0.6); background: rgba(255, 79, 163, 0.08); }
+.tribute-event.is-contest-lost .tribute-work-card strong { color: #ff8fc4; }
+.tribute-tally .is-contest { border-color: rgba(232, 194, 122, 0.5); background: rgba(232, 194, 122, 0.08); color: #f3d28a; }

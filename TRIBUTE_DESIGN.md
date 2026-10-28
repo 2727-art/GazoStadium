@@ -626,7 +626,7 @@ Pay 0 でも差し出せるもの。Pay を動かさないので、番付・貢�
 
 ## 15. 競わせ方の見直しと貢ぎオセロ（設計、2026年10月）
 
-Status: 第1段を実装した（仕えた日数の番付と応援欄の並び、15.1）。2026-10-28 に `db48bf6` で本番に公開した（記録は `functions/docs/TRIBUTE_SERVED_DAYS_RELEASE.md`）。第2段（貢ぎオセロ）を実装した（15.2、キャッシュキー `ranch-othello-v1`）。2026-10-28 に `05db1f2` で本番に公開した（記録は `functions/docs/TRIBUTE_OTHELLO_RELEASE.md`）。第3段は設計（未実装）。採用はユーザーが決めた（2026-10-28）。
+Status: 第1段を実装した（仕えた日数の番付と応援欄の並び、15.1）。2026-10-28 に `db48bf6` で本番に公開した（記録は `functions/docs/TRIBUTE_SERVED_DAYS_RELEASE.md`）。第2段（貢ぎオセロ）を実装した（15.2、キャッシュキー `ranch-othello-v1`）。2026-10-28 に `05db1f2` で本番に公開した（記録は `functions/docs/TRIBUTE_OTHELLO_RELEASE.md`）。第3段（出稼ぎ命令の勝負の型）を実装した（15.3、キャッシュキー `ranch-contest-v1`）。採用はユーザーが決めた（2026-10-28）。
 
 スタジアムは互いを競わせて続けてもらう場として作った。財布側と管理人側の note の分析（`functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md`・`TRIBUTE_MANAGER_PSYCHOLOGY.md`）を照らすと、競争は向け先によって効き方が逆になる。
 
@@ -735,7 +735,22 @@ Status: 第1段を実装した（仕えた日数の番付と応援欄の並び�
     - 受けた時の、検証済みの完走数と負け数（`totalMatches`・`losses`）を記録する。管理人には数そのものを見せない。
     - 勝ち数は「完走数の増分 − 負け数の増分」。期限内に届けば勝ち、届かずに期限が来たら負け。
     - 財布か管理人が開いた時・操作した時に、サーバーが判定する。
+    - 実装では、期限までに財布が「報告」した勝ち数で決める（期限の後の対戦を数えないため。対戦の確定処理には手を入れない）。
+      - 報告で勝ち数に届けば、その場で勝ち。
+      - 期限の後に財布が報告するか、管理人が「判定する」を押すと、最後に報告した勝ち数で負けが決まる。
+      - 引き分けは負けに数えないので、勝ちに数える（増分の引き算のまま）。
   - 負けた時: 財布の画面に「勝負の罰金 ○Pay を差し出す」（長押し）。払われない時は、管理人が同じ額の請求を出せる。
   - 勝った時: 罰金なし。管理人が確認する（受取印とご褒美。出稼ぎの確認と同じ）。
   - 記録: レシート・スレッド・貢ぎ報告の画像に「勝負の罰金」と出す。
   - Pay は新しく出さない。罰は約束した額だけ。期限で煽る文は入れない。名前は「賭け」ではなく「勝負」。
+  - 罰金は 10／30／50／100／300 Pay から管理人が選ぶ。前の勝負の罰金が払われるまで、次の勝負は出せない（完走の命令は出せる）。
+  - データ（実装）:
+    - 契約の `workOrder` に `kind: "contest"`・`days`・`penalty`・`acceptedAt`・`deadline` を足した。完走の命令はこれまでの形のまま（`kind` を持たない）。勝ちは `doneAt`。
+    - 受けた時の完走数と負け数は、財布だけが読める `private/work` の `baselineMatches`・`baselineLosses` に置く。
+    - 負けた勝負の罰金（未払い）は契約の `workResult`（`orderSeq`・`penalty`・`target`・`wins`・`settledAt`）。契約が終わると消える。
+    - 勝ち負けの数は契約の `contestWins`・`contestLosses`。スレッドの上に「勝負 ○勝○敗」と出す。
+    - 操作: `work_order`（`kind: "contest"`）・`work_accept`・`work_decline`（財布）・`work_report`（財布、勝負では勝ち数）・`work_judge`・`work_claim`（管理人）。罰金を差し出すのは献上（`tribute`）の `kind: "contest"`。
+    - 出来事: `work_order`（`kind: "contest"`）・`work_accept`・`work_declined`・`work_report`（`kind: "contest"`）・`work_contest_lost`・`work_confirm`（`kind: "contest"`）。
+    - 献上と請求の記録に `contest`（何件目の命令か）の印。種類の表示は「勝負の罰金」。
+    - やることに「勝負の判定」（管理人、期限の過ぎた勝負）と「勝負の罰金」（財布）を足した。
+    - 勝ち数には、検証済みの負け数（`achievementStats.losses`）を読む `verifiedLosses` を Functions に渡す。

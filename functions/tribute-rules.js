@@ -15,6 +15,11 @@ const MAX_DURATION_DAYS = DURATION_DAYS_OPTIONS.at(-1);
 const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 // 出稼ぎ命令の回数（命令の後の1on1の正式完走）。毎日のプレイ報酬の段と同じで、10回は本日の基本目標に当たる。
 const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
+// 出稼ぎ命令の勝負の型（設計書15.3）。「○日以内に1on1で○勝しろ。負けたら罰金 ○Pay」。
+// 勝ち数・期限・罰金は管理人が選び、財布がその都度「受ける／断る」を選ぶ。罰金は財布の1回の限度額まで。
+const CONTEST_TARGETS = Object.freeze([1, 3, 5]);
+const CONTEST_DAYS = Object.freeze([1, 3]);
+const CONTEST_PENALTIES = Object.freeze([10, 30, 50, 100, 300]);
 // 復唱の回数（管理人が言わせたい一言を、財布が一字一句同じに打つ回数）。
 const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 
@@ -108,6 +113,24 @@ function othelloOutcome(board, rate, { resigned = false } = {}) {
   const result = resigned || diff > 0 ? "lost" : diff < 0 ? "won" : "draw";
   const stones = result === "lost" ? Math.max(diff, 1) : 0;
   return { result, manager, payer, stones, penalty: stones * (OTHELLO_RATES.includes(Number(rate)) ? Number(rate) : 0) };
+}
+
+// 勝負の申し出。勝ち数・期限（日）・罰金を選び直させる時は error を返す。
+function normalizeContestOrder(value) {
+  const target = Number(value?.target);
+  if (!CONTEST_TARGETS.includes(target)) return { error: "勝ち数を選び直してください。" };
+  const days = Number(value?.days);
+  if (!CONTEST_DAYS.includes(days)) return { error: "期限を選び直してください。" };
+  const penalty = Number(value?.penalty);
+  if (!CONTEST_PENALTIES.includes(penalty)) return { error: "罰金を選び直してください。" };
+  return { target, days, penalty };
+}
+
+// 勝負の勝ち数。受けた時からの「完走数の増分 − 負け数の増分」（引き分けも勝ちに数える）を、勝ち数で頭打ちにする。
+function contestWins({ baselineMatches = 0, baselineLosses = 0, matches = 0, losses = 0, target = 0 } = {}) {
+  const played = Math.max(0, Math.floor(Number(matches) || 0) - Math.floor(Number(baselineMatches) || 0));
+  const lost = Math.max(0, Math.floor(Number(losses) || 0) - Math.floor(Number(baselineLosses) || 0));
+  return Math.min(Math.max(0, Math.floor(Number(target) || 0)), Math.max(0, played - lost));
 }
 
 function normalizeOthelloStart(value) {
@@ -969,6 +992,11 @@ module.exports = {
   MAX_DURATION_DAYS,
   ENTRY_FEE_OPTIONS,
   WORK_ORDER_TARGETS,
+  CONTEST_TARGETS,
+  CONTEST_DAYS,
+  CONTEST_PENALTIES,
+  normalizeContestOrder,
+  contestWins,
   RECITE_TARGETS,
   TONES,
   tonesUpTo,

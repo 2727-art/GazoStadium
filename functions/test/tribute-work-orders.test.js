@@ -227,7 +227,7 @@ async function threadRenderer() {
   const context = vm.createContext({ ...module, ...await deco, previewScreen: "", sealChoices: new Map(),
     state: { profile: { card: { seals: ["yoku", "zako"] } }, thread: {}, contracts: [], walletBalance: 500 },
     frame: (html) => html, escapeHtml: String, renderBlockButton: () => "", renderTemplates: () => "", renderThreadHead: () => "", sealSvg: () => "" });
-  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "rewardChips", "renderWantChips", "renderResistRow", "renderHold", "renderGiveButton", "renderRecite", "renderReciteConfirmControls", "renderExtension", "ownWordsFor", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "retryReasonText", "canShowShot", "renderShotButton", "renderPendingRequests", "renderWorkOrder", "renderWorkConfirmControls", "othelloCellName", "othelloRecordText", "othelloPayable", "renderOthelloNoteChips", "renderOthello", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
+  addFunctions(context, ["formatDateTime", "requestStatusMap", "purposeTag", "renderReceiveControls", "rewardChips", "renderWantChips", "renderResistRow", "renderHold", "renderGiveButton", "renderRecite", "renderReciteConfirmControls", "renderExtension", "ownWordsFor", "refundPendingText", "renderEvent", "elapsedLabel", "requestLimitProblem", "renderPayableRequest", "renderThreadActions", "renderThreadActionButtons", "retryReasonText", "canShowShot", "renderShotButton", "renderPendingRequests", "renderWorkOrder", "contestPayable", "renderContestResult", "renderContestOrder", "renderWorkConfirmControls", "othelloCellName", "othelloRecordText", "othelloPayable", "renderOthelloNoteChips", "renderOthello", "renderThreadHistory", "renderThreadEvents", "renderRequestMark", "contractCounterpart", "managerNickname", "renderThread"]);
   return (raw, uid, { work = null, events = [], demo = false } = {}) => {
     context.state.thread = { view: module.viewContract(raw, uid), events, work, demo };
     return context.renderThread();
@@ -331,8 +331,8 @@ test("payers opt in on applying and can change it from the thread; sheets, notes
   assert.match(settings, /data-t="set-work-orders"/);
   const sheet = sourceBlock(clientSource, 'case "work": {', 'case "work-settings": {');
   assert.match(sheet, /if \(view\.role !== "manager"\) return "";/);
-  assert.match(sheet, /WORK_ORDER_TARGETS\.map/);
-  assert.match(sheet, /workOrderNotesFor\(view\.tone, \{ collarNo: view\.collarNo, ngWords: view\.ngWords \}\)/);
+  assert.match(sheet, /radios\("target", WORK_ORDER_TARGETS, 3,/);
+  assert.match(sheet, /workOrderNotesFor\(view\.tone, \{ collarNo: view\.collarNo, ngWords: view\.ngWords, kind \}\)/);
   assert.match(sourceBlock(clientSource, 'case "work-order": {', 'case "take": {'), /mutate\("work_order", contractPayload\(\{ target, note \}\)/);
   assert.match(sourceBlock(clientSource, 'case "work-report": {', 'case "work-withdraw":'), /mutate\("work_report", contractPayload\(\), \{/, "the client never sends a count");
 

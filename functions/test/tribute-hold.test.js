@@ -125,8 +125,8 @@ test("applying, the thread actions, sheets and handlers for holds, pleas and res
   assert.match(actions, /data-sheet="holds-settings">お預けの設定/);
   assert.match(actions, /data-sheet="hold">お預けにする/);
   assert.match(actions, /data-t="unhold">お預けを解く/);
-  assert.match(client, /kind: sheet\.othello \? "othello" : sheet\.granted \? "granted" : sheet\.requestId \? "request" : "silent",/);
-  assert.match(client, /\$\{sheet\.granted \|\| sheet\.othello \? "" : '<button class="button button-ghost button-small" type="button" data-t="give-back">金額を変える<\/button>'\}/, "a granted amount cannot be changed");
+  assert.match(client, /kind: sheet\.othello \? "othello" : sheet\.contest \? "contest" : sheet\.granted \? "granted" : sheet\.requestId \? "request" : "silent",/);
+  assert.match(client, /\$\{sheet\.granted \|\| sheet\.othello \|\| sheet\.contest \? "" : '<button class="button button-ghost button-small" type="button" data-t="give-back">金額を変える<\/button>'\}/, "a granted amount cannot be changed");
   for (const [sheet, action] of [["hold", '"hold"'], ["plea", '"plea"'], ["resist", '"resist"']]) {
     assert.match(client, new RegExp(`case "${sheet}": \\{\\n      if \\(view\\.role !== "${sheet === "hold" ? "manager" : "payer"}"`), sheet);
     assert.match(client, new RegExp(`mutate\\(${action}, contractPayload`), action);

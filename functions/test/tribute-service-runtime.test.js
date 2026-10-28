@@ -260,6 +260,7 @@ function createHarness({ balances = {}, playerSafety } = {}) {
     },
     economyProgressRef: (uid) => firestore.collection("economyProgress").doc(uid),
     totalVerifiedMatches: (progress) => Number(progress?.achievementStats?.totalMatches || 0),
+    verifiedLosses: (progress) => Number(progress?.achievementStats?.losses || 0),
     now: () => clock,
   });
   const act = (uid, action, data = {}, context = {}) => service.performAction(uid, { action, ...data }, context);
@@ -277,6 +278,10 @@ function createHarness({ balances = {}, playerSafety } = {}) {
     // 検証済みの正式完走数（economyProgress の achievementStats.totalMatches）。
     setMatches(uid, totalMatches) {
       firestore.write(`economyProgress/${uid}`, { achievementStats: { totalMatches } });
+    },
+    // 出稼ぎの勝負: 検証済みの完走数と負け数。
+    setRecord(uid, totalMatches, losses) {
+      firestore.write(`economyProgress/${uid}`, { achievementStats: { totalMatches, losses } });
     },
     contract: (contractId) => firestore.read(`tributeContracts/${contractId}`),
     events(contractId) {

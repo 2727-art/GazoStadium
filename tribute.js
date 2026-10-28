@@ -21,6 +21,9 @@ import {
   AVATARS,
   BOARD_SEXUAL_PATTERN,
   CHEER,
+  CONTEST_DAYS,
+  CONTEST_PENALTIES,
+  CONTEST_TARGETS,
   DEFAULT_SEALS,
   DEFINITION,
   DISCLOSURE_LABELS,
@@ -68,6 +71,7 @@ import {
   X_HANDLE_PATTERN,
   avatarId,
   avatarUrl,
+  contestExpired,
   contractTodos,
   forbiddenReason,
   formatPay,
@@ -125,7 +129,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -1550,6 +1554,7 @@ function renderTally(view) {
   if (view.hold) parts.push('<span class="is-hold">お預け中</span>');
   else if (view.allowHolds) parts.push('<span class="is-hold-ok">お預け 可</span>');
   if (view.othelloRecord?.played) parts.push(`<span class="is-othello">オセロ ${escapeHtml(othelloRecordText(view.othelloRecord))}</span>`);
+  if (view.contestRecord?.won || view.contestRecord?.lost) parts.push(`<span class="is-contest">勝負 ${Number(view.contestRecord.won)}勝${Number(view.contestRecord.lost)}敗</span>`);
   return parts.length ? `<p class="tribute-tally">${parts.join("")}</p>` : "";
 }
 
@@ -1685,15 +1690,28 @@ function renderEvent(event, view, statuses) {
     case "extend_declined":
       return system(`${escapeHtml(managerName)}は延長（${Number(event.days)}日）を受けませんでした。`, "is-caps");
     case "work_order":
+      if (event.kind === "contest") {
+        return `<li class="tribute-event is-work-order is-contest ${mine ? "is-mine" : "is-theirs"}"><div class="tribute-work-card"><span class="tribute-eyebrow">出稼ぎの勝負</span><strong>${Number(event.days)}日以内に1on1で ${Number(event.target)}勝</strong><p class="tribute-contest-terms">負けたら罰金 ${escapeHtml(formatPay(event.penalty))}</p>${event.note ? `<p>「${escapeHtml(event.note)}」</p>` : ""}</div>${time}</li>`;
+      }
       return `<li class="tribute-event is-work-order ${mine ? "is-mine" : "is-theirs"}"><div class="tribute-work-card"><span class="tribute-eyebrow">出稼ぎ命令</span><strong>1on1を ${Number(event.target)}回 完走</strong>${event.note ? `<p>「${escapeHtml(event.note)}」</p>` : ""}</div>${time}</li>`;
     case "work_report":
+      if (event.kind === "contest") {
+        return system(`勝負の報告：受けた後の1on1 <b>${Number(event.count)} / ${Number(event.target)}勝</b>（サーバーが記入）${event.done ? " ・ 勝ちました" : ""}`, "is-report");
+      }
       return system(`出稼ぎ報告：命令の後の1on1 <b>${Number(event.count)} / ${Number(event.target)}回</b>（サーバーが記入）${event.done ? " ・ 果たしました" : ""}`, "is-report");
+    case "work_accept":
+      return system(`${escapeHtml(payerName)}が勝負を受けました（${Number(event.target)}勝・期限 ${escapeHtml(formatDateTime(event.deadline))}）。`, "is-strong");
+    case "work_declined":
+      return system(`${escapeHtml(payerName)}は勝負を断りました。`, "is-caps");
+    case "work_contest_lost":
+      return `<li class="tribute-event is-contest-lost"><div class="tribute-work-card"><span class="tribute-eyebrow">勝負の負け</span><strong>${Number(event.wins)} / ${Number(event.target)}勝のまま期限が過ぎました</strong><p class="tribute-contest-terms">罰金 ${escapeHtml(formatPay(event.penalty))}</p></div>${time}</li>`;
     case "work_confirm": {
       const seal = sealLabel(event.seal)
         ? `<span class="tribute-stamp-seal">${sealSvg({ label: sealLabel(event.seal), name: managerName, at: event.createdAt, size: 64, shape: event.sealShape, ink: event.sealInk, rough: false })}</span>`
         : "";
       const reward = rewardText(event);
-      return `<li class="tribute-event is-system is-work-confirm"><p>${escapeHtml(managerName)}が出稼ぎ（${Number(event.count)} / ${Number(event.target)}回）を確かめました。</p>${seal}${time}</li>${reward
+      const confirmed = event.kind === "contest" ? `勝負の勝ち（${Number(event.count)} / ${Number(event.target)}勝）` : `出稼ぎ（${Number(event.count)} / ${Number(event.target)}回）`;
+      return `<li class="tribute-event is-system is-work-confirm"><p>${escapeHtml(managerName)}が${confirmed}を確かめました。</p>${seal}${time}</li>${reward
         ? `<li class="tribute-event is-message is-reward ${mine ? "is-mine" : "is-theirs"} is-manager"><span class="tribute-bubble"><span class="tribute-visually-hidden">${escapeHtml(managerName)}から出稼ぎへのご褒美：</span>${escapeHtml(reward)}</span>${time}</li>`
         : ""}`;
     }
@@ -2189,8 +2207,9 @@ function renderPendingRequests(view) {
 // 管理人には財布が報告した数だけを出す。果たした命令は、管理人が印とご褒美で確かめる。
 function renderWorkOrder(view) {
   const order = view.status === "active" ? view.workOrder : null;
-  if (!order) return "";
+  if (!order) return renderContestResult(view);
   const head = (eyebrow, title) => `<div class="tribute-work-head"><span class="tribute-eyebrow">${eyebrow}</span><strong>${title}</strong></div>${order.note ? `<p class="tribute-work-note">「${escapeHtml(order.note)}」</p>` : ""}`;
+  if (order.kind === "contest") return renderContestOrder(view, order, head);
   const goal = `1on1を ${Number(order.target)}回 完走`;
   if (view.role === "manager") {
     if (order.done) {
@@ -2225,6 +2244,78 @@ function renderWorkOrder(view) {
     : "勝ち負けは関係なく、通常型・戦略型1on1の完走だけを数えます。報告の数はサーバーが記入します。"}期限はなく、果たさなくても何も起きません。</small></section>`;
 }
 
+// 出稼ぎの勝負（設計書15.3）。財布は受けるか断るかを選び、受けた後は「完走 − 負け」の勝ち数を期限までに報告する。
+// 管理人には、財布が報告した勝ち数と期限だけを出す（財布の通算は見せない）。期限が過ぎて届いていなければ、管理人が判定できる。
+function renderContestOrder(view, order, head) {
+  const terms = `${Number(order.days)}日以内に1on1で ${Number(order.target)}勝`;
+  const penalty = `負けたら罰金 ${escapeHtml(formatPay(order.penalty))}`;
+  const section = (body, extra = "") => `<section class="tribute-panel tribute-work-order is-contest${extra}">${body}</section>`;
+  const deadline = order.accepted ? `期限 ${escapeHtml(formatDateTime(order.deadline))}` : "";
+  const expired = contestExpired(order, Date.now());
+  if (view.role === "manager") {
+    if (order.done) return section(`${head("勝負の報告", `勝ちました（${Number(order.reportedCount)} / ${Number(order.target)}勝）`)}${renderWorkConfirmControls(view)}`, " is-done");
+    if (!order.accepted) {
+      return section(`${head("出稼ぎの勝負", terms)}<p class="tribute-contest-terms">${penalty}</p>
+        <p class="tribute-work-reported">財布の返事を待っています。</p>
+        <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="work-withdraw">取り下げる</button></div>`);
+    }
+    const reported = order.reportedAt
+      ? `報告 <b>${Number(order.reportedCount)} / ${Number(order.target)}勝</b>（${escapeHtml(formatDateTime(order.reportedAt))}）`
+      : "まだ報告はありません。";
+    return section(`${head("出稼ぎの勝負", terms)}<p class="tribute-contest-terms">${penalty}・${deadline}</p>
+      <p class="tribute-work-reported">${reported}</p>
+      ${expired ? '<p class="tribute-note">期限が過ぎました。判定すると、報告された勝ち数で負けが決まります。</p>' : ""}
+      <div class="tribute-row">${expired
+        ? '<button class="button button-primary button-small" type="button" data-t="work-judge">判定する</button>'
+        : '<button class="button button-ghost button-small" type="button" data-t="work-withdraw">取り下げる</button>'}</div>`);
+  }
+  if (order.done) {
+    return section(`${head("出稼ぎの勝負", `勝ちました（${Number(order.target)} / ${Number(order.target)}勝）`)}
+      <p class="tribute-work-reported">${escapeHtml(view.manager.personaName)}の確認を待っています。</p>`, " is-done");
+  }
+  const payable = contestPayable(view, { penalty: order.penalty });
+  if (!order.accepted) {
+    return section(`${head("出稼ぎの勝負", terms)}<p class="tribute-contest-terms">${penalty}</p>
+      ${payable < order.penalty ? `<p class="tribute-note">負けた時に差し出すのは、1回の限度額（${escapeHtml(formatPay(payable))}）までです（この額は管理人には見えません）。</p>` : ""}
+      <small class="tribute-work-rule">受けた時から数えます。勝ち数は、通常型・戦略型1on1の完走から負けを引いた数です（引き分けは勝ち）。期限までに報告した勝ち数で決まります。断っても何も起きません。</small>
+      <div class="tribute-row"><button class="button button-primary button-small" type="button" data-t="work-accept" data-seq="${Number(order.orderSeq)}">受ける</button><button class="button button-ghost button-small" type="button" data-t="work-decline" data-seq="${Number(order.orderSeq)}">断る</button></div>`);
+  }
+  const work = state.thread.work?.orderSeq === order.orderSeq ? state.thread.work : null;
+  const count = Number.isSafeInteger(work?.count) ? work.count : null;
+  const ratio = count === null ? 0 : Math.min(100, Math.round((count / order.target) * 100));
+  const progress = count === null
+    ? `<span>${state.thread.workLoading || !work ? "数えています…" : "数えられませんでした"}</span>`
+    : `<span>いま <b>${count} / ${Number(order.target)}勝</b>（受けた後の完走 − 負け）</span>`;
+  const reached = count !== null && count >= order.target;
+  const label = expired ? "結果を確かめる" : reached ? "勝ったと報告する" : "途中まで報告する";
+  return section(`${head("出稼ぎの勝負", terms)}<p class="tribute-contest-terms">${penalty}・${deadline}</p>
+    <div class="tribute-work-progress"><i style="--ratio:${ratio}%"></i>${progress}<button class="tribute-link" type="button" data-t="work-refresh" ${state.thread.workLoading ? "disabled" : ""}>数え直す</button></div>
+    <div class="tribute-row">${expired || state.thread.demo ? "" : '<button class="button button-ghost button-small" type="button" data-t="earn" data-mode="battle">1on1へ</button>'}<button class="button ${reached || expired ? "button-primary" : "button-ghost"} button-small" type="button" data-t="work-report">${label}</button></div>
+    <small class="tribute-work-rule">期限までに報告した勝ち数で決まります（期限の後の対戦は数えません）。勝ち数は、通常型・戦略型1on1の完走から負けを引いた数です（引き分けは勝ち）。</small>`);
+}
+
+// 財布が差し出す勝負の罰金。財布の1回の限度額まで（限度額は財布の画面にだけある）。
+function contestPayable(view, result) {
+  const cap = Number(view?.caps?.perTribute) || 0;
+  return cap > 0 ? Math.min(result.penalty, cap) : result.penalty;
+}
+
+// 負けた勝負の罰金。自動では引き落とさず、財布が長押しで差し出すか、管理人が同じ額の請求にする。
+function renderContestResult(view) {
+  const result = view.status === "active" ? view.workResult : null;
+  if (!result) return "";
+  const head = `<div class="tribute-work-head"><span class="tribute-eyebrow">勝負の負け</span><strong>${Number(result.wins)} / ${Number(result.target)}勝・罰金 ${escapeHtml(formatPay(result.penalty))}</strong></div>`;
+  if (view.role === "manager") {
+    return `<section class="tribute-panel tribute-work-order is-contest tribute-contest-result">${head}
+      <p class="tribute-note">財布が差し出すのを待っています。払われない時は、同じ額の請求にできます。</p>
+      <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="work-claim">罰金を請求する</button></div></section>`;
+  }
+  const payable = contestPayable(view, result);
+  return `<section class="tribute-panel tribute-work-order is-contest tribute-contest-result">${head}
+    <button class="button button-primary tribute-give-button" type="button" data-t="give-contest">罰金 ${escapeHtml(formatPay(payable))} を差し出す</button>
+    ${payable < result.penalty ? '<p class="tribute-note">1回の限度額までを差し出します（この額は管理人には見えません）。</p>' : ""}</section>`;
+}
+
 // 果たした出稼ぎに、管理人が押す受取印とご褒美（受け取りと同じ一覧）。押すのは毎回管理人。
 function renderWorkConfirmControls(view) {
   const seals = sealsFor(state.profile?.card?.seals, view.ngWords);
@@ -2244,6 +2335,7 @@ async function refreshWorkProgress({ force = false } = {}) {
   const view = thread.view;
   const order = view?.workOrder;
   if (view?.role !== "payer" || view.status !== "active" || !order || order.done || thread.workLoading) return;
+  if (order.kind === "contest" && !order.accepted) return;
   if (!force && thread.work?.orderSeq === order.orderSeq) return;
   thread.workLoading = true;
   if (state.screen === "thread") updateThreadParts();
@@ -2409,7 +2501,7 @@ function renderSheet() {
         const fee = tributeFee(sheet.amount);
         const balanceAfter = state.walletBalance === null ? null : state.walletBalance - sheet.amount;
         return wrap("差し出す", `<div class="tribute-confirm">
-          <p class="tribute-eyebrow">${sheet.othello ? "貢ぎオセロの罰金" : sheet.granted ? "願い出て許された献上" : sheet.requestId ? "請求に応える" : "無言の献上"}</p>
+          <p class="tribute-eyebrow">${sheet.othello ? "貢ぎオセロの罰金" : sheet.contest ? "勝負の罰金" : sheet.granted ? "願い出て許された献上" : sheet.requestId ? "請求に応える" : "無言の献上"}</p>
           ${sheet.purpose ? `<p class="tribute-confirm-purpose">${purposeTag(sheet.purpose, view)}として</p>` : ""}
           <strong class="tribute-confirm-amount">${escapeHtml(formatPay(sheet.amount))}</strong>
           <dl class="tribute-facts">
@@ -2420,7 +2512,7 @@ function renderSheet() {
           </dl>
           <button type="button" class="tribute-hold" data-tribute-hold ${state.busy ? "disabled" : ""}><span class="tribute-hold-fill" aria-hidden="true"></span><span class="tribute-hold-label">長押しで差し出す</span></button>
           <small>指を離すと止まります。換金できないAnjuPayだけが動きます。</small>
-          ${sheet.granted || sheet.othello ? "" : '<button class="button button-ghost button-small" type="button" data-t="give-back">金額を変える</button>'}
+          ${sheet.granted || sheet.othello || sheet.contest ? "" : '<button class="button button-ghost button-small" type="button" data-t="give-back">金額を変える</button>'}
         </div>`);
       }
       const maximum = view.allowance;
@@ -2516,16 +2608,32 @@ function renderSheet() {
     }
     case "work": {
       if (view.role !== "manager") return "";
-      const notes = workOrderNotesFor(view.tone, { collarNo: view.collarNo, ngWords: view.ngWords });
+      // 型: 完走（いままでの出稼ぎ命令）か勝負（設計書15.3）。前の勝負の罰金が払われるまで、勝負は出せない。
+      const contestBlocked = Boolean(view.workResult);
+      const kind = sheet.kind === "contest" && !contestBlocked ? "contest" : "run";
+      const notes = workOrderNotesFor(view.tone, { collarNo: view.collarNo, ngWords: view.ngWords, kind });
+      const radios = (name, values, chosen, label) => `<div class="tribute-radio-row">${values.map((value) => `<label><input type="radio" name="${name}" value="${value}" ${value === chosen ? "checked" : ""} /><span>${label(value)}</span></label>`).join("")}</div>`;
+      const body = kind === "contest"
+        ? `<p>${escapeHtml(contractCounterpart(view).name)}に、期限までに1on1で勝ってくる勝負を申し出ます。財布が受けた時から数え、勝ち数は完走から負けを引いた数です（引き分けは勝ち）。財布は受けるか断るかを選べます。</p>
+          <fieldset><legend>勝ち数</legend>${radios("target", CONTEST_TARGETS, 3, (value) => `${value}勝`)}</fieldset>
+          <fieldset><legend>期限（受けた時から）</legend>${radios("days", CONTEST_DAYS, 1, (value) => `${value}日以内`)}</fieldset>
+          <fieldset><legend>負けた時の罰金</legend>${radios("penalty", CONTEST_PENALTIES, 30, (value) => escapeHtml(formatPay(value)))}</fieldset>`
+        : `<p>${escapeHtml(contractCounterpart(view).name)}に、1on1を完走して稼いでくるよう命じます。数えるのは、命令の後に完走した通常型・戦略型1on1だけです（勝ち負けは関係ありません）。</p>
+          <fieldset><legend>回数</legend>${radios("target", WORK_ORDER_TARGETS, 3, (value) => `${value}回`)}
+            <small>10回は、毎日のプレイ報酬の「本日の基本目標」です。</small></fieldset>`;
       return wrap("出稼ぎに行かせる", `<form class="tribute-sheet-form" data-form="work-order">
-        <p>${escapeHtml(contractCounterpart(view).name)}に、1on1を完走して稼いでくるよう命じます。数えるのは、命令の後に完走した通常型・戦略型1on1だけです（勝ち負けは関係ありません）。</p>
-        <fieldset><legend>回数</legend><div class="tribute-radio-row">${WORK_ORDER_TARGETS.map((target) => `<label><input type="radio" name="target" value="${target}" ${target === 3 ? "checked" : ""} /><span>${target}回</span></label>`).join("")}</div>
-          <small>10回は、毎日のプレイ報酬の「本日の基本目標」です。</small></fieldset>
+        <fieldset><legend>型</legend><div class="tribute-radio-row">
+          <label><input type="radio" name="kind" value="run" ${kind === "run" ? "checked" : ""} /><span>完走</span></label>
+          <label><input type="radio" name="kind" value="contest" ${kind === "contest" ? "checked" : ""} ${contestBlocked ? "disabled" : ""} /><span>勝負</span></label></div>
+          ${contestBlocked ? "<small>前の勝負の罰金が払われるまで、次の勝負は出せません。</small>" : ""}</fieldset>
+        ${body}
         <label class="tribute-field"><span>一言（${LIMITS.requestNote}文字まで）</span><input name="note" maxlength="${LIMITS.requestNote}" /></label>
         ${notes.length ? `<div class="tribute-note-chips">${notes.map((line) => `<button type="button" data-t="pick-note" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div>` : ""}
-        <p class="tribute-note">Payは動かず、期限もありません。財布が報告するまで、進み具合は見えません。命令は1件ずつで、いつでも取り下げられます。</p>
+        <p class="tribute-note">${kind === "contest"
+          ? "罰金は自動では引き落とされず、財布が差し出します（財布の1回の限度額まで）。払われない時は、同じ額の請求にできます。期限が過ぎても届いていなければ、あなたが判定できます。Payは新しく出ません。"
+          : "Payは動かず、期限もありません。財布が報告するまで、進み具合は見えません。命令は1件ずつで、いつでも取り下げられます。"}</p>
         <p class="tribute-form-error" data-form-error role="alert"></p>
-        <button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>命令する</button>
+        <button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>${kind === "contest" ? "勝負を申し出る" : "命令する"}</button>
       </form>`);
     }
     case "offer-words": {
@@ -3739,10 +3847,10 @@ async function completeGive() {
   const sheet = state.sheet;
   if (!sheet || sheet.type !== "give") return;
   const result = await mutate("tribute", contractPayload({
-    kind: sheet.othello ? "othello" : sheet.granted ? "granted" : sheet.requestId ? "request" : "silent",
+    kind: sheet.othello ? "othello" : sheet.contest ? "contest" : sheet.granted ? "granted" : sheet.requestId ? "request" : "silent",
     requestId: sheet.requestId || undefined,
     amount: sheet.amount,
-    purpose: sheet.requestId || sheet.granted || sheet.othello ? undefined : sheet.purpose || undefined,
+    purpose: sheet.requestId || sheet.granted || sheet.othello || sheet.contest ? undefined : sheet.purpose || undefined,
     clientRequestId: sheet.clientRequestId,
   }));
   if (!result) {
@@ -3985,11 +4093,20 @@ async function handleSubmit(form) {
       return;
     }
     case "work-order": {
-      const target = Number(new FormData(form).get("target"));
-      if (!WORK_ORDER_TARGETS.includes(target)) return setFormError(form, "回数を選んでください。");
+      const data = new FormData(form);
+      const target = Number(data.get("target"));
       const note = String(form.elements.note.value || "");
       const problem = note ? contractTextProblem(note, { role: "manager", ngWords: view.ngWords }) : "";
       if (problem) return setFormError(form, problem);
+      if (data.get("kind") === "contest") {
+        const days = Number(data.get("days"));
+        const penalty = Number(data.get("penalty"));
+        if (!CONTEST_TARGETS.includes(target) || !CONTEST_DAYS.includes(days) || !CONTEST_PENALTIES.includes(penalty)) return setFormError(form, "勝ち数・期限・罰金を選んでください。");
+        const result = await mutate("work_order", contractPayload({ kind: "contest", target, days, penalty, note }), { form, success: `勝負を申し出ました（${days}日以内に${target}勝・罰金 ${formatPay(penalty)}）。` });
+        if (result) closeSheet();
+        return;
+      }
+      if (!WORK_ORDER_TARGETS.includes(target)) return setFormError(form, "回数を選んでください。");
       const result = await mutate("work_order", contractPayload({ target, note }), { form, success: `出稼ぎ命令を出しました（1on1を${target}回）。` });
       if (result) closeSheet();
       return;
@@ -4669,15 +4786,41 @@ async function handleClick(target) {
         after: (result) => {
           const count = Number(result?.count) || 0;
           if (state.thread === thread && result?.contract?.workOrder) thread.work = { orderSeq: result.contract.workOrder.orderSeq, count };
-          showToast(result?.done ? `出稼ぎを報告しました（${count}回）。果たしました。` : `出稼ぎを報告しました（${count}回）。`);
+          const contest = result?.lost || result?.contract?.workOrder?.kind === "contest" || result?.contract?.workResult;
+          showToast(result?.lost
+            ? "期限が過ぎていたので、勝負は負けと決まりました。"
+            : contest
+              ? (result?.done ? `勝負を報告しました（${count}勝）。勝ちました。` : `勝負を報告しました（${count}勝）。`)
+              : (result?.done ? `出稼ぎを報告しました（${count}回）。果たしました。` : `出稼ぎを報告しました（${count}回）。`));
           if (state.screen === "thread") updateThreadParts();
         },
       });
       return;
     }
     case "work-withdraw":
-      await mutate("work_withdraw", contractPayload(), { success: "出稼ぎ命令を取り下げました。" });
+      await mutate("work_withdraw", contractPayload(), { success: view?.workOrder?.kind === "contest" ? "勝負を取り下げました。" : "出稼ぎ命令を取り下げました。" });
       return;
+    // 出稼ぎの勝負（設計書15.3）。受ける・断るは財布、判定と罰金の請求は管理人。
+    case "work-accept": {
+      const result = await mutate("work_accept", contractPayload({ orderSeq: Number(target.dataset.seq) }), { success: "勝負を受けました。期限までに勝って、報告してください。" });
+      if (result) refreshWorkProgress({ force: true });
+      return;
+    }
+    case "work-decline":
+      await mutate("work_decline", contractPayload({ orderSeq: Number(target.dataset.seq) }), { success: "勝負を断りました。" });
+      return;
+    case "work-judge":
+      await mutate("work_judge", contractPayload(), { success: "期限が過ぎたので、勝負は負けと決まりました。" });
+      return;
+    case "work-claim":
+      await mutate("work_claim", contractPayload(), { success: "勝負の罰金を請求しました。" });
+      return;
+    case "give-contest": {
+      const result = view?.workResult;
+      if (!result || view.role !== "payer") return;
+      openSheet("give", { contest: true, amount: contestPayable(view, result), purpose: "penalty", step: "hold" });
+      return;
+    }
     case "work-confirm": {
       const reward = target.dataset.reward || "";
       const rewardWord = reward === REWARD_WORD ? target.dataset.text || "" : "";
@@ -4824,7 +4967,8 @@ function bindRoot(root) {
     if (!active) return;
     const target = event.target.closest?.("[data-t]");
     if (!target || !target.closest(".tribute-screen, .tribute-layer")) return;
-    if (target.tagName === "INPUT") return;
+    // 入力欄とプルダウンは change で扱う。click で描き直すと、プルダウンが開いた途端に作り直されて閉じる（PC・スマホとも）。
+    if (target.tagName === "INPUT" || target.tagName === "SELECT") return;
     event.preventDefault();
     handleClick(target).finally(() => {
       if (active && ["accept", "decline", "withdraw", "terminate", "release", "toggle-accepting"].includes(target.dataset.t) && state.screen !== "thread") render();
@@ -4835,6 +4979,12 @@ function bindRoot(root) {
     if (!active) return;
     const target = event.target.closest?.('input[data-t="toggle-nekama"], input[data-t="toggle-fee-zero"], input[data-t="toggle-declaration"], select[data-t="board-style"]');
     if (target) handleClick(target);
+    // 出稼ぎの型（完走・勝負）を切り替えると、選ぶものが変わるので描き直す。
+    if (event.target.closest?.('form[data-form="work-order"]') && event.target.name === "kind" && state.sheet?.type === "work") {
+      state.sheet.kind = event.target.value === "contest" ? "contest" : "run";
+      rerenderSheet();
+      return;
+    }
     const cardForm = event.target.closest?.('form[data-form="card"]');
     if (cardForm && event.target.name === "styles" && cardForm.querySelectorAll('input[name="styles"]:checked').length > MAX_MANAGER_STYLES) {
       event.target.checked = false;
@@ -5307,10 +5457,8 @@ function previewRaw(role, status = "active") {
     ignoredSince: now - 2 * 86_400_000 - 3_600_000,
     reportRequestedAt: role === "payer" ? now - 30_000 : 0,
     allowWorkOrders: true,
-    workOrderSeq: 1,
-    workOrder: role === "payer"
-      ? { orderSeq: 1, target: 3, note: "財布が空なら稼いでこい。", issuedAt: now - 50 * 60_000, reportedCount: 1, reportedAt: now - 20 * 60_000, doneAt: 0 }
-      : { orderSeq: 1, target: 3, note: "稼いでから顔を出せ。", issuedAt: now - 50 * 60_000, reportedCount: 3, reportedAt: now - 4 * 60_000, doneAt: now - 4 * 60_000 },
+    workOrderSeq: previewScreen.endsWith("-contest") ? 2 : 1,
+    workOrder: previewWorkOrder(role, now),
     workOrdersDone: role === "payer" ? 0 : 1,
     // 貢ぎオセロ: 管理人の見本は自分の手番の対局、財布の見本は差し出す罰金。
     allowOthello: true,
@@ -5321,6 +5469,27 @@ function previewRaw(role, status = "active") {
     eventSeq: role === "payer" ? 18 : 17,
     readSeq: { manager: 16, payer: 14 },
   };
+}
+
+// 見本の出稼ぎ命令。thread-payer-contest は受ける前の勝負、thread-manager-contest は期限の過ぎた勝負（判定の確認用）。
+function previewWorkOrder(role, now) {
+  if (previewScreen === "thread-payer-contest" && role === "payer") {
+    return { orderSeq: 2, kind: "contest", target: 3, days: 1, penalty: 300, note: "勝ってきなさい。負けたら罰金ね。", issuedAt: now - 10 * 60_000, acceptedAt: 0, deadline: 0, reportedCount: 0, reportedAt: 0, doneAt: 0 };
+  }
+  if (previewScreen === "thread-manager-contest" && role === "manager") {
+    return { orderSeq: 2, kind: "contest", target: 3, days: 1, penalty: 50, note: "負けたら罰金。勝ってから顔を出せ。", issuedAt: now - 26 * 3_600_000, acceptedAt: now - 25 * 3_600_000, deadline: now - 3_600_000, reportedCount: 1, reportedAt: now - 5 * 3_600_000, doneAt: 0 };
+  }
+  return role === "payer"
+    ? { orderSeq: 1, target: 3, note: "財布が空なら稼いでこい。", issuedAt: now - 50 * 60_000, reportedCount: 1, reportedAt: now - 20 * 60_000, doneAt: 0 }
+    : { orderSeq: 1, target: 3, note: "稼いでから顔を出せ。", issuedAt: now - 50 * 60_000, reportedCount: 3, reportedAt: now - 4 * 60_000, doneAt: now - 4 * 60_000 };
+}
+
+// 見本の勝負の負け（サーバーの settleContestLoss と同じ）。
+function previewSettleContest(raw, push, at, order) {
+  raw.workOrder = null;
+  raw.workResult = { orderSeq: order.orderSeq, penalty: order.penalty, target: order.target, wins: order.reportedCount || 0, settledAt: at };
+  raw.contestLosses = Number(raw.contestLosses || 0) + 1;
+  push({ type: "work_contest_lost", actor: "system", orderSeq: order.orderSeq, target: order.target, wins: order.reportedCount || 0, penalty: order.penalty });
 }
 
 // 見本の決着（サーバーの finishOthello と同じ）。
@@ -5578,13 +5747,17 @@ function previewCall(action, payload) {
       const request = payload.requestId ? state.thread.raw?.pendingRequests?.[payload.requestId] : null;
       const granted = payload.kind === "granted";
       const othello = payload.kind === "othello" ? Number(state.thread.raw?.othelloResult?.gameSeq) || 1 : Number(request?.othello) || 0;
-      const purpose = request ? request.purpose || "" : granted ? state.thread.raw?.plea?.purpose || "" : payload.kind === "othello" ? "penalty" : payload.purpose || "";
-      const marks = { ...(granted ? { granted: true } : {}), ...(othello ? { othello } : {}), ...(Number(request?.resists) ? { resisted: Number(request.resists) } : {}) };
+      const contest = payload.kind === "contest" ? Number(state.thread.raw?.workResult?.orderSeq) || 1 : Number(request?.contest) || 0;
+      const penaltyKind = payload.kind === "othello" || payload.kind === "contest";
+      const purpose = request ? request.purpose || "" : granted ? state.thread.raw?.plea?.purpose || "" : penaltyKind ? "penalty" : payload.purpose || "";
+      const marks = { ...(granted ? { granted: true } : {}), ...(othello ? { othello } : {}), ...(contest ? { contest } : {}), ...(Number(request?.resists) ? { resisted: Number(request.resists) } : {}) };
       const othelloPenalty = payload.kind === "othello";
-      payload = { ...payload, kind: granted || othelloPenalty ? "silent" : payload.kind };
+      const contestPenalty = payload.kind === "contest";
+      payload = { ...payload, kind: granted || penaltyKind ? "silent" : payload.kind };
       previewThreadChange((raw, push) => {
         if (granted) raw.plea = null;
         if (othelloPenalty) raw.othelloResult = null;
+        if (contestPenalty) raw.workResult = null;
         if (marks.resisted) raw.resistedTributes = Number(raw.resistedTributes || 0) + 1;
         if (payload.requestId && raw.pendingRequests) {
           const { [payload.requestId]: _paid, ...rest } = raw.pendingRequests;
@@ -5671,28 +5844,75 @@ function previewCall(action, payload) {
       return Promise.resolve({ ok: true, contractId: payload.contractId, workOrder: order, count: order ? counted : 0 });
     }
     case "work_order": {
+      const contest = payload.kind === "contest" ? { kind: "contest", days: Number(payload.days), penalty: Number(payload.penalty), acceptedAt: 0, deadline: 0 } : {};
       const view = previewThreadChange((raw, push, at) => {
         const orderSeq = Number(raw.workOrderSeq || 0) + 1;
         raw.workOrderSeq = orderSeq;
-        raw.workOrder = { orderSeq, target: Number(payload.target), note: String(payload.note || ""), issuedAt: at, reportedCount: 0, reportedAt: 0, doneAt: 0 };
-        push({ type: "work_order", actor: "manager", orderSeq, target: Number(payload.target), ...(payload.note ? { note: payload.note } : {}) });
+        raw.workOrder = { orderSeq, ...contest, target: Number(payload.target), note: String(payload.note || ""), issuedAt: at, reportedCount: 0, reportedAt: 0, doneAt: 0 };
+        push({ type: "work_order", actor: "manager", orderSeq, ...(contest.kind ? { kind: "contest", days: contest.days, penalty: contest.penalty } : {}), target: Number(payload.target), ...(payload.note ? { note: payload.note } : {}) });
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    // 出稼ぎの勝負。見本では、受けると期限を決め、報告のたびに1勝ずつ進める。
+    case "work_accept": {
+      const view = previewThreadChange((raw, push, at) => {
+        const order = raw.workOrder;
+        if (order?.kind !== "contest" || order.acceptedAt) return;
+        raw.workOrder = { ...order, acceptedAt: at, deadline: at + order.days * 86_400_000 };
+        push({ type: "work_accept", actor: "payer", orderSeq: order.orderSeq, target: order.target, days: order.days, penalty: order.penalty, deadline: raw.workOrder.deadline });
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "work_decline": {
+      const view = previewThreadChange((raw, push) => {
+        const order = raw.workOrder;
+        if (order?.kind !== "contest" || order.acceptedAt) return;
+        raw.workOrder = null;
+        push({ type: "work_declined", actor: "payer", orderSeq: order.orderSeq });
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "work_judge": {
+      const view = previewThreadChange((raw, push, at) => {
+        const order = raw.workOrder;
+        if (order?.kind !== "contest" || !order.acceptedAt || order.doneAt) return;
+        previewSettleContest(raw, push, at, order);
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "work_claim": {
+      const view = previewThreadChange((raw, push, at) => {
+        const result = raw.workResult;
+        if (!result) return;
+        const requestId = "c".repeat(15) + String(result.orderSeq % 10);
+        raw.pendingRequests = { ...(raw.pendingRequests || {}), [requestId]: { amount: result.penalty, note: "勝負の罰金", purpose: "penalty", contest: result.orderSeq, createdAt: at } };
+        raw.workResult = null;
+        push({ type: "request", actor: "manager", requestId, amount: result.penalty, note: "勝負の罰金", purpose: "penalty", contest: result.orderSeq });
       });
       return Promise.resolve({ ok: true, contract: view });
     }
     case "work_report": {
       let count = 0;
       let done = false;
+      let lost = false;
       const view = previewThreadChange((raw, push, at) => {
         const order = raw.workOrder;
         if (!order || order.doneAt) return;
+        const contest = order.kind === "contest";
+        if (contest && order.deadline && at >= order.deadline) {
+          lost = true;
+          previewSettleContest(raw, push, at, order);
+          return;
+        }
         const known = state.thread.work?.orderSeq === order.orderSeq ? state.thread.work.count : order.reportedCount;
         count = Math.min(order.target, Number(known) || 0);
         done = count >= order.target;
         raw.workOrder = { ...order, reportedCount: count, reportedAt: at, ...(done ? { doneAt: at } : {}) };
-        if (done) raw.workOrdersDone = Number(raw.workOrdersDone || 0) + 1;
-        push({ type: "work_report", actor: "payer", orderSeq: order.orderSeq, target: order.target, count, done });
+        if (done && contest) raw.contestWins = Number(raw.contestWins || 0) + 1;
+        else if (done) raw.workOrdersDone = Number(raw.workOrdersDone || 0) + 1;
+        push({ type: "work_report", actor: "payer", orderSeq: order.orderSeq, ...(contest ? { kind: "contest" } : {}), target: order.target, count, done });
       });
-      return Promise.resolve({ ok: true, count, done, contract: view });
+      return Promise.resolve({ ok: true, count, done, ...(lost ? { lost } : {}), contract: view });
     }
     case "work_withdraw": {
       const view = previewThreadChange((raw, push) => {
@@ -5707,7 +5927,7 @@ function previewCall(action, payload) {
         const order = raw.workOrder;
         if (!order?.doneAt) return;
         const look = normalizeDecorations(state.profile?.card);
-        push({ type: "work_confirm", actor: "manager", orderSeq: order.orderSeq, target: order.target, count: order.reportedCount, seal: payload.seal || "juryo", sealShape: look.sealShape, sealInk: look.sealInk, ...(payload.reward ? { reward: payload.reward, ...(payload.rewardText ? { rewardText: payload.rewardText } : {}) } : {}) });
+        push({ type: "work_confirm", actor: "manager", orderSeq: order.orderSeq, ...(order.kind === "contest" ? { kind: "contest" } : {}), target: order.target, count: order.reportedCount, seal: payload.seal || "juryo", sealShape: look.sealShape, sealInk: look.sealInk, ...(payload.reward ? { reward: payload.reward, ...(payload.rewardText ? { rewardText: payload.rewardText } : {}) } : {}) });
         raw.workOrder = null;
       });
       return Promise.resolve({ ok: true, contract: view });
@@ -6047,6 +6267,8 @@ function startPreview(screen) {
     },
     "thread-payer": () => openThread("1".repeat(40)),
     "thread-manager": () => openThread("2".repeat(40)),
+    "thread-payer-contest": () => openThread("1".repeat(40)),
+    "thread-manager-contest": () => openThread("2".repeat(40)),
     "thread-pending": () => openThread("3".repeat(40)),
     "thread-ended": () => openThread("4".repeat(40)),
     give: () => {

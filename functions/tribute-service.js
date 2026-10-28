@@ -11,6 +11,11 @@ const {
   SEVERE_REPORT_REASONS,
   LIMITS,
   WORK_ORDER_TARGETS,
+  CONTEST_TARGETS,
+  CONTEST_DAYS,
+  CONTEST_PENALTIES,
+  normalizeContestOrder,
+  contestWins,
   RECITE_TARGETS,
   DURATION_DAYS_OPTIONS,
   FORBIDDEN_MESSAGES,
@@ -145,6 +150,10 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "work_report",
   "work_confirm",
   "work_progress",
+  "work_accept",
+  "work_decline",
+  "work_judge",
+  "work_claim",
   "receive",
   "share_info",
   "set_word",
@@ -415,13 +424,16 @@ function pendingRequestList(contract) {
 }
 
 // 出稼ぎ命令。果たした後も、管理人が確認するか次の命令を出すまで残す（done で見分ける）。
+// 勝負の型（kind: "contest"、設計書15.3）は、勝ち数・期限（日）・罰金と、財布が受けた時刻・期限の時刻を持つ。
+// 勝負の done は勝ち（期限内に勝ち数に届いた）。負けは命令を消して workResult に罰金を残す。
 function workOrderView(contract) {
   const order = contract.workOrder && typeof contract.workOrder === "object" ? contract.workOrder : null;
+  const contest = order?.kind === "contest";
   const target = integer(order?.target, 0, 1_000, 0);
   const orderSeq = integer(order?.orderSeq, 0, Number.MAX_SAFE_INTEGER, 0);
-  if (!order || !WORK_ORDER_TARGETS.includes(target) || orderSeq < 1) return null;
+  if (!order || !(contest ? CONTEST_TARGETS : WORK_ORDER_TARGETS).includes(target) || orderSeq < 1) return null;
   const doneAt = integer(order.doneAt, 0, Number.MAX_SAFE_INTEGER, 0);
-  return {
+  const base = {
     orderSeq,
     target,
     note: cleanLine(order.note, LIMITS.requestNote),
@@ -430,6 +442,33 @@ function workOrderView(contract) {
     reportedAt: integer(order.reportedAt, 0, Number.MAX_SAFE_INTEGER, 0),
     done: doneAt > 0,
     doneAt,
+  };
+  if (!contest) return base;
+  const days = integer(order.days, 0, 1_000, 0);
+  const penalty = integer(order.penalty, 0, 1_000_000, 0);
+  if (!CONTEST_DAYS.includes(days) || !CONTEST_PENALTIES.includes(penalty)) return null;
+  const acceptedAt = integer(order.acceptedAt, 0, Number.MAX_SAFE_INTEGER, 0);
+  return { ...base, kind: "contest", days, penalty, acceptedAt, accepted: acceptedAt > 0, deadline: acceptedAt > 0 ? integer(order.deadline, 0, Number.MAX_SAFE_INTEGER, 0) : 0 };
+}
+
+// 勝負に負けて残った罰金（未払い）。財布が差し出すか、管理人が請求にすると消える。
+function workResultView(contract) {
+  const result = contract.workResult && typeof contract.workResult === "object" ? contract.workResult : null;
+  const penalty = integer(result?.penalty, 0, 1_000_000, 0);
+  if (!result || penalty <= 0) return null;
+  return {
+    orderSeq: integer(result.orderSeq, 0, Number.MAX_SAFE_INTEGER, 0),
+    penalty,
+    target: integer(result.target, 0, 1_000, 0),
+    wins: integer(result.wins, 0, 1_000, 0),
+    settledAt: integer(result.settledAt, 0, Number.MAX_SAFE_INTEGER, 0),
+  };
+}
+
+function contestRecordView(contract) {
+  return {
+    won: integer(contract.contestWins, 0, Number.MAX_SAFE_INTEGER, 0),
+    lost: integer(contract.contestLosses, 0, Number.MAX_SAFE_INTEGER, 0),
   };
 }
 
@@ -619,6 +658,8 @@ function viewContract(contract, uid, now) {
     reportRequested: Number(contract.reportRequestedAt || 0) > 0,
     workOrder: status === "active" ? workOrderView(contract) : null,
     workOrdersDone: integer(contract.workOrdersDone, 0, Number.MAX_SAFE_INTEGER, 0),
+    workResult: status === "active" ? workResultView(contract) : null,
+    contestRecord: contestRecordView(contract),
     hold: status === "active" ? holdView(contract) : null,
     plea: status === "active" ? pleaView(contract) : null,
     pleaCount: integer(contract.pleaCount, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -693,6 +734,8 @@ function createTributeService(deps) {
     // 出稼ぎ命令の数え方。マイスタジアムの観客と同じ正本（検証済みの正式完走数）を読む。
     economyProgressRef = null,
     totalVerifiedMatches = null,
+    // 出稼ぎの勝負の勝ち数（完走の増分 − 負けの増分）に使う、検証済みの負け数。
+    verifiedLosses = null,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -1104,6 +1147,7 @@ function createTributeService(deps) {
       pendingRequests: {},
       reportRequestedAt: 0,
       workOrder: null,
+      workResult: null,
       othello: null,
       othelloResult: null,
       pendingCaps: null,
@@ -1381,6 +1425,8 @@ function createTributeService(deps) {
       ...(marks.granted === true ? { granted: true } : {}),
       // 貢ぎオセロの罰金（何局目か）。記録の上は無言の献上で、名目は罰金。
       ...(integer(marks.othello, 0, Number.MAX_SAFE_INTEGER, 0) > 0 ? { othello: integer(marks.othello, 0, Number.MAX_SAFE_INTEGER, 0) } : {}),
+      // 出稼ぎの勝負の罰金（何件目の命令か）。記録の上は無言の献上で、名目は罰金。
+      ...(integer(marks.contest, 0, Number.MAX_SAFE_INTEGER, 0) > 0 ? { contest: integer(marks.contest, 0, Number.MAX_SAFE_INTEGER, 0) } : {}),
       ...(integer(marks.resisted, 0, LIMITS.resistsPerRequest, 0) > 0 ? { resisted: integer(marks.resisted, 0, LIMITS.resistsPerRequest, 0) } : {}),
     };
     setContract(ctx, {
@@ -2020,6 +2066,7 @@ function createTributeService(deps) {
         workOrder: null,
         workOrderSeq: 0,
         workOrdersDone: 0,
+        workResult: null,
         hold: null,
         plea: null,
         pleaSeq: 0,
@@ -2128,6 +2175,15 @@ function createTributeService(deps) {
     return integer(totalVerifiedMatches(progressSnapshot.exists ? progressSnapshot.data() : {}), 0, Number.MAX_SAFE_INTEGER, 0);
   }
 
+  function requireContestCounting() {
+    requireWorkCounting();
+    if (typeof verifiedLosses !== "function") fail("unavailable", "出稼ぎの勝負は今使えません。時間をおいてお試しください。");
+  }
+
+  function lossesOf(progressSnapshot) {
+    return integer(verifiedLosses(progressSnapshot.exists ? progressSnapshot.data() : {}), 0, Number.MAX_SAFE_INTEGER, 0);
+  }
+
   // 財布のいまの正式完走数（と、報告の時は命令した時の完走数）。対戦の確定処理には触れず、ここで読み直す。
   async function readPayerMatches(transaction, ctx, { withBaseline = false } = {}) {
     requireWorkCounting();
@@ -2135,7 +2191,37 @@ function createTributeService(deps) {
       transaction.get(economyProgressRef(ctx.payerUid)),
       withBaseline ? transaction.get(workRef(ctx.contractId)) : null,
     ]);
-    return { matches: matchesOf(progressSnapshot), work: workSnapshot?.exists ? object(workSnapshot.data()) : null };
+    return {
+      matches: matchesOf(progressSnapshot),
+      losses: typeof verifiedLosses === "function" ? lossesOf(progressSnapshot) : null,
+      work: workSnapshot?.exists ? object(workSnapshot.data()) : null,
+    };
+  }
+
+  // 勝負の勝ち数。受けた時の完走数と負け数（private/work）からの増分で数える。命令が変わっていたら null。
+  function contestCount(order, work, matches, losses) {
+    if (!order || integer(work?.orderSeq, 0, Number.MAX_SAFE_INTEGER, 0) !== order.orderSeq || losses === null) return null;
+    return contestWins({
+      baselineMatches: integer(work.baselineMatches, 0, Number.MAX_SAFE_INTEGER, 0),
+      baselineLosses: integer(work.baselineLosses, 0, Number.MAX_SAFE_INTEGER, 0),
+      matches,
+      losses,
+      target: order.target,
+    });
+  }
+
+  // 勝負の負け。命令を消して、罰金を workResult に残す（自動では引き落とさない）。勝ち数は最後に報告した数。
+  function settleContestLoss(ctx, order) {
+    setContract(ctx, {
+      workOrder: null,
+      workResult: { orderSeq: order.orderSeq, penalty: order.penalty, target: order.target, wins: order.reportedCount, settledAt: ctx.now },
+      contestLosses: integer(ctx.contract.contestLosses, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
+    });
+    pushEvent(ctx, { type: "work_contest_lost", actor: "system", orderSeq: order.orderSeq, target: order.target, wins: order.reportedCount, penalty: order.penalty });
+  }
+
+  function contestOver(order, now) {
+    return order?.kind === "contest" && order.accepted && !order.done && order.deadline > 0 && now >= order.deadline;
   }
 
   function requireWorkCount(order, extra) {
@@ -2303,7 +2389,11 @@ function createTributeService(deps) {
           if (Number(data?.amount) !== amount) fail("failed-precondition", "請求の金額が変わりました。開き直してください。");
           note = cleanLine(request.note, LIMITS.requestNote);
           purpose = visiblePurpose(request.purpose, { allowSexual });
-          marks = { resisted: integer(request.resists, 0, LIMITS.resistsPerRequest, 0), othello: integer(request.othello, 0, Number.MAX_SAFE_INTEGER, 0) };
+          marks = {
+            resisted: integer(request.resists, 0, LIMITS.resistsPerRequest, 0),
+            othello: integer(request.othello, 0, Number.MAX_SAFE_INTEGER, 0),
+            contest: integer(request.contest, 0, Number.MAX_SAFE_INTEGER, 0),
+          };
           delete requests[requestId];
           setContract(ctx, { pendingRequests: requests });
         } else if (requested === "othello") {
@@ -2315,6 +2405,15 @@ function createTributeService(deps) {
           purpose = "penalty";
           marks = { othello: result.gameSeq };
           setContract(ctx, { othelloResult: null });
+        } else if (requested === "contest") {
+          // 出稼ぎの勝負の罰金。財布の1回の限度額までを、財布が長押しで差し出す（管理人に限度額は見せない）。
+          const result = workResultView(ctx.contract);
+          if (!result) fail("failed-precondition", "払う罰金はありません。開き直してください。");
+          amount = Math.min(result.penalty, ctx.caps.perTribute);
+          if (Number(data?.amount) !== amount) fail("failed-precondition", "罰金の額が変わりました。開き直してください。");
+          purpose = "penalty";
+          marks = { contest: result.orderSeq };
+          setContract(ctx, { workResult: null });
         } else if (requested === "granted") {
           const plea = pleaView(ctx.contract);
           if (!plea?.granted) fail("failed-precondition", "許された願い出はありません。開き直してください。");
@@ -3019,9 +3118,26 @@ function createTributeService(deps) {
       write(ctx, extra, data) {
         if (ctx.contract.allowWorkOrders !== true) fail("failed-precondition", "この契約では、出稼ぎ命令を出せません。");
         if (openWorkOrder(ctx.contract)) fail("failed-precondition", "出稼ぎ命令は1件ずつです。");
+        const note = cleanLine(data?.note, LIMITS.requestNote);
+        if (data?.kind === "contest") {
+          // 勝負は申し出だけ。財布が受けた時に、その時の完走数と負け数を private/work に残す。
+          requireContestCounting();
+          if (workResultView(ctx.contract)) fail("failed-precondition", "前の勝負の罰金が、まだ払われていません。");
+          const contest = normalizeContestOrder(data);
+          if (contest.error) fail("invalid-argument", contest.error);
+          if (note) checkManagerText(ctx, note);
+          messageRate(ctx);
+          const orderSeq = integer(ctx.contract.workOrderSeq, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+          setContract(ctx, {
+            workOrderSeq: orderSeq,
+            workOrder: { orderSeq, kind: "contest", ...contest, note, issuedAt: ctx.now, acceptedAt: 0, deadline: 0, reportedCount: 0, reportedAt: 0, doneAt: 0 },
+          });
+          pushEvent(ctx, { type: "work_order", actor: "manager", orderSeq, kind: "contest", ...contest, ...(note ? { note } : {}) });
+          markManagerActive(ctx);
+          return { ok: true, contract: view(ctx) };
+        }
         const target = Number(data?.target);
         if (!WORK_ORDER_TARGETS.includes(target)) fail("invalid-argument", "回数を選び直してください。");
-        const note = cleanLine(data?.note, LIMITS.requestNote);
         if (note) checkManagerText(ctx, note);
         messageRate(ctx);
         // 確認していない前の命令は、ここで確認なしに閉じる。
@@ -3063,6 +3179,24 @@ function createTributeService(deps) {
       write(ctx, extra) {
         const order = openWorkOrder(ctx.contract);
         if (!order) fail("failed-precondition", "報告できる出稼ぎ命令はありません。");
+        if (order.kind === "contest") {
+          // 勝負は、期限までに報告した勝ち数で決まる（期限の後の対戦は数えない）。期限の後の報告は負けを決める。
+          if (!order.accepted) fail("failed-precondition", "まだ勝負を受けていません。");
+          if (contestOver(order, ctx.now)) {
+            settleContestLoss(ctx, order);
+            return { ok: true, lost: true, contract: view(ctx) };
+          }
+          const wins = contestCount(order, extra.work, extra.matches, extra.losses);
+          if (wins === null) fail("failed-precondition", "勝負を確認できません。開き直してください。");
+          messageRate(ctx);
+          const won = wins >= order.target;
+          setContract(ctx, {
+            workOrder: { ...ctx.contract.workOrder, reportedCount: wins, reportedAt: ctx.now, ...(won ? { doneAt: ctx.now } : {}) },
+            ...(won ? { contestWins: integer(ctx.contract.contestWins, 0, Number.MAX_SAFE_INTEGER, 0) + 1 } : {}),
+          });
+          pushEvent(ctx, { type: "work_report", actor: "payer", orderSeq: order.orderSeq, kind: "contest", target: order.target, count: wins, done: won });
+          return { ok: true, count: wins, done: won, contract: view(ctx) };
+        }
         const count = requireWorkCount(order, extra);
         messageRate(ctx);
         const done = count >= order.target;
@@ -3089,6 +3223,7 @@ function createTributeService(deps) {
           type: "work_confirm",
           actor: "manager",
           orderSeq: order.orderSeq,
+          ...(order.kind === "contest" ? { kind: "contest" } : {}),
           target: order.target,
           count: order.reportedCount,
           seal,
@@ -3099,6 +3234,84 @@ function createTributeService(deps) {
         if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
         markManagerActive(ctx);
         return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 勝負を受ける（財布）。罰金があるので、財布がその都度決める。受けた時の完走数と負け数を、財布だけが読める private/work に残す。
+    work_accept: {
+      roles: ["payer"],
+      statuses: ["active"],
+      read: (transaction, ctx) => {
+        requireContestCounting();
+        return readPayerMatches(transaction, ctx);
+      },
+      write(ctx, extra, data) {
+        const order = openWorkOrder(ctx.contract);
+        if (order?.kind !== "contest" || order.accepted) fail("failed-precondition", "受けられる勝負はありません。");
+        if (Number(data?.orderSeq) !== order.orderSeq) fail("failed-precondition", "勝負が変わりました。開き直してください。");
+        messageRate(ctx);
+        const deadline = ctx.now + order.days * DAY_MS;
+        setContract(ctx, { workOrder: { ...ctx.contract.workOrder, acceptedAt: ctx.now, deadline } });
+        ctx.extraWrites.push((transaction) => transaction.set(workRef(ctx.contractId), {
+          contractId: ctx.contractId,
+          payerUid: ctx.payerUid,
+          orderSeq: order.orderSeq,
+          baselineMatches: extra.matches,
+          baselineLosses: extra.losses,
+          updatedAt: ctx.now,
+        }));
+        pushEvent(ctx, { type: "work_accept", actor: "payer", orderSeq: order.orderSeq, target: order.target, days: order.days, penalty: order.penalty, deadline });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 勝負を断る（財布）。断っても何も起きない。
+    work_decline: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        const order = openWorkOrder(ctx.contract);
+        if (order?.kind !== "contest" || order.accepted) fail("failed-precondition", "断れる勝負はありません。");
+        if (Number(data?.orderSeq) !== order.orderSeq) fail("failed-precondition", "勝負が変わりました。開き直してください。");
+        messageRate(ctx);
+        setContract(ctx, { workOrder: null });
+        pushEvent(ctx, { type: "work_declined", actor: "payer", orderSeq: order.orderSeq });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 期限が過ぎても届かなかった勝負を、管理人が判定する（財布が報告しない時のため）。
+    work_judge: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        const order = openWorkOrder(ctx.contract);
+        if (!contestOver(order, ctx.now)) fail("failed-precondition", "判定できる勝負はありません。");
+        settleContestLoss(ctx, order);
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 払われない勝負の罰金を、管理人が同じ額の請求にする（請求は断れない決まりのまま。抵抗はできる）。
+    work_claim: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        const result = workResultView(ctx.contract);
+        if (!result) fail("failed-precondition", "請求できる罰金はありません。");
+        const pending = pendingRequestList(ctx.contract);
+        if (pending.length >= LIMITS.pendingRequests) fail("failed-precondition", "未払いの請求は3件までです。");
+        messageRate(ctx);
+        const requestId = randomHex(8);
+        const amount = Math.min(result.penalty, LIMITS.requestMax);
+        const note = "勝負の罰金";
+        setContract(ctx, {
+          workResult: null,
+          pendingRequests: {
+            ...object(ctx.contract.pendingRequests),
+            [requestId]: { amount, note, purpose: "penalty", contest: result.orderSeq, createdAt: ctx.now },
+          },
+        });
+        pushEvent(ctx, { type: "request", actor: "manager", requestId, amount, note, purpose: "penalty", contest: result.orderSeq });
+        markManagerActive(ctx);
+        return { ok: true, requestId };
       },
     },
     // 性的な名目の許可。決めるのは預ける側だけ。外すと、性的な名目の未払いの請求はその場で無効になる。
@@ -3323,6 +3536,7 @@ function createTributeService(deps) {
         rewardText: storedRewardText(value),
         granted: value.granted === true,
         othello: integer(value.othello, 0, Number.MAX_SAFE_INTEGER, 0),
+        contest: integer(value.contest, 0, Number.MAX_SAFE_INTEGER, 0),
         resisted: integer(value.resisted, 0, LIMITS.resistsPerRequest, 0),
         seal: storedSeal(value.seal),
         ...sealLook(value),
@@ -3372,6 +3586,7 @@ function createTributeService(deps) {
         rewardText: storedRewardText(stored),
         granted: stored.granted === true,
         othello: integer(stored.othello, 0, Number.MAX_SAFE_INTEGER, 0),
+        contest: integer(stored.contest, 0, Number.MAX_SAFE_INTEGER, 0),
         resisted: integer(stored.resisted, 0, LIMITS.resistsPerRequest, 0),
       }
       : null;
@@ -3907,11 +4122,17 @@ function createTributeService(deps) {
     const live = contract.status === "active" && integer(contract.expiresAt, 0, Number.MAX_SAFE_INTEGER, 0) > now;
     const order = live ? openWorkOrder(contract) : null;
     if (!order) return { ok: true, contractId, workOrder: null, count: 0 };
+    // 受ける前の勝負は、まだ数えるものがない。
+    if (order.kind === "contest" && !order.accepted) return { ok: true, contractId, workOrder: order, count: 0 };
+    if (order.kind === "contest") requireContestCounting();
     const [workSnapshot, progressSnapshot] = await Promise.all([
       workRef(contractId).get(),
       economyProgressRef(uid).get(),
     ]);
-    const count = workCount(order, workSnapshot.exists ? object(workSnapshot.data()) : null, matchesOf(progressSnapshot));
+    const work = workSnapshot.exists ? object(workSnapshot.data()) : null;
+    const count = order.kind === "contest"
+      ? contestCount(order, work, matchesOf(progressSnapshot), lossesOf(progressSnapshot))
+      : workCount(order, work, matchesOf(progressSnapshot));
     if (count === null) fail("failed-precondition", "出稼ぎ命令を確認できません。開き直してください。");
     return { ok: true, contractId, workOrder: order, count };
   }

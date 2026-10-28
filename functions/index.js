@@ -16030,6 +16030,8 @@ const tributeService = createTributeService({
   // 出稼ぎ命令は、マイスタジアムの観客と同じ正本（検証済みの正式完走数）を数える。
   economyProgressRef,
   totalVerifiedMatches: (progress) => normalizeEconomyProgress(progress).achievementStats.totalMatches,
+  // 出稼ぎの勝負の勝ち数（完走の増分 − 負けの増分）。
+  verifiedLosses: (progress) => normalizeEconomyProgress(progress).achievementStats.losses,
 });
 
 const TRIBUTE_GOOGLE_ACTIONS = new Set(["apply", "set_caps"]);
