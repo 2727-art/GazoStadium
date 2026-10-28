@@ -88,8 +88,6 @@
   let rankingDisplayedPeriodKey = "";
   let pendingRankingJump = "";
   let profileAvatarReadyPromise = null;
-  let pendingValueMarketDestination = "";
-  let valueMarketReadyListenerPending = false;
   const profileAvatarState = { ready: false, blob: null, url: "" };
   const audioStudioState = {
     recorder: null,
@@ -420,6 +418,10 @@
   }
 
   function openAudioStudio() {
+    if (!document.documentElement.hasAttribute("data-audio-style-ready")) {
+      launchFeature("common", () => { document.documentElement.setAttribute("data-audio-style-ready", ""); openAudioStudio(); });
+      return;
+    }
     if (!audioStudioDialog) return;
     updateAudioStudioControls();
     if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window)) {
@@ -549,7 +551,7 @@
   }
 
   function renderLanding() {
-    const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || {};
+    const lobbyStats = window.HariaiLobby?.getStats?.() || window.HariaiOnline?.getLobbyStats?.() || {};
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
     const soloStats = modeStats("solo");
     const strategyStats = modeStats("strategy");
@@ -677,21 +679,33 @@
   }
 
   function renderLandingScreen() {
+    navigationVersion++;
+    setBusy(false);
     clearRetiredFreeTableInvite();
-    pendingValueMarketDestination = "";
     currentScreen = "landing";
     expandedRankingEntryId = "";
     rankingComments = [];
     rankingCommentsStatus = "idle";
     setLandingChrome();
-    app.innerHTML = renderLanding();
+    const initialLanding = app.querySelector?.(".vl-landing");
+    if (initialLanding && initialLanding.dataset.landingBound !== "1") {
+      // Keep the already-painted heading and image. Replacing them here would
+      // restart the entrance animation and move LCP to the end of JS loading.
+      let regular = false;
+      try { regular = window.localStorage.getItem("hariai.ranch.regular.v1") === "1"; } catch {}
+      if (regular && !initialLanding.querySelector("#tributeResumeButton")) {
+        const template = document.createElement("template");
+        template.innerHTML = renderLanding();
+        const resume = template.content.querySelector("#tributeResumeButton");
+        if (resume) initialLanding.prepend(resume);
+      }
+    } else {
+      app.innerHTML = renderLanding();
+    }
+    const landing = app.querySelector?.(".vl-landing");
+    if (landing) landing.dataset.landingBound = "1";
     window.HariaiAudio?.setBgm?.("lobby");
     window.dispatchEvent(new Event("hariai-landing-rendered"));
-    document.querySelector(".screen.hero")?.addEventListener("click", (event) => {
-      const control = event.target.closest?.("button, a");
-      if (!control) return;
-      if (!control.matches("#valueMarketButton, #valueMarketRankingButton")) pendingValueMarketDestination = "";
-    }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#soloBoardButton")?.addEventListener("click", startOnlineBattle);
@@ -702,7 +716,7 @@
     document.querySelector("#stadiumButton")?.addEventListener("click", () => startStadium());
     document.querySelector("#tributeRankingButton")?.addEventListener("click", () => startTribute({ initialScreen: "ranking" }));
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
-    document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
+    document.querySelector("#rankingButton")?.addEventListener("click", () => launchFeature("online", () => renderRankingScreen({ refresh: true })));
     document.querySelector("#achievementButton")?.addEventListener("click", () => openOnlineFeature("openAchievements"));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
@@ -1626,71 +1640,37 @@
     });
   }
 
+  let navigationVersion = 0;
+  async function launchFeature(name, launch) {
+    const version = ++navigationVersion;
+    setBusy(true, "画面を読み込んでいます…");
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "button button-ghost";
+    cancel.textContent = "読み込みを中止";
+    cancel.onclick = () => { navigationVersion++; setBusy(false); };
+    document.querySelector("#loadingOverlay .loading-card")?.appendChild(cancel);
+    try {
+      await window.HariaiFeatures.load(name);
+      if (version !== navigationVersion) return;
+      setBusy(false);
+      await launch();
+    } catch (error) {
+      if (version === navigationVersion) showToast(error.message || "読み込めませんでした。もう一度お試しください。");
+    } finally {
+      if (version === navigationVersion) setBusy(false);
+    }
+  }
   function startStrategyLab() {
-    const launch = () => {
-      window.HariaiStrategy?.start?.();
+    return launchFeature("strategy", () => {
+      window.HariaiStrategy.start();
       releaseRankingScreenOwnership("strategy", window.HariaiStrategy?.isActive?.() === true);
-    };
-    if (window.HariaiStrategy?.start) {
-      launch();
-      return;
-    }
-    showToast("戦略型1on1対戦を読み込んでいます…");
-    window.addEventListener("hariai-strategy-ready", launch, { once: true });
+    });
   }
-
-  function startAiTextTraining() {
-    if (window.HariaiAiTextTraining?.start) {
-      window.HariaiAiTextTraining.start();
-      return;
-    }
-    showToast("AI文字コラトレーニングを読み込んでいます…");
-    window.addEventListener(
-      "hariai-ai-text-training-ready",
-      () => window.HariaiAiTextTraining?.start?.(),
-      { once: true },
-    );
-  }
-
-  function startRouletteTraining() {
-    if (window.HariaiRouletteTraining?.start) {
-      window.HariaiRouletteTraining.start();
-      return;
-    }
-    showToast("ルーレットトレーニングを読み込んでいます…");
-    window.addEventListener(
-      "hariai-roulette-training-ready",
-      () => window.HariaiRouletteTraining?.start?.(),
-      { once: true },
-    );
-  }
-
-  function startTribute(options = {}) {
-    if (window.HariaiTribute?.start) {
-      window.HariaiTribute.start(options);
-      return;
-    }
-    showToast("お貢ぎ牧場を読み込んでいます…");
-    window.addEventListener(
-      "hariai-tribute-ready",
-      () => window.HariaiTribute?.start?.(options),
-      { once: true },
-    );
-  }
-
-  function startStadium() {
-    if (window.HariaiStadium?.start) {
-      window.HariaiStadium.start();
-      return;
-    }
-    showToast("マイスタジアムを読み込んでいます…");
-    window.addEventListener(
-      "hariai-stadium-ready",
-      () => window.HariaiStadium?.start?.(),
-      { once: true },
-    );
-  }
-
+  function startAiTextTraining() { return launchFeature("ai", () => window.HariaiAiTextTraining.start()); }
+  function startRouletteTraining() { return launchFeature("roulette", () => window.HariaiRouletteTraining.start()); }
+  function startTribute(options = {}) { return launchFeature("tribute", () => window.HariaiTribute.start(options)); }
+  function startStadium() { return launchFeature("stadium", () => window.HariaiStadium.start()); }
 
   // retire-free-table-v1: legacy links and external callers stay entirely local.
   function clearRetiredFreeTableInvite() {
@@ -1729,55 +1709,14 @@
   }
 
   function startValueMarketDestination(destination) {
-    const normalizedDestination = destination === "rankings" ? "rankings" : "setup";
-    const method = normalizedDestination === "rankings" ? "openRankingsFromLanding" : "start";
-    if (typeof window.HariaiMarket?.[method] === "function") {
-      pendingValueMarketDestination = "";
-      window.HariaiMarket[method]();
-      return;
-    }
-    if (window.HariaiMarket) {
-      showToast("推し値市場を更新しました。ページを再読み込みしてお試しください。");
-      return;
-    }
-    pendingValueMarketDestination = normalizedDestination;
-    showToast(normalizedDestination === "rankings"
-      ? "推し値市場ランキングを読み込んでいます…"
-      : "推し値市場を読み込んでいます…");
-    if (valueMarketReadyListenerPending) return;
-    valueMarketReadyListenerPending = true;
-    window.addEventListener("hariai-market-ready", () => {
-      valueMarketReadyListenerPending = false;
-      const requestedDestination = pendingValueMarketDestination;
-      pendingValueMarketDestination = "";
-      if (!requestedDestination || !document.querySelector(".screen.hero")) return;
-      const requestedMethod = requestedDestination === "rankings" ? "openRankingsFromLanding" : "start";
-      window.HariaiMarket?.[requestedMethod]?.();
-    }, { once: true });
+    return launchFeature("market", () => window.HariaiMarket.openRankingsFromLanding());
   }
-
-
-  function startAccount() {
-    if (window.HariaiAccount?.start) {
-      window.HariaiAccount.start();
-      return;
-    }
-    showToast("AnjuPayウォレットを読み込んでいます…");
-    window.addEventListener("hariai-account-ready", () => window.HariaiAccount?.start?.(), { once: true });
-  }
-
+  function startAccount() { return launchFeature("account", () => window.HariaiAccount.start()); }
   function openOnlineFeature(method, onStarted) {
-    const launch = () => {
-      if (typeof window.HariaiOnline?.[method] !== "function") return;
+    return launchFeature("online", () => {
       window.HariaiOnline[method]();
       onStarted?.();
-    };
-    if (typeof window.HariaiOnline?.[method] === "function") {
-      launch();
-      return;
-    }
-    showToast("オンライン機能を読み込んでいます…");
-    window.addEventListener("hariai-online-ready", launch, { once: true });
+    });
   }
 
   async function processImageFile(file, position, options = {}) {
@@ -2107,7 +2046,7 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2Pメディア転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO TRAINING + FREE TABLE + ANJUPAY";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO TRAINING + ANJUPAY";
     if (footerItems[1]) footerItems[1].textContent = "ソロ画像・抽選・自己申告は端末内。対人モードのメディアはP2Pで一時転送します";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
@@ -2119,12 +2058,10 @@
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    navigationVersion++;
+    setBusy(false);
     if (window.HariaiRouletteTraining?.isActive?.()) {
       window.HariaiRouletteTraining.requestHome();
-      return;
-    }
-    if (window.HariaiDanwakuNote?.isActive?.()) {
-      window.HariaiDanwakuNote.requestHome();
       return;
     }
     if (window.HariaiTribute?.isActive?.()) {
@@ -2141,10 +2078,6 @@
     }
     if (window.HariaiAccount?.isActive?.()) {
       window.HariaiAccount.requestHome();
-      return;
-    }
-    if (window.HariaiFleaMarket?.isActive?.()) {
-      window.HariaiFleaMarket.requestHome();
       return;
     }
     if (window.HariaiMarket?.isActive?.()) {
@@ -2178,6 +2111,9 @@
     openFreeTable: showRetiredFreeTable,
     openRouletteTraining: startRouletteTraining,
     openTribute: startTribute,
+    openAccount: startAccount,
+    openMarketRecords: startValueMarketRankings,
+    openOnlineFeature,
     shared: {
       escapeHtml,
       showToast,
@@ -2194,6 +2130,12 @@
     },
   };
 
+  document.querySelector("#playerSafetyButton")?.addEventListener("click", (event) => {
+    if (window.HariaiPlayerSafety) return;
+    event.stopPropagation();
+    launchFeature("safety", () => window.HariaiPlayerSafety.openSettings());
+  });
+  window.dispatchEvent(new Event("hariai-app-ready"));
   profileAvatar.ready();
   bindAudioStudioEvents();
   window.addEventListener("pagehide", () => {
@@ -2226,4 +2168,19 @@
 
   if (!openInitialFreeTableInvite()) renderLandingScreen();
   showAnjuPayUnitNoticeOnce();
+  const initialParams = new URLSearchParams(location.search);
+  let recoverAccount = initialParams.get("account") === "1";
+  try { recoverAccount ||= sessionStorage.getItem("hariai-open-account-recovery-v1") === "1"; } catch {}
+  if (initialParams.has("ranch") || initialParams.get("open") === "ranch") {
+    launchFeature("tribute", () => window.HariaiTribute.openRequestedLink());
+  } else if (recoverAccount) {
+    launchFeature("account", () => window.HariaiAccount.openRequestedLink());
+  }
+  const loadCounts = () => {
+    const run = () => window.HariaiFeatures.load("presence").catch(() => {});
+    if ("requestIdleCallback" in window) window.requestIdleCallback(run, { timeout: 2500 });
+    else setTimeout(run, 0);
+  };
+  if (document.readyState === "complete") loadCounts();
+  else window.addEventListener("load", loadCounts, { once: true });
 })();

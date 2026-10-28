@@ -1,5 +1,5 @@
-import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1";
 import {
   httpsCallable,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
@@ -12,7 +12,7 @@ import {
   firestore,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
 import {
   formatAnjuPay,
   formatAnjuPayNumber,
@@ -56,7 +56,7 @@ import {
   drawAiTextTrainingRosterIndices,
   isAiTextTrainingRosterCount,
   normalizeAiTextTrainingDrawIndices,
-} from "./ai-text-training-roster.mjs?v=ai-text-training-roster-v1";
+} from "./ai-text-training-roster.mjs?v=ai-text-training-roster-v1-lazy-loading-v1";
 import {
   AI_TEXT_TRAINING_STYLE_PRODUCTS,
   aiTextTrainingCosmeticsAreOwned,

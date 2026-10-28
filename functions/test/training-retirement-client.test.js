@@ -59,7 +59,7 @@ test("all surviving mode entry points dropped the retired activity guard", () =>
     "online.js",
     "free-table.js",
     "flea-market.js",
-    "market.js",
+    "market-records.js",
     "ai-text-training.js",
   ]) {
     assert.doesNotMatch(read(relativePath), /HariaiTraining/, relativePath);
@@ -106,7 +106,7 @@ test("changed browser assets use the retirement cache marker", () => {
     "account.js",
     "strategy.js",
     "online.js",
-    "market.js",
+    "market-records.js",
     "ai-text-training.js",
   ]) {
     assert.match(

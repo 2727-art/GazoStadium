@@ -2,10 +2,7 @@ import {
   connectAuthEmulator,
   getAuth,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
-import {
-  connectDatabaseEmulator,
-  getDatabase,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
+import { database } from "./firebase-database-client.mjs?v=lazy-loading-v1";
 import {
   connectFirestoreEmulator,
   getFirestore,
@@ -27,13 +24,12 @@ export const useOfflineMarketPreview = isLocalhost
   && !useFirebaseEmulators;
 
 export const auth = getAuth(firebaseApp);
-export const database = getDatabase(firebaseApp);
+export { database };
 export const firestore = getFirestore(firebaseApp);
 export const functions = getFunctions(firebaseApp, "us-central1");
 
 if (useFirebaseEmulators) {
   connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
-  connectDatabaseEmulator(database, "127.0.0.1", 9000);
   connectFirestoreEmulator(firestore, "127.0.0.1", 8080);
   connectFunctionsEmulator(functions, "127.0.0.1", 5001);
 }

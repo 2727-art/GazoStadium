@@ -528,5 +528,5 @@ test("battle launch releases ranking ownership only after the target feature is 
   assert.match(launchers, /releaseRankingScreenOwnership\("online", window\.HariaiOnline\?\.isActive\?\.\(\) === true\)/);
   assert.match(launchers, /releaseRankingScreenOwnership\("strategy", window\.HariaiStrategy\?\.isActive\?\.\(\) === true\)/);
   assert.match(onlineLauncher, /window\.HariaiOnline\[method\]\(\);\s+onStarted\?\.\(\)/);
-  assert.match(onlineLauncher, /addEventListener\("hariai-online-ready", launch, \{ once: true \}\)/);
+  assert.match(onlineLauncher, /launchFeature\("online"/);
 });

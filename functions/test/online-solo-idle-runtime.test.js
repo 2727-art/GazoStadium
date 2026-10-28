@@ -444,6 +444,25 @@ test("overdue heartbeat before visibilitychange uses waiting-only stop, not leas
   assert.equal(h.requests()[0].onlyWaiting, true);
 });
 
+for (const screen of ["matching", "score", "gameover"]) {
+  test(`lease heartbeat renews only the live ${screen === "matching" ? "queue" : "room presence"} during ${screen}`, async () => {
+    const writes = [];
+    const h = await harness({
+      serverNow: () => 1000, ONLINE_SESSION_LEASE_DEFAULTS: { retryIntervalMs: 3000 },
+      database: {}, ref: (_db, value) => value, soloQueueEntryPath: () => "queue",
+      soloRoomPresencePath: () => "room-presence", serverTimestamp: () => 1000,
+      decideOnlineSessionHeartbeatResult: () => ({ action: "renew", lease: { expiresAt: 999999999 } }),
+      update: async (path, data) => writes.push({ path, data }),
+      soloSessionActionCallable: async () => ({ data: {} }),
+    });
+    Object.assign(h.target, { screen, roomId: screen === "matching" ? "" : "active-room" });
+    assert.equal(await h.context.refreshSoloSessionLease(h.target), true);
+    assert.deepEqual(writes.map(write => write.path), [screen === "matching" ? "queue" : "room-presence"]);
+    assert.equal(h.target.soloSessionLeaseHeld, true);
+    assert.ok(h.calls.includes("heartbeat-scheduled"));
+  });
+}
+
 for (const failure of ["protected", "network"]) {
   test(`expired waiting during ${failure} retry still renews its heartbeat`, async () => {
     const h = await harness();

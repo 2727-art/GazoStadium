@@ -5,10 +5,11 @@
   if (!isPrimary && !legacyHosts.has(location.hostname)) return;
   const closedKey = isPrimary ? "hariai-domain-returning-closed-v1" : "hariai-domain-move-closed-v2";
   try { if (sessionStorage.getItem(closedKey) === "1") return; } catch { /* Keep the notice available. */ }
-  const bar = document.createElement("aside");
+  const existing = document.getElementById("domainMoveNotice");
+  const bar = existing || document.createElement("aside");
   bar.className = isPrimary ? "domain-move domain-move--primary" : "domain-move";
   bar.setAttribute("aria-label", isPrimary ? "以前から遊んでいる方への引き継ぎ案内" : "新URLへの引き継ぎ案内");
-  bar.innerHTML = (isPrimary
+  if (!existing || !isPrimary) bar.innerHTML = (isPrimary
     ? `<div class="domain-move-copy"><strong>以前から遊んでいる方へ</strong>
     <p>サイトのURLが変わりました。残高や実績が以前と違う場合は、以前のデータへの引き継ぎが必要な可能性があります。サイトデータやCookieを削除せず、引き継ぎ手順をご確認ください。</p></div>
     <div class="domain-move-actions"><a class="domain-move-cta" href="/account-guide/">以前のデータを引き継ぐ</a></div>`
@@ -20,14 +21,14 @@
     + `<button class="domain-move-close" type="button" aria-label="引き継ぎ案内を閉じる">×</button>`;
   const wallet = bar.querySelector("[data-domain-wallet]");
   if (wallet) {
-    const enable = () => { wallet.disabled = !window.HariaiAccount; };
+    const enable = () => { wallet.disabled = !window.HariaiApp; };
     enable();
-    if (wallet.disabled) window.addEventListener("hariai-account-ready", enable, { once: true });
-    wallet.addEventListener("click", () => window.HariaiAccount?.start());
+    if (wallet.disabled) window.addEventListener("hariai-app-ready", enable, { once: true });
+    wallet.addEventListener("click", () => window.HariaiApp?.openAccount?.());
   }
   bar.querySelector(".domain-move-close").addEventListener("click", () => {
     try { sessionStorage.setItem(closedKey, "1"); } catch { /* Closing still works for this page. */ }
     bar.remove();
   });
-  document.body.prepend(bar);
+  if (!existing) document.body.prepend(bar);
 })();

@@ -51,10 +51,6 @@ test("normal 1on1 starts with listeners and one immediate server match attempt",
     "async function beginMatchmaking",
     "async function startPublicPresence",
   );
-  const queueHeartbeat = sourceBetween(
-    "expectedState.queueHeartbeat = window.setInterval",
-    "subscribeToOwnOffers(ownOffersRef",
-  );
 
   const subscribeIndex = matching.indexOf(
     "subscribeToOwnOffers(ownOffersRef, expectedState, generation)",
@@ -69,7 +65,7 @@ test("normal 1on1 starts with listeners and one immediate server match attempt",
   assert.ok(connectivityIndex > subscribeIndex);
   assert.ok(immediateIndex > connectivityIndex);
   assert.doesNotMatch(matching, /get\(ownOffersRef\)/);
-  assert.doesNotMatch(queueHeartbeat, /attempt(?:Current)?SoloServerMatch|attemptCurrentSoloMatchmaking/);
+  assert.doesNotMatch(matching, /queueHeartbeat|setInterval/);
   assert.doesNotMatch(source, /SOLO_SERVER_MATCH_POLL_MS|startSoloServerMatchPolling|offerPollTimer/);
 });
 

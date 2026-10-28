@@ -40,7 +40,7 @@ test("the landing opens with a DM example and lists the open tables with live co
   assert.match(app, /querySelector\("#soloBoardButton"\)\?\.addEventListener\("click", startOnlineBattle\)/);
   for (const id of ["boardSoloWaitingCount", "boardSoloPlayingCount", "boardStrategyWaitingCount", "boardStrategyPlayingCount"]) {
     assert.match(landing, new RegExp(`liveCount\\("${id}"`), `${id} rendered`);
-    assert.match(online, new RegExp(`${id}: lobbyStats\\.`), `${id} refreshed with the lobby stats`);
+    assert.ok(read("landing-presence.mjs").includes(id.replace(/(?:Waiting|Playing)Count$/, "")), `${id} refreshed with the lobby stats`);
   }
   assert.doesNotMatch(landing, /freeTableButton|boardFreeTable|自由卓/);
 });

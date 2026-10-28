@@ -1,5 +1,6 @@
-import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1";
-import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, requestSafety, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1";
+import { SHOP_PRODUCTS, getShopProductLabel } from "./shop-products.mjs?v=lazy-loading-v1";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, requestSafety, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1";
 import {
   equalTo,
   get,
@@ -28,7 +29,7 @@ import {
   database,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -89,7 +90,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
+} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
 import {
   appendIncomingOnlineImageChunk,
   completeIncomingOnlineImageTransfer,
@@ -105,7 +106,7 @@ import {
   completeIncomingEngawaImageTransfer,
   createIncomingEngawaImageTransfer,
   engawaImageEndStatus,
-} from "./engawa-image-transfer.mjs?v=engawa-image-transfer-v1";
+} from "./engawa-image-transfer.mjs?v=engawa-image-transfer-v1-lazy-loading-v1";
 import {
   beginOnlineStateTransition,
   captureOnlineRoomContext,
@@ -390,23 +391,7 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   trainingSets: 3,
   trainingSeconds: 86_400,
 });
-const SHOP_PRODUCTS = [
-  ...AI_TEXT_TRAINING_STYLE_PRODUCTS,
-  { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },
-  { id: "reaction_best_shot", type: "reaction", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
-  { id: "reaction_composition", type: "reaction", name: "コンポジション", reaction: "構図がうまい！", description: "画面構成に注目した追加リアクション", price: 160 },
-  { id: "reaction_atmosphere", type: "reaction", name: "アトモスフィア", reaction: "空気感が最高", description: "画像全体の雰囲気を褒める追加リアクション", price: 200 },
-  { id: "reaction_idea", type: "reaction", name: "アイデア賞", reaction: "発想がおもしろい！", description: "意外性や着眼点を褒める追加リアクション", price: 240 },
-  { id: "reaction_healing", type: "reaction", name: "ヒーリング", reaction: "癒やされる", description: "穏やかな画像に似合う追加リアクション", price: 250 },
-  { id: "reaction_keep_watching", type: "reaction", name: "ロングルック", reaction: "ずっと見ていたい", description: "見飽きない魅力を伝える追加リアクション", price: 300 },
-  { id: "reaction_today_favorite", type: "reaction", name: "トゥデイズピック", reaction: "今日の推し！", description: "その日の一番を伝える追加リアクション", price: 350 },
-  { id: "reaction_story", type: "reaction", name: "ストーリーテラー", reaction: "物語を感じる", description: "背景まで想像したときの追加リアクション", price: 400 },
-  { id: "reaction_masterpiece", type: "reaction", name: "マスターピース", reaction: "これは名作", description: "ここぞという一枚に送る追加リアクション", price: 600 },
-  ...STAMP_PRODUCTS,
-  ...PLAYER_TITLE_PRODUCTS,
-  ...CHAT_COSMETIC_PRODUCTS,
-  ...RANCH_DECORATION_PRODUCTS,
-];
+
 const RANCH_DECORATION_TYPES = new Set(["ranchFrame", "ranchSealShape", "ranchSealInk", "ranchAvatar"]);
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
@@ -485,13 +470,10 @@ let gazeScrollPending = false;
 let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
 let pendingSampleMatchmakingLaunch = null;
-let lobbyPresenceEntries = null;
-let lobbyInitialStatsRequest = null;
 const LOBBY_MODES = [...ACTIVE_BATTLE_MODES];
 const createLobbyStats = (value = null) => (
   Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }]))
 );
-let lobbyStats = createLobbyStats();
 const createBattlePresenceCheckState = () => ({
   waiting: null,
   otherWaiting: null,
@@ -693,7 +675,6 @@ function createOnlineState() {
     matchScopeTimer: null,
     matchScopeAvailable: false,
     matchScopeExpanded: false,
-    queueHeartbeat: null,
     publicPresenceId: "",
     publicPresencePendingId: "",
     publicPresenceState: "",
@@ -1762,10 +1743,6 @@ function getTitleProduct(titleId = state.economy.equipped?.title) {
   return getPlayerTitleProduct(titleId);
 }
 
-function getShopProductLabel(productId) {
-  const product = SHOP_PRODUCTS.find((candidate) => candidate.id === String(productId || ""));
-  return product ? String(product.reaction || product.title || product.name || "") : "";
-}
 
 function titleLabel(titleId) {
   return getTitleProduct(titleId)?.title || "";
@@ -2212,11 +2189,8 @@ function isActive() {
 }
 
 function getLobbyStats() {
-  return {
-    ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }])),
-  };
+  return window.HariaiLobby?.getStats?.() || createLobbyStats();
 }
-
 
 function getBattlePresenceCheckState(mode) {
   if (!LOBBY_MODES.includes(mode)) throw new Error("参加人数を確認できないモードです。");
@@ -2730,49 +2704,6 @@ async function deleteLeaderboardComment(targetEntryId, authorEntryId) {
   await requestSafety("comments_delete", { targetEntryId: targetId, authorEntryId: authorId });
 }
 
-function refreshLobbyStats({
-  refreshPresence = true,
-} = {}) {
-  const now = Date.now() + Number(publicServerTimeOffset || 0);
-  const freshAfter = now - PUBLIC_PRESENCE_FRESH_MS;
-  const entries = Object.values(lobbyPresenceEntries || {}).filter((entry) => (
-    Number(entry?.lastSeen) >= freshAfter
-    && LOBBY_MODES.includes(entry?.mode)
-    && (entry?.state === "waiting" || entry?.state === "playing")
-  ));
-  const previousStats = lobbyStats;
-  const nextStats = createLobbyStats();
-  LOBBY_MODES.forEach((mode) => {
-    nextStats[mode] = refreshPresence ? {
-      waiting: lobbyPresenceEntries === null ? null : 0,
-      playing: lobbyPresenceEntries === null ? null : 0,
-    } : { ...previousStats[mode] };
-  });
-  if (refreshPresence) {
-    entries.forEach((entry) => {
-      nextStats[entry.mode][entry.state] += 1;
-    });
-  }
-  lobbyStats = nextStats;
-  renderLobbyStats();
-  window.dispatchEvent(new CustomEvent("hariai-lobby-stats-updated", { detail: getLobbyStats() }));
-}
-
-function renderLobbyStats() {
-  const values = {
-    heroSoloWaitingCount: lobbyStats.solo.waiting,
-    heroSoloPlayingCount: lobbyStats.solo.playing,
-    boardSoloWaitingCount: lobbyStats.solo.waiting,
-    boardSoloPlayingCount: lobbyStats.solo.playing,
-    boardStrategyWaitingCount: lobbyStats.strategy.waiting,
-    boardStrategyPlayingCount: lobbyStats.strategy.playing,
-  };
-  Object.entries(values).forEach(([id, value]) => {
-    const element = document.querySelector(`#${id}`);
-    if (element) element.textContent = Number.isInteger(value) ? String(value) : "--";
-  });
-}
-
 function formatLobbyStatsUpdatedAt(timestamp) {
   if (!Number.isFinite(Number(timestamp)) || Number(timestamp) <= 0) return "";
   return new Intl.DateTimeFormat("ja-JP", {
@@ -2796,47 +2727,6 @@ function withLobbyPublicStatsTimeout(promise, timeoutMs = LOBBY_PUBLIC_STATS_REQ
       window.clearTimeout(timer);
       reject(error);
     });
-  });
-}
-
-function loadInitialLobbyStats() {
-  if (useOfflineMarketPreview || new URLSearchParams(location.search).has("freeTableInvite")) return Promise.resolve(getLobbyStats());
-  if (lobbyInitialStatsRequest) return lobbyInitialStatsRequest;
-  // Retain the settled promise too: returning home, failures and late replies
-  // must not start another top-page request during this document's lifetime.
-  lobbyInitialStatsRequest = Promise.resolve().then(async () => {
-    try {
-      const offsetSnapshot = await withLobbyPublicStatsTimeout(
-        get(ref(database, ".info/serverTimeOffset")),
-        3_000,
-      );
-      const offset = Number(offsetSnapshot.val());
-      if (Number.isFinite(offset)) {
-        publicServerTimeOffset = offset;
-        publicServerTimeOffsetReady = true;
-      }
-    } catch {
-      // The device clock remains the fallback when server time is unavailable.
-    }
-    let presenceReady = false;
-    try {
-      const snapshot = await withLobbyPublicStatsTimeout(get(ref(database, "online/publicPresence")));
-      lobbyPresenceEntries = snapshot.val() || {};
-      presenceReady = true;
-    } catch {
-      // Keep unknown counts when the one-time presence snapshot is unavailable.
-    }
-    refreshLobbyStats({ refreshPresence: presenceReady });
-    return getLobbyStats();
-  }).catch(() => getLobbyStats());
-  return lobbyInitialStatsRequest;
-}
-
-function watchLobbyStats() {
-  loadInitialLobbyStats().catch(() => {});
-  window.addEventListener("hariai-landing-rendered", () => {
-    loadInitialLobbyStats().catch(() => {});
-    renderLobbyStats();
   });
 }
 
@@ -8794,12 +8684,15 @@ async function refreshSoloSessionLease(expectedState = state) {
       lastSeen: serverNow(),
       expiresAt: decision.lease.expiresAt,
     };
-    const heartbeatWrites = [
-      update(ref(database, soloQueueEntryPath(
+    const heartbeatWrites = [];
+    // The server removes the queue entry when a match starts. Renew only
+    // while waiting; updating that removed entry would fail every 15 seconds.
+    if (!expectedState.roomId && expectedState.screen === "matching") {
+      heartbeatWrites.push(update(ref(database, soloQueueEntryPath(
         expectedState.uid,
         expectedState.clientSessionId,
-      )), heartbeat),
-    ];
+      )), heartbeat));
+    }
     if (expectedState.roomId && expectedState.soloSessionGeneration) {
       heartbeatWrites.push(update(ref(database, soloRoomPresencePath(
         expectedState.roomId,
@@ -9386,11 +9279,6 @@ async function beginMatchmaking({ automatic = false } = {}) {
         render();
       }, MATCH_SCOPE_EXPAND_DELAY_MS);
     }
-    expectedState.queueHeartbeat = window.setInterval(() => {
-      if (expectedState.soloHiddenWaitReleasePromise) return;
-      update(queueEntryRef, { lastSeen: serverNow() })
-        .catch(() => {});
-    }, 20_000);
     subscribeToOwnOffers(ownOffersRef, expectedState, generation);
     watchSoloMatchConnectivity(ownOffersRef, expectedState, generation);
     attemptCurrentSoloMatchmaking(generation).catch(handleRecoverableError);
@@ -13090,7 +12978,6 @@ async function cleanupMatchmaking(keepActive, targetState = state) {
   targetState.matchmakingGeneration = ++matchmakingGenerationCounter;
   window.clearTimeout(targetState.matchTimer);
   window.clearTimeout(targetState.matchScopeTimer);
-  window.clearInterval(targetState.queueHeartbeat);
   window.clearTimeout(targetState.offerRecoveryTimer);
   window.clearInterval(targetState.hostStatusPollTimer);
   window.clearTimeout(targetState.soloServerMatchRetryTimer);
@@ -13098,7 +12985,6 @@ async function cleanupMatchmaking(keepActive, targetState = state) {
   targetState.matchScopeTimer = null;
   targetState.matchScopeAvailable = false;
   targetState.matchScopeExpanded = false;
-  targetState.queueHeartbeat = null;
   targetState.offerRecoveryTimer = null;
   targetState.offerRecoveryAttempt = 0;
   targetState.hostStatusPollTimer = null;
@@ -13417,7 +13303,6 @@ window.addEventListener("resize", () => {
 window.visualViewport?.addEventListener("resize", syncGazeKeyboard);
 window.visualViewport?.addEventListener("scroll", syncGazeKeyboard);
 
-if (!useOfflineMarketPreview) watchLobbyStats();
 watchDailyDateRollover();
 
 window.HariaiOnline = {
