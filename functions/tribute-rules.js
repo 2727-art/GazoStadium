@@ -49,6 +49,8 @@ const RANCH_ANIMALS = Object.freeze(["cow", "pig", "sheep", "goat", "chicken", "
 const RANCH_DEFAULT_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
 // 財布の鳴き声（設計書16.5）。財布が自分で書く、20文字までの一言を3つまで。
 const RANCH_MOO = Object.freeze({ length: 20, lines: 3 });
+// 牧場の名前（設計書16.15）。「○○牧場」の○○の部分を10文字まで。
+const RANCH_NAME = Object.freeze({ length: 10 });
 
 // そのレベルに必要な経験値の合計。Lv30 より上は、1段ごとに100ずつ増える。
 function ranchThreshold(level) {
@@ -542,6 +544,19 @@ function normalizeMooLines(value) {
     if (boardSexualWord(line)) return { error: MOO_SEXUAL_MESSAGE };
   }
   return { lines };
+}
+
+// 牧場の名前。末尾の「牧場」は外して持つ（画面では「○○牧場」と出す）。空なら名前を外す。
+// 管理人カードの札として掲示板にも出るので、今日のひとことと同じく、連絡先などの禁止表現と性的な言葉は通さない。
+const RANCH_NAME_SEXUAL_MESSAGE = "牧場の名前は掲示板にも出るため、性的な言葉は書けません。";
+
+function normalizeRanchName(value) {
+  const text = Array.from(cleanLine(value, RANCH_NAME.length + 4).replace(/\s*牧場$/u, "").trim()).slice(0, RANCH_NAME.length).join("");
+  if (!text) return { name: "" };
+  const reason = forbiddenReason(text);
+  if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
+  if (boardSexualWord(text)) return { error: RANCH_NAME_SEXUAL_MESSAGE };
+  return { name: text };
 }
 
 // 今日のひとこと。30文字まで、連絡先などの禁止表現と性的な言葉は通さない。
@@ -1095,6 +1110,7 @@ module.exports = {
   RANCH_ANIMALS,
   RANCH_DEFAULT_ANIMALS,
   RANCH_MOO,
+  RANCH_NAME,
   ranchLevelFor,
   ranchThreshold,
   ranchFondness,
@@ -1154,6 +1170,7 @@ module.exports = {
   normalizeRankingWord,
   normalizeCheer,
   normalizeMooLines,
+  normalizeRanchName,
   boardSexualWord,
   BOARD_SEXUAL_MESSAGE,
   normalizeSeals,

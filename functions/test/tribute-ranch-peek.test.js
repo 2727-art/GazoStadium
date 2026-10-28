@@ -118,7 +118,7 @@ test("the wallet's peek returns only the manager's ranch level and writes nothin
   const before = snapshot();
   h.advance(2_100);
   const peek = await h.act("payer", "ranch_peek", { contractId });
-  assert.deepEqual(peek, { ok: true, contractId, ranchLevel: 15 }, "the level only: no other wallets, head count or points");
+  assert.deepEqual(peek, { ok: true, contractId, ranchLevel: 15, ranchName: "" }, "the level and the ranch name only (both on the public card): no other wallets, head count or points");
   assert.equal(snapshot(), before, "reading the ranch writes nothing");
   await rejects(h.act("manager", "ranch_peek", { contractId }), /牧場をのぞけるのは、その契約の財布だけです/);
   h.advance(2_100);
@@ -186,7 +186,7 @@ async function ranchRenderer() {
   vm.runInContext([
     /const RANCH_ASSET_KEY = [^\n]*\n/.exec(client)[0],
     /const RANCH_WANDER = [^\n]*\n/.exec(client)[0],
-    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "renderRanch", "renderRanchPeek"].map((name) => extract(client, name)),
+    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "ranchPlacements", "renderRanch", "renderRanchRecord", "renderRanchPeek"].map((name) => extract(client, name)),
   ].join("\n"), context);
   return { core, context };
 }

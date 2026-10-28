@@ -55,6 +55,14 @@ export const RANCH_DEFAULT_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
 export const RANCH_ANIMAL_LABELS = Object.freeze({ cow: "牛", pig: "豚", sheep: "羊", goat: "ヤギ", chicken: "ニワトリ", rabbit: "ウサギ" });
 // 財布の鳴き声（設計書16.5。サーバーの RANCH_MOO と同じ）。20文字までの一言を3つまで。
 export const RANCH_MOO = Object.freeze({ length: 20, lines: 3 });
+// 牧場の名前（設計書16.15。サーバーの RANCH_NAME と同じ）。「○○牧場」の○○の部分を10文字まで。
+export const RANCH_NAME = Object.freeze({ length: 10 });
+
+// 「○○牧場」。名前がなければ「牧場」。
+export function ranchTitle(name) {
+  const text = String(name ?? "").trim();
+  return text ? `${text}牧場` : "牧場";
+}
 // 天気と季節（設計書16.6）。
 export const RANCH_SEASON_LABELS = Object.freeze({ spring: "春", summer: "夏", autumn: "秋", winter: "冬" });
 export const RANCH_WEATHER_LABELS = Object.freeze({ sunny: "晴れ", cloudy: "曇り", rain: "雨", snow: "雪" });
@@ -1196,6 +1204,9 @@ export function viewContract(contract, uid, now = Date.now()) {
     ranchAnimal: RANCH_ANIMALS.includes(raw.ranchAnimal) ? raw.ranchAnimal : defaultRanchAnimal(raw.contractId),
     // 管理人が最後に動物をなでた時刻（財布の「牧場をのぞく」に出る）。
     pattedAt: integer(raw.pattedAt),
+    // 飼育記録: 飾りが付いた日と、なでてもらった日数（サーバーと同じ。組の通算）。
+    fondnessAt: Object.fromEntries(RANCH_FONDNESS.map((step) => [String(step.tier), integer(raw.fondnessAt?.[step.tier])]).filter(([, at]) => at > 0)),
+    patDays: integer(raw.patDays),
     // 財布が書いた鳴き声（サーバーの mooLinesView と同じ）。
     mooLines: Array.isArray(raw.mooLines) ? raw.mooLines.map((line) => cleanText(line, RANCH_MOO.length)).filter(Boolean).slice(0, RANCH_MOO.lines) : [],
     othello: status === "active" ? othelloView(raw) : null,
@@ -1713,6 +1724,13 @@ export function rankingWordProblem(value) {
 export function cheerProblem(value) {
   if (!String(value ?? "").trim()) return "応援を入力してください。";
   return publicLineProblem(value, CHEER.length, "応援", "応援欄は同意前の人も見るため、性的な言葉は書けません。");
+}
+
+// 牧場の名前を保存する前の確認（サーバーの normalizeRanchName と同じ）。末尾の「牧場」は外して数える。空なら名前を外す。
+export function ranchNameProblem(value) {
+  const text = String(value ?? "").normalize("NFKC").trim().replace(/\s*牧場$/u, "").trim();
+  if (!text) return "";
+  return publicLineProblem(text, RANCH_NAME.length, "牧場の名前", "牧場の名前は掲示板にも出るため、性的な言葉は書けません。");
 }
 
 // 財布の鳴き声を保存する前の確認（サーバーの normalizeMooLines と同じ）。空の行は外す。

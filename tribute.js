@@ -49,9 +49,11 @@ import {
   RANCH_ANIMALS,
   RANCH_ANIMAL_LABELS,
   RANCH_FACILITIES,
+  RANCH_FONDNESS,
   RANCH_LAYOUT,
   RANCH_ART_LEVELS,
   RANCH_MOO,
+  RANCH_NAME,
   REWARD_WORD,
   SEAL_WORD_PREFIX,
   REPORT_REASON_LABELS,
@@ -74,6 +76,8 @@ import {
   capViolation,
   cheerProblem,
   mooProblem,
+  ranchNameProblem,
+  ranchTitle,
   X_EXTERNAL_CONFIRM_MESSAGE,
   X_HANDLE_PATTERN,
   avatarId,
@@ -145,7 +149,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1-ranch-photo-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -153,7 +157,9 @@ import {
   renderOthelloImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1";
+  renderRanchPhotoImage,
+  RANCH_PHOTO_TEXT,
+} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1";
 import {
   CARD_FRAMES,
   FRAME_PALETTES,
@@ -239,7 +245,7 @@ function createState() {
     // kind: 番付加算（score）か貢がれ総額（gross）か。画面を移っても選んだ方を覚えておく。
     ranking: { status: "idle", managers: [], monthKey: "", kind: "score" },
     // わたしの牧場（設計書16）: 押した動物と、この画面を開いた時に作った日報。
-    ranch: { selected: "", diary: null, heart: null },
+    ranch: { selected: "", diary: null, heart: null, naming: false },
     vault: { status: "idle", data: null, pendingMove: null, moveError: "" },
     // 管理人カードの編集で使う、持っている飾り・解除済みの実績・金庫のいちばん高い段階（編集を開いた時に読む）。
     decorations: { status: "idle", owned: [], achievements: [], vaultBestTier: 0 },
@@ -355,7 +361,9 @@ function disclosureTag(disclosure) {
 // 牧場レベルの札（設計書16.3）。関係の積み重ねで上がり、Pay の額では上がらない。
 function ranchTag(card) {
   const level = Number(card?.ranchLevel) || 0;
-  return level > 0 ? `<span class="tribute-tag is-ranch" title="牧場レベル：財布との関係の積み重ねで上がります"><i aria-hidden="true">牧</i>Lv.${level}</span>` : "";
+  // 牧場の名前があれば「○○牧場 Lv.N」（設計書16.15）。
+  const name = String(card?.ranchName || "").trim();
+  return level > 0 ? `<span class="tribute-tag is-ranch" title="牧場レベル：財布との関係の積み重ねで上がります"><i aria-hidden="true">牧</i>${name ? `<b>${escapeHtml(ranchTitle(name))}</b> ` : ""}Lv.${level}</span>` : "";
 }
 
 function vaultTag(vault) {
@@ -853,14 +861,10 @@ function renderRanchWeather() {
   return '<span class="tribute-ranch-weather-fx" aria-hidden="true"></span>';
 }
 
-function renderRanch(open, profile) {
-  if (!profile.card) return "";
-  const now = Date.now();
-  const progress = ranchProgress(profile.ranch?.xp);
+// 牧場の動物の並び（管理人の欄と記念写真で同じ）。出かけている財布は牧場にいない。
+function ranchPlacements(herd, now) {
   const time = ranchTimeOfDay(now);
   const light = time === "morning" ? "day" : time;
-  const weather = ranchWeather(now);
-  const herd = ranchHerd(open);
   const placed = [];
   const away = [];
   let next = 0;
@@ -883,9 +887,21 @@ function renderRanch(open, profile) {
       spot = ranchSpot(next);
       next += 1;
     }
-    const heart = state.ranch.heart?.contractId === contract.contractId && now - state.ranch.heart.at < 4_000 ? "pop" : "";
-    placed.push({ contract, mood, spot, light, now, heart });
+    placed.push({ contract, mood, spot, light, now });
   }
+  return { time, light, placed, away, staked };
+}
+
+function renderRanch(open, profile) {
+  if (!profile.card) return "";
+  const now = Date.now();
+  const progress = ranchProgress(profile.ranch?.xp);
+  const weather = ranchWeather(now);
+  const herd = ranchHerd(open);
+  const { time, light, placed, away, staked } = ranchPlacements(herd, now);
+  // なでた直後だけ、その動物の上にハートが浮かぶ。
+  for (const entry of placed) entry.heart = state.ranch.heart?.contractId === entry.contract.contractId && now - state.ranch.heart.at < 4_000 ? "pop" : "";
+  const name = String(profile.ranch?.name || "");
   const selected = placed.find((entry) => entry.contract.contractId === state.ranch.selected)
     || (away.find((contract) => contract.contractId === state.ranch.selected) ? { contract: away.find((contract) => contract.contractId === state.ranch.selected), mood: { mood: "away", line: "{name}は出稼ぎに出ている。" } } : null);
   const diary = ranchDiaryLines(herd);
@@ -910,7 +926,7 @@ function renderRanch(open, profile) {
     </div>`;
   })() : "";
   return `<section class="tribute-panel tribute-ranch is-${time} is-${weather.season} is-${weather.weather}" aria-label="わたしの牧場">
-    <div class="tribute-ranch-head"><span class="tribute-eyebrow">わたしの牧場</span><strong>牧場 Lv.${progress.level}</strong><small>次の Lv まで あと ${progress.toNext}</small><small class="tribute-ranch-weather">${escapeHtml(weather.label)}</small></div>
+    <div class="tribute-ranch-head"><span class="tribute-eyebrow">わたしの牧場</span><strong>${escapeHtml(ranchTitle(name))} Lv.${progress.level}</strong><small>次の Lv まで あと ${progress.toNext}</small><small class="tribute-ranch-weather">${escapeHtml(weather.label)}</small></div>
     <div class="tribute-ranch-meter" aria-hidden="true"><i style="--ratio:${ranchPercent(progress.ratio)}"></i></div>
     ${ranchBubbleStyle(Math.max(3, placed.length))}
     <div class="tribute-ranch-scene${placed.length > RANCH_LAYOUT.spots.length ? " is-crowded" : ""}" style="--cycle:${Math.max(3, placed.length) * 6}s;--bubble:ranch-bubble-${Math.max(3, placed.length)}">
@@ -918,12 +934,134 @@ function renderRanch(open, profile) {
       ${stake}${placed.map((entry, index) => renderRanchAnimal(entry, index)).join("")}
       ${renderRanchWeather()}
     </div>
+    <div class="tribute-ranch-tools"><button class="button button-ghost button-small" type="button" data-t="ranch-photo">記念写真</button><button class="button button-ghost button-small" type="button" data-t="ranch-naming" aria-expanded="${state.ranch.naming === true}">${name ? "名前を変える" : "名前を付ける"}</button></div>
+    ${state.ranch.naming ? `<form class="tribute-ranch-name-form" data-form="ranch-name">
+      <label class="tribute-field"><span>牧場の名前（「○○牧場」の○○。${RANCH_NAME.length}文字まで）</span><input name="ranchName" maxlength="${RANCH_NAME.length + 2}" value="${escapeHtml(name)}" autocomplete="off" /></label>
+      <p class="tribute-note">管理人カードの札（掲示板にも出ます）・財布の「牧場をのぞく」・記念写真に出ます。連絡先や性的な言葉は書けません。空にすると外れます。</p>
+      <p class="tribute-form-error" data-form-error role="alert"></p>
+      <div class="tribute-row"><button class="button button-primary button-small" type="submit" ${state.busy ? "disabled" : ""}>保存</button><button class="button button-ghost button-small" type="button" data-t="ranch-naming">やめる</button></div>
+    </form>` : ""}
     ${card}
     ${away.length ? `<p class="tribute-ranch-away">出稼ぎに出ている：${away.map((contract) => `<button type="button" class="tribute-link" data-t="ranch-animal" data-contract="${escapeHtml(contract.contractId)}">${escapeHtml(ranchName(contract))}</button>`).join("・")}</p>` : ""}
     ${herd.length ? "" : '<p class="tribute-note">放牧に同意した財布が、ここで暮らします。財布は申し込みとスレッドの設定で選べます。</p>'}
     <div class="tribute-ranch-diary"><h3>日報</h3>${diary.length ? `<ul>${diary.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : '<p>前に見た時から、変わったことはありません。</p>'}</div>
     <small class="tribute-ranch-rule">牧場は、財布を迎える・仕えた日・受け取り・確認・願い出への返事・延長で育ちます。Pay の額では上がらず、来なくても何も減りません。${upcoming ? ` 次は Lv.${upcoming.level} で「${escapeHtml(upcoming.label)}」。` : " Lv30 から先は、施設は増えずにレベルの数字だけ上がり続けます。"}動物は、その財布が仕えた日数（7日・30日・100日・365日）で飾りが増えます。吹き出しの「」は、その財布が自分で書いた鳴き声です。動物を押すと、1日1回なでられます（財布の「牧場をのぞく」に、なでた日が出ます）。</small>
   </section>`;
+}
+
+// 牧場の記念写真（設計書16.15）。いまの牧場を1枚の画像にする。動物は、スクショ掲載を許した財布の分だけ、
+// 名前を入れずに写す（許していない財布は写らず、並びもその財布たちだけで決める）。描くのはこの端末の中だけ。
+function ranchPhotoData(profile, now = Date.now()) {
+  const card = profile.card;
+  const progress = ranchProgress(profile.ranch?.xp);
+  const weather = ranchWeather(now);
+  const herd = ranchHerd(state.contracts).filter((contract) => contract.allowScreenshots === true);
+  const { time, light, placed, staked } = ranchPlacements(herd, now);
+  const width = placed.length > RANCH_LAYOUT.spots.length ? 0.14 : 0.17;
+  const disclosureKey = DISCLOSURE_SHORT[card.disclosure] ? card.disclosure : "undisclosed";
+  return {
+    manager: {
+      personaName: card.personaName,
+      avatarUrl: avatarUrl(card.avatar),
+      premiumAvatar: isPremiumAvatar(card.avatar),
+      color: sigilColor(card),
+      disclosureKey,
+      disclosureLabel: DISCLOSURE_LABELS[disclosureKey],
+    },
+    title: ranchTitle(profile.ranch?.name),
+    level: progress.level,
+    weatherLabel: weather.label,
+    scene: {
+      time,
+      season: weather.season,
+      weather: weather.weather,
+      ground: ranchImage(`ranch-lv${progress.artLevel}-${light}`),
+      stake: staked ? { url: ranchImage(`prop-stake-${light}`), x: RANCH_LAYOUT.stake[0], y: RANCH_LAYOUT.stake[1] } : null,
+      animals: placed.map(({ contract, mood, spot }) => {
+        const pose = mood.mood === "sleep" ? "sleep" : mood.mood === "eat" ? "eat" : "stand";
+        const tier = ranchFondness(contract.servedTotal).tier;
+        return {
+          url: ranchImage(`${contract.ranchAnimal}-${pose}${tier ? `-t${tier}` : ""}-${light}`),
+          x: spot[0],
+          y: spot[1],
+          width,
+          hay: mood.mood === "eat" ? ranchImage(`prop-hay-${light}`) : "",
+          letter: mood.mood === "letter" ? ranchImage(`prop-letter-${light}`) : "",
+        };
+      }),
+    },
+    at: now,
+  };
+}
+
+function openRanchPhoto() {
+  if (!state.profile?.card) return;
+  closeSharePreview();
+  state.sheet = { type: "ranch-photo", status: "ready", error: "", previewUrl: "", blob: null, fileName: "", rendering: true };
+  renderLayer();
+  loadRanchPhoto(state.sheet);
+}
+
+async function loadRanchPhoto(sheet) {
+  try {
+    const canvas = await renderRanchPhotoImage(ranchPhotoData(state.profile));
+    const blob = await canvasToPngBlob(canvas);
+    if (state.sheet !== sheet) return;
+    sheet.blob = blob;
+    sheet.previewUrl = URL.createObjectURL(blob);
+    const stamp = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll("-", "");
+    sheet.fileName = `omitsugi-ranch-${stamp}.png`;
+  } catch (error) {
+    if (state.sheet !== sheet) return;
+    sheet.error = friendlyError(error, "画像を作れませんでした。");
+  }
+  sheet.rendering = false;
+  paintSharePreview();
+}
+
+function renderRanchPhotoSheet(sheet, wrap) {
+  const shown = ranchHerd(state.contracts).filter((contract) => contract.allowScreenshots === true).length;
+  return wrap("牧場の記念写真", `<div class="tribute-share">
+    <div class="tribute-share-body">
+      <div class="tribute-share-preview" data-share-preview>${sharePreviewMarkup(sheet)}</div>
+      <div class="tribute-share-options"><p class="tribute-note">いまの牧場（名前・レベル・施設・季節と天気・時間帯）を1枚の写真にします。</p>
+        <p class="tribute-note">動物は、スクショ掲載を許している財布の分だけ、名前を入れずに写します。許していない財布は写りません。${shown ? "" : "いまは写る動物がいないので、牧場だけの写真になります。"}</p></div>
+    </div>
+    <p class="tribute-note">画像にURLは入りません。「AnjuPay・換金不可」の表記とお貢ぎ牧場の名前は必ず入ります。</p>
+    <div class="tribute-row"><button class="button button-primary" type="button" data-t="ranch-photo-send" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>共有（X など）</button><button class="button button-ghost" type="button" data-t="ranch-photo-save" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>画像で保存</button></div>
+    <small>スマホは共有から画像ごとXへ送れます。PCは保存してから、Xの投稿に添付します。</small>
+  </div>`);
+}
+
+async function sendRanchPhoto(saveOnly) {
+  const sheet = state.sheet;
+  if (sheet?.type !== "ranch-photo" || !sheet.blob || sheet.rendering) return;
+  const file = new File([sheet.blob], sheet.fileName, { type: "image/png" });
+  if (!saveOnly && navigator.share && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], text: RANCH_PHOTO_TEXT });
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+  }
+  downloadShareBlob(sheet.blob, sheet.fileName);
+  showToast(saveOnly ? "画像を保存しました。Xの投稿に添付できます。" : "この端末では共有が使えないため、画像を保存しました。Xの投稿に添付できます。");
+}
+
+// 飼育記録（設計書16.15）。財布の「牧場をのぞく」に出す、自分の動物の記録。ほかの財布と比べる形にはしない。
+// 飾りが付いた日は、記録を始めてから付いたものだけ分かる（その前のものは日数だけ）。
+function renderRanchRecord(view) {
+  const day = (at) => new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "numeric", day: "numeric" }).format(new Date(at));
+  const fondness = ranchFondness(view.servedTotal);
+  const rows = [
+    ["この契約で迎えられた日", view.acceptedAt ? day(view.acceptedAt) : "まだ（申し込み中）"],
+    ["仕えた日（通算）", `${fondness.days}日`],
+    ...RANCH_FONDNESS.filter((step) => fondness.days >= step.days).map((step) => [step.label, view.fondnessAt?.[step.tier] ? `${day(view.fondnessAt[step.tier])}に付いた` : `仕えた日${step.days}日で付いた`]),
+    fondness.next ? ["次の飾り", `${fondness.next.label}（あと${fondness.next.left}日）`] : null,
+    ["なでてもらった日", `${Number(view.patDays) || 0}日`],
+  ].filter(Boolean);
+  return `<div class="tribute-ranch-record"><h3>飼育記録</h3><dl>${rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><p class="tribute-note">あなたの動物の記録です。ほかの財布とは比べません。</p></div>`;
 }
 
 // 財布の「牧場をのぞく」（設計書16.2）。管理人の牧場（レベルと施設）に、自分の動物だけを置く。
@@ -964,7 +1102,7 @@ function renderRanchPeek(view, sheet) {
         ? "申し込みが受けられると、この牧場に放牧されます。"
         : mood.line.replaceAll("{name}", name);
     scene = `<div class="tribute-ranch tribute-ranch-peek is-${time} is-${weather.season} is-${weather.weather}">
-      <div class="tribute-ranch-head"><strong>牧場 Lv.${level}</strong><small class="tribute-ranch-weather">${escapeHtml(weather.label)}</small></div>
+      <div class="tribute-ranch-head"><strong>${escapeHtml(ranchTitle(sheet.ranchName))} Lv.${level}</strong><small class="tribute-ranch-weather">${escapeHtml(weather.label)}</small></div>
       <div class="tribute-ranch-scene" style="--cycle:6s">
         <img class="tribute-ranch-ground" src="${escapeHtml(ranchImage(`ranch-lv${artLevel}-${light}`))}" alt="${escapeHtml(`${view.manager.personaName}の牧場 Lv.${level}`)}" draggable="false" />
         ${stake}${animal}
@@ -979,6 +1117,7 @@ function renderRanchPeek(view, sheet) {
   return `<div class="tribute-ranch-peek-body">
     <p>${escapeHtml(view.manager.personaName)}の牧場をのぞきます。見えるのは牧場とあなたの動物だけで、ほかの財布の動物は見えません。あなたの動物を見られるのは、管理人とあなただけです。管理人が牧場であなたの動物をなでると、ここに出ます。</p>
     ${scene}
+    ${renderRanchRecord(view)}
     <form class="tribute-sheet-form" data-form="moo">
       <h3>鳴き声</h3>
       <p class="tribute-note">管理人の牧場で、あなたの動物の吹き出しに、語り手の一言と交互に出ます。1つ${RANCH_MOO.length}文字まで、${RANCH_MOO.lines}つまで。応援欄と同じく、連絡先や性的な言葉は書けません。空にすると消えます。</p>
@@ -1010,6 +1149,7 @@ async function loadRanchPeek(sheet, contractId) {
     const result = await call("ranch_peek", { contractId });
     if (state.sheet !== sheet) return;
     sheet.level = Math.max(1, Number(result?.ranchLevel) || 1);
+    sheet.ranchName = String(result?.ranchName || "");
     sheet.status = "ready";
   } catch (error) {
     if (state.sheet !== sheet) return;
@@ -2802,6 +2942,7 @@ function renderSheet() {
   const wrap = (title, body) => `<div class="tribute-sheet-backdrop" data-t="sheet-close"></div><div class="tribute-sheet" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}"><header><h2>${escapeHtml(title)}</h2>${close}</header>${body}</div>`;
   if (sheet.type === "share") return renderShareSheet(sheet, wrap);
   if (sheet.type === "recruit") return renderRecruitSheet(sheet, wrap);
+  if (sheet.type === "ranch-photo") return renderRanchPhotoSheet(sheet, wrap);
   if (!view) return "";
   const amountChips = (maximum, name = "amount") => {
     const chips = [10, 30, 50, 100, 300, 500, 1_000].filter((value) => value <= maximum);
@@ -3179,7 +3320,7 @@ function openShare({ contractId, receiptId = "", seq = 0, mode = "receipt" }) {
 }
 
 function closeSharePreview() {
-  if (["share", "recruit"].includes(state.sheet?.type) && state.sheet.previewUrl) URL.revokeObjectURL(state.sheet.previewUrl);
+  if (["share", "recruit", "ranch-photo"].includes(state.sheet?.type) && state.sheet.previewUrl) URL.revokeObjectURL(state.sheet.previewUrl);
 }
 
 async function loadShareInfo(sheet) {
@@ -3389,13 +3530,13 @@ async function refreshSharePreview() {
 function sharePreviewMarkup(sheet) {
   if (sheet.error) return `<p class="tribute-form-error" role="alert">${escapeHtml(sheet.error)}</p>`;
   if (!sheet.previewUrl) return `<span class="tribute-share-wait">画像を作っています…</span>`;
-  return `<img src="${escapeHtml(sheet.previewUrl)}" alt="${sheet.type === "recruit" ? "作った受付カード" : "作った貢ぎ報告の画像"}" width="1080" height="1350" />${sheet.rendering ? '<span class="tribute-share-wait is-over">作り直しています…</span>' : ""}`;
+  return `<img src="${escapeHtml(sheet.previewUrl)}" alt="${sheet.type === "recruit" ? "作った受付カード" : sheet.type === "ranch-photo" ? "作った牧場の記念写真" : "作った貢ぎ報告の画像"}" width="1080" height="1350" />${sheet.rendering ? '<span class="tribute-share-wait is-over">作り直しています…</span>' : ""}`;
 }
 
 // 見本だけを差し替える（シート全体を描き直すと、選んでいる項目の位置が飛ぶため）。
 function paintSharePreview() {
   const sheet = state.sheet;
-  if (!["share", "recruit"].includes(sheet?.type)) return;
+  if (!["share", "recruit", "ranch-photo"].includes(sheet?.type)) return;
   const preview = layer.querySelector("[data-share-preview]");
   if (preview) preview.innerHTML = sharePreviewMarkup(sheet);
   for (const button of layer.querySelectorAll("[data-share-action]")) button.disabled = !sheet.blob || sheet.rendering;
@@ -4312,6 +4453,23 @@ async function handleSubmit(form) {
       });
       return;
     }
+    // 牧場の名前（設計書16.15）。末尾の「牧場」は外して保存する。空なら外す。
+    case "ranch-name": {
+      const name = String(form.elements.ranchName.value || "");
+      const problem = ranchNameProblem(name);
+      if (problem) return setFormError(form, problem);
+      await mutate("set_ranch_name", { name }, {
+        form,
+        after: (result) => {
+          state.profile = result.profile;
+          state.ranch.naming = false;
+          const saved = String(result.profile?.ranch?.name || "");
+          showToast(saved ? `「${ranchTitle(saved)}」にしました。` : "牧場の名前を外しました。");
+          render();
+        },
+      });
+      return;
+    }
     // 財布の鳴き声（設計書16.5）。空の欄は外して保存する。
     case "moo": {
       const lines = Array.from({ length: RANCH_MOO.lines }, (_, index) => String(form.elements[`moo${index}`]?.value || "").trim());
@@ -5080,6 +5238,17 @@ async function handleClick(target) {
       });
       return;
     }
+    case "ranch-photo":
+      openRanchPhoto();
+      return;
+    case "ranch-photo-send":
+    case "ranch-photo-save":
+      await sendRanchPhoto(target.dataset.t === "ranch-photo-save");
+      return;
+    case "ranch-naming":
+      state.ranch.naming = !state.ranch.naming;
+      render();
+      return;
     case "ranch-kind": {
       const contractId = String(target.dataset.contract || "");
       const animal = String(target.dataset.animal || "");
@@ -5981,10 +6150,10 @@ function previewHerd(now, total = 6) {
   });
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now));
   return [
-    base(0, { todayKey: today, todayTributed: 150 }),
-    base(1, { awaitingReceipt: 1, todayKey: today }),
+    base(0, { todayKey: today, todayTributed: 150, allowScreenshots: true }),
+    base(1, { awaitingReceipt: 1, todayKey: today, allowScreenshots: true }),
     base(2, { hold: { since: now - 3_600_000, note: "" }, todayKey: today }),
-    base(3, { todayKey: today, mooLines: ["見本の鳴き声です", "もう一つの鳴き声"] }),
+    base(3, { todayKey: today, mooLines: ["見本の鳴き声です", "もう一つの鳴き声"], allowScreenshots: true }),
     base(4, { workOrder: { orderSeq: 1, target: 3, note: "", issuedAt: now - 3_600_000, reportedCount: 1, reportedAt: now - 600_000, doneAt: 0 } }),
     base(5, { todayKey: today, mooLines: ["見本の鳴き声です"], pattedAt: now - 3_600_000 }),
     ...Array.from({ length: Math.max(0, total - 6) }, (_, index) => base(index + 6, { todayKey: today })),
@@ -6008,7 +6177,7 @@ function previewCall(action, payload) {
           hidden: false,
           vault: { ...previewVault },
           // わたしの牧場: ranch は Lv30（絵がそろった牧場）、ほかは Lv5。
-          ranch: { xp: previewScreen === "ranch" ? 31_000 : 230, level: ranchLevelFor(previewScreen === "ranch" ? 31_000 : 230) },
+          ranch: { xp: previewScreen === "ranch" ? 31_000 : 230, level: ranchLevelFor(previewScreen === "ranch" ? 31_000 : 230), name: previewScreen === "ranch" ? "ひだまり" : "" },
           counts: { payerOpen: 1, managerActive: 1, managerPending: 1 },
           receiptCount: 3,
           // hub-refund: 返金待ち（運営からの返金と管理口座の返金）の見え方を確かめる。
@@ -6507,7 +6676,11 @@ function previewCall(action, payload) {
       return Promise.resolve({ ok: true, contract: { ...(row || {}), pattedAt: now } });
     }
     case "ranch_peek":
-      return Promise.resolve({ ok: true, contractId: payload.contractId, ranchLevel: payload.contractId === DEMO_CONTRACT_ID ? 3 : 18 });
+      return Promise.resolve({ ok: true, contractId: payload.contractId, ranchLevel: payload.contractId === DEMO_CONTRACT_ID ? 3 : 18, ranchName: payload.contractId === DEMO_CONTRACT_ID ? "" : "ひだまり" });
+    case "set_ranch_name": {
+      const name = Array.from(String(payload.name || "").trim().replace(/牧場$/u, "").trim()).slice(0, RANCH_NAME.length).join("");
+      return Promise.resolve({ ok: true, profile: { ...state.profile, ranch: { ...state.profile?.ranch, name }, card: state.profile?.card ? { ...state.profile.card, ranchName: name } : null } });
+    }
     case "set_ranch_animal": {
       const row = state.contracts.find((contract) => contract.contractId === payload.contractId);
       return Promise.resolve({ ok: true, contract: { ...(row || {}), ranchAnimal: payload.animal } });
@@ -6709,7 +6882,7 @@ function startPreview(screen) {
     // 財布の「牧場をのぞく」（見本はウサギ・なつきはリボン・鳴き声2つ）。
     "ranch-peek": () => {
       openThread("1".repeat(40));
-      Object.assign(state.thread.raw, { ranchAnimal: "rabbit", servedTotal: 45, mooLines: ["見本の鳴き声です", "もう一つの鳴き声"], workOrder: null, pattedAt: Date.now() - 3 * 3_600_000 });
+      Object.assign(state.thread.raw, { ranchAnimal: "rabbit", servedTotal: 45, mooLines: ["見本の鳴き声です", "もう一つの鳴き声"], workOrder: null, pattedAt: Date.now() - 3 * 3_600_000, patDays: 12, fondnessAt: { 2: Date.now() - 15 * 86_400_000 } });
       state.thread.view = viewContract(state.thread.raw, state.uid);
       openRanchPeek();
     },
@@ -6729,6 +6902,10 @@ function startPreview(screen) {
     ledger: () => navigate("ledger"),
     ranking: () => navigate("ranking"),
     ranch: () => navigate("hub"),
+    "ranch-photo": () => {
+      navigate("hub");
+      openRanchPhoto();
+    },
     "ranch-crowd": () => navigate("hub"),
     "ranking-gross": () => {
       state.ranking.kind = "gross";

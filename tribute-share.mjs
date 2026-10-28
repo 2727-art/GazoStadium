@@ -1861,6 +1861,225 @@ export async function renderRecruitImage(data) {
   return canvas;
 }
 
+// ───────────── 牧場の記念写真（設計書16.15） ─────────────
+// 管理人の「わたしの牧場」を1枚の写真にする。動物は、スクショ掲載を許した財布の分だけ（名前は入れない）。
+// どの財布か分かる文字（財布名・呼び名・頭数）は入れない。描くのはこの端末の中だけ。
+
+export const RANCH_PHOTO_TEXT = "#お貢ぎ牧場 #わたしの牧場";
+
+// 空の色は画面（tribute.css の .tribute-ranch-scene）と同じ。
+const RANCH_SKIES = Object.freeze({
+  morning: ["#b8dcf5", "#fde6d4", "#fff2e4"],
+  day: ["#9fd4f7", "#d8effc", "#eaf7ff"],
+  evening: ["#6f6fb8", "#e79aa8", "#fbc890"],
+  night: ["#141a3c", "#2b3472", "#3b4486"],
+});
+// 季節の芝の色味（画面の filter の代わりに、絵の上にだけ薄く色を重ねる）。
+const RANCH_TINTS = Object.freeze({
+  spring: "rgba(255, 190, 210, 0.06)",
+  summer: "rgba(70, 180, 90, 0.07)",
+  autumn: "rgba(232, 150, 70, 0.17)",
+  winter: "rgba(225, 235, 255, 0.2)",
+  snow: "rgba(240, 246, 255, 0.36)",
+});
+
+function tintedGround(image, season, weather) {
+  const tint = weather === "snow" ? RANCH_TINTS.snow : RANCH_TINTS[season];
+  if (!image || !tint) return image;
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(image, 0, 0);
+  ctx.globalCompositeOperation = "source-atop";
+  ctx.fillStyle = tint;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+function paintRanchSky(ctx, box, time) {
+  const [top, middle, bottom] = RANCH_SKIES[time] || RANCH_SKIES.day;
+  const sky = ctx.createLinearGradient(0, box.y, 0, box.y + box.height);
+  sky.addColorStop(0, top);
+  sky.addColorStop(time === "night" ? 0.7 : time === "evening" ? 0.55 : 0.72, middle);
+  sky.addColorStop(1, bottom);
+  ctx.fillStyle = sky;
+  ctx.fillRect(box.x, box.y, box.width, box.height);
+  if (time !== "night") return;
+  const random = seededRandom(23);
+  ctx.fillStyle = "#ffffff";
+  for (let index = 0; index < 26; index += 1) {
+    ctx.globalAlpha = 0.45 + random() * 0.5;
+    ctx.beginPath();
+    ctx.arc(box.x + random() * box.width, box.y + random() * box.height * 0.32, 1 + random() * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  const moon = ctx.createRadialGradient(box.x + box.width * 0.86, box.y + box.height * 0.14, 4, box.x + box.width * 0.86, box.y + box.height * 0.14, 30);
+  moon.addColorStop(0, "#fff8d8");
+  moon.addColorStop(0.55, "#fff8d8");
+  moon.addColorStop(0.7, "rgba(255, 248, 216, 0.25)");
+  moon.addColorStop(1, "rgba(255, 248, 216, 0)");
+  ctx.fillStyle = moon;
+  ctx.fillRect(box.x + box.width * 0.86 - 30, box.y + box.height * 0.14 - 30, 60, 60);
+}
+
+// 雲・雨・雪・花びら（春）・落ち葉（秋）。毎回同じ形になるよう、決まった種から置く。
+function paintRanchWeather(ctx, box, { season, weather, time }) {
+  const random = seededRandom(41);
+  if (["cloudy", "rain", "snow"].includes(weather)) {
+    const wash = ctx.createLinearGradient(0, box.y, 0, box.y + box.height);
+    const shade = weather === "rain" ? [0.45, 0.18, 0.08] : [0.3, 0.1, 0];
+    wash.addColorStop(0, `rgba(80, 90, 110, ${shade[0]})`);
+    wash.addColorStop(0.45, `rgba(80, 90, 110, ${shade[1]})`);
+    wash.addColorStop(1, `rgba(80, 90, 110, ${shade[2]})`);
+    ctx.fillStyle = wash;
+    ctx.fillRect(box.x, box.y, box.width, box.height);
+    const cloudAlpha = time === "night" || time === "evening" ? 0.35 : weather === "rain" ? 0.7 : 0.85;
+    for (const [cx, cy, rx, ry] of [[0.12, 0.12, 0.16, 0.08], [0.24, 0.2, 0.12, 0.06], [0.55, 0.08, 0.18, 0.09], [0.86, 0.17, 0.14, 0.07]]) {
+      const x = box.x + cx * box.width;
+      const y = box.y + cy * box.height;
+      const cloud = ctx.createRadialGradient(x, y, 2, x, y, rx * box.width);
+      cloud.addColorStop(0, `rgba(255, 255, 255, ${cloudAlpha})`);
+      cloud.addColorStop(1, "rgba(255, 255, 255, 0)");
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(1, ry / rx);
+      ctx.translate(-x, -y);
+      ctx.fillStyle = cloud;
+      ctx.fillRect(x - rx * box.width, y - rx * box.width, rx * box.width * 2, rx * box.width * 2);
+      ctx.restore();
+    }
+  }
+  if (weather === "rain") {
+    ctx.strokeStyle = "rgba(225, 236, 255, 0.6)";
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = "round";
+    for (let index = 0; index < 150; index += 1) {
+      const x = box.x + random() * box.width;
+      const y = box.y + random() * box.height;
+      const length = 14 + random() * 12;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - length * 0.18, y + length);
+      ctx.stroke();
+    }
+  } else if (weather === "snow") {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    for (let index = 0; index < 110; index += 1) {
+      ctx.beginPath();
+      ctx.arc(box.x + random() * box.width, box.y + random() * box.height, 1.6 + random() * 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (season === "spring" || season === "autumn") {
+    const colors = season === "spring" ? ["rgba(255, 186, 208, 0.95)", "rgba(255, 214, 228, 0.9)"] : ["rgba(236, 132, 64, 0.9)", "rgba(214, 92, 60, 0.85)"];
+    for (let index = 0; index < 34; index += 1) {
+      ctx.fillStyle = colors[index % 2];
+      ctx.beginPath();
+      ctx.ellipse(box.x + random() * box.width, box.y + random() * box.height * 0.85, 4 + random() * 2, 2.6 + random(), random() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+// 絵の中の足元（動物の絵の 0.5, 0.7226）が、牧場の絵の立ち位置に来るように置く。
+function paintRanchAnimals(ctx, box, scene, images) {
+  if (scene.stake && images.get(scene.stake.url)) {
+    const width = box.width * 0.11;
+    ctx.drawImage(images.get(scene.stake.url), box.x + scene.stake.x * box.width - width / 2, box.y + scene.stake.y * box.height - width * 0.7226, width, width);
+  }
+  const animals = [...(scene.animals || [])].sort((left, right) => left.y - right.y);
+  for (const animal of animals) {
+    const sprite = images.get(animal.url);
+    if (!sprite) continue;
+    const width = box.width * (Number(animal.width) || 0.17);
+    const x = box.x + animal.x * box.width - width / 2;
+    const y = box.y + animal.y * box.height - width * 0.7226;
+    ctx.drawImage(sprite, x, y, width, width);
+    const hay = animal.hay && images.get(animal.hay);
+    if (hay) ctx.drawImage(hay, x + width * 0.54, y + width * (1 - 0.06 - 0.52), width * 0.52, width * 0.52);
+    const letter = animal.letter && images.get(animal.letter);
+    if (letter) ctx.drawImage(letter, x + width * 0.27, y - width * 0.06, width * 0.46, width * 0.46);
+  }
+}
+
+export async function renderRanchPhotoImage(data) {
+  const manager = managerPresentation(data.manager);
+  const scene = data.scene || {};
+  const title = String(data.title || "牧場");
+  const level = Math.max(1, Math.floor(Number(data.level) || 1));
+  const weatherLabel = String(data.weatherLabel || "");
+  const date = jstParts(data.at).date;
+  await loadFonts(`${title}${manager.personaName}${weatherLabel}Lv.の牧場関係の積み重ねで育つ牧場・Payの額では育ちません#わたしの牧場RANCH PHOTO`);
+  const urls = [...new Set([scene.ground, scene.stake?.url, ...(scene.animals || []).flatMap((animal) => [animal.url, animal.hay, animal.letter])].filter(Boolean))];
+  const loaded = await Promise.all(urls.map((url) => loadImage(url)));
+  const images = new Map(urls.map((url, index) => [url, loaded[index]]));
+  const avatar = await loadImage(manager.avatarUrl);
+  const canvas = canvasFor();
+  const ctx = canvas.getContext("2d");
+  paintBackdrop(ctx);
+  paintHeader(ctx, "RANCH PHOTO", date);
+
+  // 少し傾けた、白い縁の写真。
+  const card = { x: 64, y: 196, width: SHARE_WIDTH - 128, height: 782 };
+  const photo = { x: card.x + 26, y: card.y + 26, width: card.width - 52, height: Math.round((card.width - 52) * 600 / 960) };
+  ctx.save();
+  ctx.translate(SHARE_WIDTH / 2, card.y + card.height / 2);
+  ctx.rotate(-0.018);
+  ctx.translate(-SHARE_WIDTH / 2, -(card.y + card.height / 2));
+  ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+  ctx.shadowBlur = 36;
+  ctx.shadowOffsetY = 14;
+  ctx.fillStyle = PAPER;
+  roundRectPath(ctx, card.x, card.y, card.width, card.height, 14);
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.save();
+  roundRectPath(ctx, photo.x, photo.y, photo.width, photo.height, 8);
+  ctx.clip();
+  paintRanchSky(ctx, photo, scene.time);
+  const ground = tintedGround(images.get(scene.ground), scene.season, scene.weather);
+  if (ground) ctx.drawImage(ground, photo.x, photo.y, photo.width, photo.height);
+  paintRanchAnimals(ctx, photo, scene, images);
+  paintRanchWeather(ctx, photo, scene);
+  ctx.restore();
+
+  // 写真の下の書き込み（牧場の名前・レベル・季節と天気）。
+  const captionY = photo.y + photo.height + 92;
+  ctx.fillStyle = INK;
+  ctx.textAlign = "left";
+  const levelText = `Lv.${level}`;
+  ctx.font = `600 54px ${NUM}`;
+  const levelWidth = ctx.measureText(levelText).width;
+  fitFont(ctx, title, photo.width - levelWidth - 36, 64, MINCHO, 800, 34);
+  ctx.fillText(title, photo.x + 4, captionY);
+  const titleWidth = ctx.measureText(title).width;
+  ctx.fillStyle = "#3f8f4f";
+  ctx.font = `600 54px ${NUM}`;
+  ctx.fillText(levelText, photo.x + 4 + titleWidth + 24, captionY);
+  ctx.fillStyle = "rgba(42, 34, 48, 0.62)";
+  ctx.font = `500 26px ${SANS}`;
+  ctx.fillText([weatherLabel, date].filter(Boolean).join("　"), photo.x + 6, captionY + 52);
+  ctx.restore();
+
+  // 管理人（自分の管理人カードの名前とアイコン）。
+  const ownerY = card.y + card.height + 92;
+  paintAvatar(ctx, { image: avatar, manager, x: 64 + 40, y: ownerY, radius: 36, ring: manager.color, ringWidth: 4 });
+  ctx.fillStyle = TEXT;
+  fitFont(ctx, `${manager.personaName}の牧場`, SHARE_WIDTH - 64 - 160, 36, SANS, 800, 22);
+  ctx.textBaseline = "middle";
+  ctx.fillText(`${manager.personaName}の牧場`, 64 + 96, ownerY - 14);
+  ctx.fillStyle = MIST;
+  ctx.font = `400 22px ${SANS}`;
+  ctx.fillText("関係の積み重ねで育つ牧場・Payの額では育ちません", 64 + 96, ownerY + 24);
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = GOLD;
+  ctx.font = `700 24px ${SANS}`;
+  ctx.fillText(RANCH_PHOTO_TEXT, 64, ownerY + 104);
+  paintFooter(ctx);
+  return canvas;
+}
+
 export function canvasToPngBlob(canvas) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("画像を作れませんでした。"))), "image/png");

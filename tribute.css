@@ -1682,6 +1682,9 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 /* わたしの牧場（ranch-pasture-v1、設計書16）: 管理人の「契約」画面のいちばん上。空は時間帯で色を変え、芝の島と動物は Blender で描いた絵。 */
 .tribute-tag.is-ranch { display: inline-flex; gap: 4px; align-items: center; border-color: rgba(126, 224, 138, 0.55); color: #c9f5cf; }
 .tribute-tag.is-ranch i { font-style: normal; font-size: 0.68em; padding: 0 3px; border-radius: 4px; background: rgba(126, 224, 138, 0.2); }
+/* 牧場の名前（「○○牧場」）。カードの幅に収まらない時は省く。 */
+.tribute-tag.is-ranch { max-width: 100%; min-width: 0; }
+.tribute-tag.is-ranch b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: inherit; }
 .tribute-check.is-grazing small { display: block; margin-top: 2px; font-size: 0.74rem; }
 .tribute-ranch { display: grid; gap: 8px; border-color: rgba(126, 224, 138, 0.4); }
 .tribute-ranch-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
@@ -1906,6 +1909,18 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
   20% { opacity: 1; transform: translate(-50%, 0) scale(1.1); }
   100% { opacity: 0; transform: translate(-50%, -90%) scale(1); }
 }
+/* 記念写真・牧場の名前（設計書16.15）。 */
+.tribute-ranch-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.tribute-ranch-name-form { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid rgba(126, 224, 138, 0.4); border-radius: 12px; }
+.tribute-ranch-name-form .tribute-note,
+.tribute-ranch-name-form .tribute-form-error { margin: 0; }
+/* 財布の飼育記録。 */
+.tribute-ranch-record { display: grid; gap: 6px; }
+.tribute-ranch-record dl { display: grid; gap: 2px; margin: 0; font-size: 0.84rem; }
+.tribute-ranch-record dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.tribute-ranch-record dt { color: var(--tr-mist); }
+.tribute-ranch-record dd { margin: 0; text-align: right; }
+.tribute-ranch-record .tribute-note { margin: 0; }
 /* 財布の「牧場をのぞく」。自分の動物だけを少し大きく出す。 */
 .tribute-ranch-peek-body { display: grid; gap: 14px; }
 .tribute-ranch-peek-body > p { margin: 0; font-size: 0.86rem; }

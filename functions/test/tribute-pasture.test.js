@@ -67,7 +67,7 @@ test("the server grows the ranch from the relationship, at most 10 a day per wal
   const act = (uid, action, data = {}) => { h.advance(2_100); return h.act(uid, action, { contractId, ...data }); };
   const xp = () => h.firestore.read("tributeProfiles/manager").ranchXp;
   assert.equal(xp(), 5, "welcoming a new wallet");
-  assert.deepEqual((await h.act("manager", "state")).profile.ranch, { xp: 5, level: 1 });
+  assert.deepEqual((await h.act("manager", "state")).profile.ranch, { xp: 5, level: 1, name: "" });
 
   // 献上はその日初めてなら仕えた日として3。額は関係ない（大きくても小さくても同じ）。
   await act("payer", "tribute", { kind: "silent", amount: 100, clientRequestId: server.nextRequestId() });
@@ -102,7 +102,7 @@ test("managers from before the release start from their collars, and the card sh
   const profile = h.firestore.read("tributeProfiles/manager");
   delete profile.ranchXp;
   h.firestore.write("tributeProfiles/manager", { ...profile, collarCount: 4 });
-  assert.deepEqual((await h.act("manager", "state")).profile.ranch, { xp: 20, level: 2 }, "4 wallets welcomed before × 5");
+  assert.deepEqual((await h.act("manager", "state")).profile.ranch, { xp: 20, level: 2, name: "" }, "4 wallets welcomed before × 5");
   await server.startContract(h, "manager", "payer", publicManagerId, {}, 0);
   assert.equal(h.firestore.read("tributeProfiles/manager").ranchXp, 25);
   const card = (await h.act("payer", "board")).managers.find((entry) => entry.publicManagerId === publicManagerId);
@@ -180,7 +180,7 @@ async function ranchRenderer(storage = new Map()) {
   vm.runInContext([
     /const RANCH_ASSET_KEY = [^\n]*\n/.exec(client)[0],
     /const RANCH_WANDER = [^\n]*\n/.exec(client)[0],
-    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "renderRanch"].map((name) => extract(client, name)),
+    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "ranchPlacements", "renderRanch"].map((name) => extract(client, name)),
   ].join("\n"), context);
   return context;
 }

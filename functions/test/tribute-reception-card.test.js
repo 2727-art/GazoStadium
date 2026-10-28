@@ -19,7 +19,7 @@ test("the screens call it 受付カード, and the old name is gone from what pe
   assert.match(client, /data-t="recruit-open">受付カードを作る<\/button>/);
   assert.match(client, /受付カードは、飾った管理人カードを1枚の画像にして X に貼れます。/);
   assert.equal((client.match(/wrap\("受付カード", /g) || []).length, 2, "the sheet title while loading and when ready");
-  assert.match(client, /sheet\.type === "recruit" \? "作った受付カード" : "作った貢ぎ報告の画像"/);
+  assert.match(client, /sheet\.type === "recruit" \? "作った受付カード" : sheet\.type === "ranch-photo" \? "作った牧場の記念写真" : "作った貢ぎ報告の画像"/);
   assert.match(client, /<h3>カードの枠 <small>掲示板・詳細・招待・受付カード<\/small><\/h3>/);
   assert.match(client, /掲示板のカード・申し込み・受付カードに札が出ます。/);
   assert.match(client, /sheet\.fileName = `omitsugi-accepting-\$\{stamp\}\.png`;/);

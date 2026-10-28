@@ -29,6 +29,7 @@ const {
   normalizeTodayWord,
   normalizeCheer,
   normalizeMooLines,
+  normalizeRanchName,
   normalizeSeals,
   normalizeStyles,
   sealFor,
@@ -86,6 +87,8 @@ const {
   RANCH_XP_PAIR_DAY,
   RANCH_ANIMALS,
   RANCH_MOO,
+  RANCH_NAME,
+  RANCH_FONDNESS,
   ranchLevelFor,
   defaultRanchAnimal,
 } = require("./tribute-rules");
@@ -166,6 +169,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "set_moo",
   "ranch_peek",
   "ranch_pat",
+  "set_ranch_name",
   "receive",
   "share_info",
   "set_word",
@@ -272,6 +276,14 @@ function mooLinesView(contract) {
     : [];
 }
 
+// 飼育記録（設計書16.15）: 飾りが付いた日（段階ごとの時刻）。この記録を始める前に付いた飾りの日は分からない。
+function fondnessAtView(value) {
+  const source = object(value);
+  return Object.fromEntries(RANCH_FONDNESS
+    .map((step) => [String(step.tier), integer(source[step.tier], 0, Number.MAX_SAFE_INTEGER, 0)])
+    .filter(([, at]) => at > 0));
+}
+
 function ranchXpOf(data) {
   if (data.ranchXp === undefined || data.ranchXp === null) return integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0) * RANCH_XP.accept;
   return integer(data.ranchXp, 0, Number.MAX_SAFE_INTEGER, 0);
@@ -306,6 +318,8 @@ function readProfile(snapshot) {
     refundClaimCount: integer(data.refundClaimCount, 0, Number.MAX_SAFE_INTEGER, 0),
     collarCount: integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0),
     ranchXp: ranchXpOf(data),
+    // 牧場の名前（「○○牧場」の○○）。保存した時に確かめてあるので、ここでは長さだけそろえる。
+    ranchName: cleanLine(data.ranchName, RANCH_NAME.length),
     word: {
       text: cleanLine(object(data.word).text, LIMITS.todayWord),
       at: integer(object(data.word).at, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -397,6 +411,7 @@ function publicCard(profile, monthKey, now) {
     vault: vaultBadge(profile),
     // 牧場レベルの札（設計書16.3）。額ではなく、関係の積み重ねで上がる。
     ranchLevel: ranchLevelFor(profile.ranchXp),
+    ranchName: profile.ranchName,
     activeContracts: profile.counts.managerActive,
     // 最後に動いた時は、管理人が出すと選んだカードだけ相手に渡す。出さないカードも、掲示板は動いた順に並ぶ。
     showsActivity: card.showsActivity === true,
@@ -415,7 +430,7 @@ function ownProfileView(profile, monthKey, now) {
     publicManagerId: profile.publicManagerId,
     hidden: profileIsHidden(profile, monthKey),
     // 自分の牧場の経験値とレベル（管理人の「わたしの牧場」の欄）。
-    ranch: { xp: profile.ranchXp, level: ranchLevelFor(profile.ranchXp) },
+    ranch: { xp: profile.ranchXp, level: ranchLevelFor(profile.ranchXp), name: profile.ranchName },
     // 自分の金庫（額は本人にだけ）。いちばん高く届いた段階までの金庫の飾りを使える。
     vault: {
       qualified: profile.vaultQualifiedAt > 0,
@@ -680,6 +695,9 @@ function viewContract(contract, uid, now) {
     mooLines: mooLinesView(contract),
     // 管理人が最後に動物をなでた時刻。財布の「牧場をのぞく」に出る。
     pattedAt: integer(contract.pattedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    // 飼育記録: 飾りが付いた日と、なでてもらった日数（どちらも組の通算で、契約をまたぐ）。
+    fondnessAt: fondnessAtView(contract.fondnessAt),
+    patDays: integer(contract.patDays, 0, Number.MAX_SAFE_INTEGER, 0),
     othello: status === "active" ? othelloView(contract) : null,
     othelloResult: status === "active" ? othelloResultView(contract) : null,
     othelloRecord: othelloRecordView(contract.othelloRecord),
@@ -981,8 +999,11 @@ function createTributeService(deps) {
   // 献上の回数と、初めての献上からの日数の小さい方から始める（servedTotalOf）。
   function countServedTotal(ctx) {
     const servedTotal = servedTotalOf(ctx.pair.value, ctx.now) + 1;
-    patchPair(ctx, { servedTotal });
-    setContract(ctx, { servedTotal });
+    // 飾りが付いた日（飼育記録）。仕えた日がちょうど段階の日数になった時だけ残す。
+    const step = RANCH_FONDNESS.find((entry) => entry.days === servedTotal);
+    const marks = step ? { fondnessAt: { ...fondnessAtView(ctx.pair.value.fondnessAt), [step.tier]: ctx.now } } : {};
+    patchPair(ctx, { servedTotal, ...marks });
+    setContract(ctx, { servedTotal, ...marks });
   }
 
   // その日初めての献上・言葉の献上か（仕えた日が1日増えるか）。servedDayPatch を当てる前に読む。
@@ -1946,6 +1967,28 @@ function createTributeService(deps) {
     return { ok: true, profile: ownProfileView(profile, jstMonthKey(now), now) };
   }
 
+  // 牧場の名前（設計書16.15、管理人だけ）。カードの札「○○牧場 Lv.N」、財布の「牧場をのぞく」、記念写真に出る。
+  // 掲示板にも出るので、今日のひとことと同じ確認を通す。空にすると外れる。活動には数えない（掲示板の並びは変えない）。
+  async function setRanchNameAction(uid, data) {
+    const normalized = normalizeRanchName(data?.name);
+    if (normalized.error) fail("invalid-argument", normalized.error);
+    let saved = null;
+    let now = 0;
+    await firestore.runTransaction(async (transaction) => {
+      saved = null;
+      now = currentTime();
+      const snapshot = await transaction.get(profileRef(uid));
+      const profile = readProfile(snapshot);
+      requireAge(profile);
+      if (!profile.card) fail("failed-precondition", "牧場の名前は、管理人カードを作ってから付けられます。");
+      const patch = { ranchName: normalized.name, updatedAt: now };
+      transaction.set(profileRef(uid), patch, { merge: true });
+      saved = { ...object(snapshot.data()), ...patch };
+    });
+    const profile = readProfile({ exists: true, data: () => saved });
+    return { ok: true, profile: ownProfileView(profile, jstMonthKey(now), now) };
+  }
+
   // 管理人の自分の言葉（定型文・ご褒美）。管理人だけが読み、カードには入れないので掲示板に出ない。活動には数えない。
   async function setOwnWordsAction(uid, data) {
     const normalized = normalizeOwnWords(data?.ownWords);
@@ -2364,7 +2407,11 @@ function createTributeService(deps) {
         const collarNo = ensureCollar(ctx);
         // 牧場の経験値: 新しい財布を迎えた（設計書16.3）。なつきは組の通算を写す（契約をまたぐ）。
         grantRanchXp(ctx, RANCH_XP.accept);
-        setContract(ctx, { servedTotal: servedTotalOf(ctx.pair.value, ctx.now) });
+        setContract(ctx, {
+          servedTotal: servedTotalOf(ctx.pair.value, ctx.now),
+          fondnessAt: fondnessAtView(ctx.pair.value.fondnessAt),
+          patDays: integer(ctx.pair.value.patDays, 0, Number.MAX_SAFE_INTEGER, 0),
+        });
         // 貢ぎオセロの戦績は組ごと（契約をまたぐ）。前の契約の戦績を、この契約に写して見せる。
         if (ctx.pair.value.othelloRecord) setContract(ctx, { othelloRecord: othelloRecordView(ctx.pair.value.othelloRecord) });
         pushEvent(ctx, { type: "accepted", actor: "manager", expiresAt: ctx.contract.expiresAt, collarNo });
@@ -3081,7 +3128,10 @@ function createTributeService(deps) {
       write(ctx) {
         if (ctx.contract.allowGrazing !== true) fail("failed-precondition", "この財布は牧場に放牧されていません。");
         if (ctx.contract.patDayKey === ctx.dateKey) return { ok: true, contract: view(ctx), unchanged: true };
-        setContract(ctx, { pattedAt: ctx.now, patDayKey: ctx.dateKey });
+        // なでてもらった日数（飼育記録）は組の通算。財布の「牧場をのぞく」にだけ出し、ほかと比べる形にはしない。
+        const patDays = integer(ctx.pair.value.patDays, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+        patchPair(ctx, { patDays });
+        setContract(ctx, { pattedAt: ctx.now, patDayKey: ctx.dateKey, patDays });
         return { ok: true, contract: view(ctx) };
       },
     },
@@ -3767,7 +3817,7 @@ function createTributeService(deps) {
     if (contract.payerUid !== uid || !managerUid) fail("permission-denied", "牧場をのぞけるのは、その契約の財布だけです。");
     if (!OPEN_STATUSES.includes(contract.status)) fail("failed-precondition", "終わった契約では、牧場をのぞけません。");
     const managerProfile = readProfile(await profileRef(managerUid).get());
-    return { ok: true, contractId, ranchLevel: ranchLevelFor(managerProfile.ranchXp) };
+    return { ok: true, contractId, ranchLevel: ranchLevelFor(managerProfile.ranchXp), ranchName: managerProfile.ranchName };
   }
 
   async function ledgerAction(uid) {
@@ -4325,6 +4375,7 @@ function createTributeService(deps) {
       case "receipts": return receiptsAction(uid, data);
       case "share_info": return shareInfoAction(uid, data);
       case "ranch_peek": return ranchPeekAction(uid, data);
+      case "set_ranch_name": return setRanchNameAction(uid, data);
       case "set_word": return setWordAction(uid, data);
       case "set_own_words": return setOwnWordsAction(uid, data);
       case "ledger": return ledgerAction(uid);

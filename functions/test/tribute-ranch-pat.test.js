@@ -78,7 +78,7 @@ async function ranchRenderer() {
   vm.runInContext([
     /const RANCH_ASSET_KEY = [^\n]*\n/.exec(client)[0],
     /const RANCH_WANDER = [^\n]*\n/.exec(client)[0],
-    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "renderRanch", "renderRanchPeek"].map((name) => extract(client, name)),
+    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "ranchPlacements", "renderRanch", "renderRanchRecord", "renderRanchPeek"].map((name) => extract(client, name)),
   ].join("\n"), context);
   return { core, context };
 }
@@ -129,7 +129,7 @@ test("the wallet's peek shows when it was last patted", async () => {
   assert.ok(before.includes(`ミオ様に最後になでてもらった日：${label}`), label);
   assert.doesNotMatch(before, /tribute-ranch-heart/);
   const never = context.renderRanchPeek(core.viewContract(raw, "u", now), { status: "ready", level: 3 });
-  assert.doesNotMatch(never, /なでてもらった/);
+  assert.doesNotMatch(never, /class="tribute-ranch-pat"|今日、ミオ様に|最後になでてもらった日/);
   assert.match(never, /管理人が牧場であなたの動物をなでると、ここに出ます。/);
 });
 
