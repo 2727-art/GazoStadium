@@ -26,20 +26,49 @@ const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 // 貢ぎオセロ（設計書15.2）。盤は64文字（"." 空き・"M" 管理人の石・"P" 財布の石＝Payのコイン）。左上から右へ、上の段から並べる。
 // 運の要素は入れない。罰金は終わった時の石の差 × 1枚あたりの額（財布の1回の限度額まで）。
 // 牧場経営（設計書16）。経験値は管理人と財布の間で起きた事実で積み、Pay の額では上げない。下がらない。
-// 組ごとに1日10まで（日本時間）。レベルは経験値の合計で決まる（Lv1〜Lv10）。
-const RANCH_LEVELS = Object.freeze([0, 20, 60, 120, 200, 320, 480, 700, 1000, 1400]);
+// 組ごとに1日10まで（日本時間）。レベルは経験値の合計で決まる。絵が増えるのは Lv30 まで、その先は数字だけ上がり続ける。
+// Lv11 からは、次のレベルまでの経験値が1段ごとに100ずつ増える（Lv11 まで 500、Lv30 まで 2,400、Lv31 まで 2,500 …）。
+const RANCH_LEVELS = Object.freeze([
+  0, 20, 60, 120, 200, 320, 480, 700, 1000, 1400,
+  1900, 2500, 3200, 4000, 4900, 5900, 7000, 8200, 9500, 10900,
+  12400, 14000, 15700, 17500, 19400, 21400, 23500, 25700, 28000, 30400,
+]);
+const RANCH_ART_LEVELS = RANCH_LEVELS.length;
+// 動物ごとの「なつき」。その財布が通算で仕えた日数（契約をまたぐ）で、動物に飾りが増える。
+const RANCH_FONDNESS = Object.freeze([
+  Object.freeze({ tier: 1, days: 7, label: "鈴" }),
+  Object.freeze({ tier: 2, days: 30, label: "リボン" }),
+  Object.freeze({ tier: 3, days: 100, label: "花かんむり" }),
+  Object.freeze({ tier: 4, days: 365, label: "金の王冠" }),
+]);
 const RANCH_XP = Object.freeze({ accept: 5, servedDay: 3, receive: 1, confirm: 2, plea: 1, extend: 2 });
 const RANCH_XP_PAIR_DAY = 10;
 // 放牧される財布の動物。管理人が契約ごとに選び、選ぶまでは契約ごとに決まった1種類。
 const RANCH_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
 
+// そのレベルに必要な経験値の合計。Lv30 より上は、1段ごとに100ずつ増える。
+function ranchThreshold(level) {
+  const target = Math.max(1, Math.floor(Number(level) || 1));
+  if (target <= RANCH_LEVELS.length) return RANCH_LEVELS[target - 1];
+  let need = RANCH_LEVELS[RANCH_LEVELS.length - 1];
+  for (let next = RANCH_LEVELS.length + 1; next <= target; next += 1) need += 100 * (next - 6);
+  return need;
+}
+
 function ranchLevelFor(xp) {
   const value = Math.max(0, Math.floor(Number(xp) || 0));
   let level = 1;
-  RANCH_LEVELS.forEach((need, index) => {
-    if (value >= need) level = index + 1;
-  });
+  while (level < 100_000 && value >= ranchThreshold(level + 1)) level += 1;
   return level;
+}
+
+// なつき（飾りの段階）。0 は飾りなし。
+function ranchFondness(days) {
+  const value = Math.max(0, Math.floor(Number(days) || 0));
+  let current = null;
+  for (const step of RANCH_FONDNESS) if (value >= step.days) current = step;
+  const next = RANCH_FONDNESS.find((step) => step.days > value) || null;
+  return { days: value, tier: current ? current.tier : 0, label: current ? current.label : "", next: next ? { days: next.days, label: next.label, left: next.days - value } : null };
 }
 
 function defaultRanchAnimal(contractId) {
@@ -1039,10 +1068,14 @@ module.exports = {
   othelloOutcome,
   normalizeOthelloStart,
   RANCH_LEVELS,
+  RANCH_ART_LEVELS,
+  RANCH_FONDNESS,
   RANCH_XP,
   RANCH_XP_PAIR_DAY,
   RANCH_ANIMALS,
   ranchLevelFor,
+  ranchThreshold,
+  ranchFondness,
   defaultRanchAnimal,
   MAX_MANAGER_STYLES,
   normalizeStyles,

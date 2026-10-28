@@ -1778,6 +1778,7 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .tribute-ranch-card strong { color: #c9f5cf; }
 .tribute-ranch-card small { color: var(--tr-mist); }
 .tribute-ranch-card p { margin: 0; font-size: 0.86rem; }
+.tribute-ranch-card .tribute-ranch-fondness { color: #f3d28a; font-size: 0.8rem; }
 .tribute-ranch-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
 .tribute-ranch-kinds button { min-width: 3.2rem; padding: 4px 12px; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 999px; background: none; color: var(--tr-mist); font: inherit; font-size: 0.82rem; }
 .tribute-ranch-kinds button[aria-pressed="true"] { border-color: #7ee08a; color: var(--tr-text); background: rgba(126, 224, 138, 0.14); }

@@ -111,6 +111,7 @@ import {
   purposeLabel,
   ranchAnimalMood,
   ranchDiary,
+  ranchFondness,
   ranchLevelFor,
   ranchProgress,
   ranchSnapshot,
@@ -139,7 +140,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
@@ -733,7 +734,7 @@ function renderBoardNotice(profile) {
 // 管理人の「契約」画面のいちばん上。放牧に同意した財布が動物になって歩き、契約の今の状態から決まったしぐさと、
 // 語り手の一言（三人称の事実だけ）が出る。牧場レベルは関係の積み重ねで上がり、Pay の額では上がらない。
 // 来ないと減る・弱る仕組み、通知、連続日数は入れない。絵は art/tribute-ranch/render_ranch.py で描いた。
-const RANCH_ASSET_KEY = "ranch-pasture-v1";
+const RANCH_ASSET_KEY = "ranch-growth-v1";
 const RANCH_WANDER = Object.freeze([[0.06, 0.025], [-0.06, 0.03], [0.05, -0.03], [-0.05, -0.025]]);
 
 function ranchImage(name) {
@@ -766,6 +767,7 @@ function ranchDiaryLines(herd) {
     wordOfferings: contract.wordOfferings,
     workOrdersDone: contract.workOrdersDone,
     contestWon: contract.contestRecord?.won,
+    servedTotal: contract.servedTotal,
   }));
   const current = ranchSnapshot(rows);
   const key = `tribute-ranch-seen:${state.uid}`;
@@ -793,9 +795,12 @@ function renderRanchAnimal(entry, index) {
   const still = ["sleep", "tied", "plea", "gaze", "eat"].includes(mood.mood);
   const wander = RANCH_WANDER[index % RANCH_WANDER.length];
   const pose = mood.mood === "sleep" ? "sleep" : mood.mood === "eat" ? "eat" : "stand";
+  // なつき（通算で仕えた日数）の飾り。0 は飾りなしの絵（名前に段階を付けない）。
+  const tier = ranchFondness(contract.servedTotal).tier;
+  const art = (shape) => ranchImage(`${animal}-${shape}${tier ? `-t${tier}` : ""}-${light}`);
   const sprite = still
-    ? `<img src="${escapeHtml(ranchImage(`${animal}-${pose}-${light}`))}" alt="" draggable="false" />`
-    : `<img class="is-step-b" src="${escapeHtml(ranchImage(`${animal}-walk2-${light}`))}" alt="" draggable="false" /><img class="is-step-a" src="${escapeHtml(ranchImage(`${animal}-walk1-${light}`))}" alt="" draggable="false" /><img class="is-still" src="${escapeHtml(ranchImage(`${animal}-stand-${light}`))}" alt="" draggable="false" />`;
+    ? `<img src="${escapeHtml(art(pose))}" alt="" draggable="false" />`
+    : `<img class="is-step-b" src="${escapeHtml(art("walk2"))}" alt="" draggable="false" /><img class="is-step-a" src="${escapeHtml(art("walk1"))}" alt="" draggable="false" /><img class="is-still" src="${escapeHtml(art("stand"))}" alt="" draggable="false" />`;
   const props = [
     mood.mood === "eat" ? `<img class="tribute-ranch-prop is-hay" src="${escapeHtml(ranchImage(`prop-hay-${light}`))}" alt="" draggable="false" />` : "",
     mood.mood === "letter" ? `<img class="tribute-ranch-prop is-letter" src="${escapeHtml(ranchImage(`prop-letter-${light}`))}" alt="" draggable="false" />` : "",
@@ -856,25 +861,28 @@ function renderRanch(open, profile) {
   const stake = staked ? `<img class="tribute-ranch-prop is-stake" style="--x1:${ranchPercent(RANCH_LAYOUT.stake[0])};--y1:${ranchPercent(RANCH_LAYOUT.stake[1])};z-index:${Math.round(RANCH_LAYOUT.stake[1] * 100)}" src="${escapeHtml(ranchImage(`prop-stake-${light}`))}" alt="" draggable="false" />` : "";
   const card = selected ? (() => {
     const name = ranchName(selected.contract);
+    const fondness = ranchFondness(selected.contract.servedTotal);
+    const fondnessText = `なつき：${fondness.label || "まだ飾りなし"}（仕えた日 ${fondness.days}日）${fondness.next ? `・あと${fondness.next.left}日で${fondness.next.label}` : ""}`;
     return `<div class="tribute-ranch-card">
       <div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(RANCH_ANIMAL_LABELS[selected.contract.ranchAnimal] || "")}</small></div>
       <p>${escapeHtml(selected.mood.line.replaceAll("{name}", name))}</p>
+      <p class="tribute-ranch-fondness">${escapeHtml(fondnessText)}</p>
       <div class="tribute-ranch-kinds" role="group" aria-label="動物を選ぶ">${RANCH_ANIMALS.map((animal) => `<button type="button" data-t="ranch-kind" data-contract="${escapeHtml(selected.contract.contractId)}" data-animal="${animal}" aria-pressed="${selected.contract.ranchAnimal === animal}" ${state.busy ? "disabled" : ""}>${escapeHtml(RANCH_ANIMAL_LABELS[animal])}</button>`).join("")}</div>
       <button class="button button-ghost button-small" type="button" data-t="open-thread" data-contract="${escapeHtml(selected.contract.contractId)}">スレッドへ</button>
     </div>`;
   })() : "";
   return `<section class="tribute-panel tribute-ranch is-${time}" aria-label="わたしの牧場">
-    <div class="tribute-ranch-head"><span class="tribute-eyebrow">わたしの牧場</span><strong>牧場 Lv.${progress.level}</strong><small>${progress.next === null ? "いちばん上のレベル" : `次の Lv まで あと ${progress.toNext}`}</small></div>
+    <div class="tribute-ranch-head"><span class="tribute-eyebrow">わたしの牧場</span><strong>牧場 Lv.${progress.level}</strong><small>次の Lv まで あと ${progress.toNext}</small></div>
     <div class="tribute-ranch-meter" aria-hidden="true"><i style="--ratio:${ranchPercent(progress.ratio)}"></i></div>
     <div class="tribute-ranch-scene" style="--cycle:${Math.max(18, placed.length * 6)}s">
-      <img class="tribute-ranch-ground" src="${escapeHtml(ranchImage(`ranch-lv${progress.level}-${light}`))}" alt="牧場 Lv.${progress.level}の芝の島" draggable="false" />
+      <img class="tribute-ranch-ground" src="${escapeHtml(ranchImage(`ranch-lv${progress.artLevel}-${light}`))}" alt="牧場 Lv.${progress.level}の芝の島" draggable="false" />
       ${stake}${placed.map((entry, index) => renderRanchAnimal(entry, index)).join("")}
     </div>
     ${card}
     ${away.length ? `<p class="tribute-ranch-away">出稼ぎに出ている：${away.map((contract) => `<button type="button" class="tribute-link" data-t="ranch-animal" data-contract="${escapeHtml(contract.contractId)}">${escapeHtml(ranchName(contract))}</button>`).join("・")}</p>` : ""}
     ${herd.length ? "" : '<p class="tribute-note">放牧に同意した財布が、ここで暮らします。財布は申し込みとスレッドの設定で選べます。</p>'}
     <div class="tribute-ranch-diary"><h3>日報</h3>${diary.length ? `<ul>${diary.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : '<p>前に見た時から、変わったことはありません。</p>'}</div>
-    <small class="tribute-ranch-rule">牧場は、財布を迎える・仕えた日・受け取り・確認・願い出への返事・延長で育ちます。Pay の額では上がらず、来なくても何も減りません。${upcoming ? ` 次は Lv.${upcoming.level} で「${escapeHtml(upcoming.label)}」。` : ""}</small>
+    <small class="tribute-ranch-rule">牧場は、財布を迎える・仕えた日・受け取り・確認・願い出への返事・延長で育ちます。Pay の額では上がらず、来なくても何も減りません。${upcoming ? ` 次は Lv.${upcoming.level} で「${escapeHtml(upcoming.label)}」。` : " Lv30 から先は、施設は増えずにレベルの数字だけ上がり続けます。"}動物は、その財布が仕えた日数（7日・30日・100日・365日）で飾りが増えます。</small>
   </section>`;
 }
 
@@ -5800,6 +5808,7 @@ function previewHerd(now) {
     collarNo: 4 + index,
     allowGrazing: true,
     ranchAnimal: ["pig", "sheep", "cow", "pig", "sheep"][index],
+    servedTotal: [3, 12, 45, 120, 400][index],
     hold: null,
     plea: null,
     reciteOrder: null,
@@ -5839,8 +5848,8 @@ function previewCall(action, payload) {
           publicManagerId: "f".repeat(24),
           hidden: false,
           vault: { ...previewVault },
-          // わたしの牧場: ranch は Lv10（施設がそろった牧場）、ほかは Lv5。
-          ranch: { xp: previewScreen === "ranch" ? 1_450 : 230, level: ranchLevelFor(previewScreen === "ranch" ? 1_450 : 230) },
+          // わたしの牧場: ranch は Lv30（絵がそろった牧場）、ほかは Lv5。
+          ranch: { xp: previewScreen === "ranch" ? 31_000 : 230, level: ranchLevelFor(previewScreen === "ranch" ? 31_000 : 230) },
           counts: { payerOpen: 1, managerActive: 1, managerPending: 1 },
           receiptCount: 3,
           // hub-refund: 返金待ち（運営からの返金と管理口座の返金）の見え方を確かめる。

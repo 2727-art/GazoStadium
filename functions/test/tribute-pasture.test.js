@@ -45,14 +45,14 @@ test("levels, points and animals are the same on the server and in the browser",
   assert.deepEqual({ ...core.RANCH_XP }, { ...rules.RANCH_XP });
   assert.equal(core.RANCH_XP_PAIR_DAY, rules.RANCH_XP_PAIR_DAY);
   assert.deepEqual([...core.RANCH_ANIMALS], [...rules.RANCH_ANIMALS]);
-  assert.deepEqual([...rules.RANCH_LEVELS], [0, 20, 60, 120, 200, 320, 480, 700, 1000, 1400]);
+  // 2026-10-28 に Lv30 まで伸ばした（その先は数字だけ）。Lv1〜10 の必要量は変えていない。
+  assert.deepEqual([...rules.RANCH_LEVELS].slice(0, 10), [0, 20, 60, 120, 200, 320, 480, 700, 1000, 1400]);
   assert.deepEqual({ ...rules.RANCH_XP }, { accept: 5, servedDay: 3, receive: 1, confirm: 2, plea: 1, extend: 2 });
   for (const xp of [0, 19, 20, 59, 60, 1399, 1400, 99_999, -5, "abc"]) assert.equal(core.ranchLevelFor(xp), rules.ranchLevelFor(xp), String(xp));
   assert.equal(rules.ranchLevelFor(1400), 10);
   for (const id of ["a".repeat(40), "b".repeat(40), "0123456789abcdef".repeat(2), ""]) assert.equal(core.defaultRanchAnimal(id), rules.defaultRanchAnimal(id), id);
-  assert.deepEqual(core.ranchProgress(65), { xp: 65, level: 3, floor: 60, next: 120, toNext: 55, ratio: 5 / 60 });
-  assert.deepEqual(core.ranchProgress(5000), { xp: 5000, level: 10, floor: 1400, next: null, toNext: 0, ratio: 1 });
-  assert.deepEqual(core.RANCH_FACILITIES.map((facility) => facility.level), [2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(core.ranchProgress(65), { xp: 65, level: 3, artLevel: 3, floor: 60, next: 120, toNext: 55, ratio: 5 / 60 });
+  assert.deepEqual(core.RANCH_FACILITIES.map((facility) => facility.level).slice(0, 9), [2, 3, 4, 5, 6, 7, 8, 9, 10]);
   // 日本時間の時間帯（朝6時・昼10時・夕方17時・夜19時から）
   const jst = (hour) => Date.UTC(2026, 9, 28, hour - 9);
   assert.deepEqual([5, 6, 9, 10, 16, 17, 18, 19, 23].map((hour) => core.ranchTimeOfDay(jst(hour))), ["night", "morning", "morning", "day", "day", "evening", "evening", "night", "night"]);
@@ -206,7 +206,7 @@ test("the ranch panel: only grazing wallets, away wallets listed, the level and 
   assert.match(html, /牧場 Lv\.3/);
   assert.match(html, /次の Lv まで あと 55/);
   assert.match(html, /次は Lv\.4 で「小屋」/);
-  assert.match(html, /ranch-lv3-(day|evening|night)\.webp\?v=ranch-pasture-v1/);
+  assert.match(html, /ranch-lv3-(day|evening|night)\.webp\?v=ranch-growth-v1/);
   assert.equal((html.match(/data-t="ranch-animal" data-contract="/g) || []).length, 3, "two on the ranch, one away (listed as a link)");
   assert.doesNotMatch(html, /財布2/, "a wallet who did not agree to graze is not on the ranch");
   assert.match(html, /出稼ぎに出ている：<button[^>]*>財布3<\/button>/);
@@ -224,7 +224,7 @@ test("the ranch panel: only grazing wallets, away wallets listed, the level and 
   // 押した動物には、動物を選ぶボタンとスレッドへの近道が出る。
   next.state.ranch.selected = "1".repeat(40);
   const picked = next.renderRanch(grown, { card: {}, ranch: { xp: 1500 } });
-  assert.match(picked, /いちばん上のレベル/);
+  assert.match(picked, /牧場 Lv\.10/);
   assert.match(picked, /data-t="ranch-kind" data-contract="1{40}" data-animal="cow" aria-pressed="true"/);
   assert.match(picked, /data-t="open-thread" data-contract="1{40}">スレッドへ/);
 });
@@ -249,8 +249,12 @@ test("client and server wiring, assets, privacy of the art scripts, cache keys a
   const dir = path.join(root, "assets/tribute-ranch");
   const names = [];
   for (const time of ["day", "evening", "night"]) {
-    for (let level = 1; level <= 10; level += 1) names.push(`ranch-lv${level}-${time}.webp`);
-    for (const animal of ["cow", "pig", "sheep"]) for (const pose of ["stand", "walk1", "walk2", "eat", "sleep"]) names.push(`${animal}-${pose}-${time}.webp`);
+    for (let level = 1; level <= 30; level += 1) names.push(`ranch-lv${level}-${time}.webp`);
+    for (const animal of ["cow", "pig", "sheep"]) {
+      for (const pose of ["stand", "walk1", "walk2", "eat", "sleep"]) {
+        for (const tier of [0, 1, 2, 3, 4]) names.push(`${animal}-${pose}${tier ? `-t${tier}` : ""}-${time}.webp`);
+      }
+    }
     for (const prop of ["letter", "hay", "stake"]) names.push(`prop-${prop}-${time}.webp`);
   }
   let total = 0;
@@ -261,7 +265,7 @@ test("client and server wiring, assets, privacy of the art scripts, cache keys a
     assert.ok(size > 300 && size < 40_000, `${name}: ${size}`);
     total += size;
   }
-  assert.ok(total < 1_000_000, `all ranch art: ${total}`);
+  assert.ok(total < 4_000_000, `all ranch art: ${total}`);
   assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith(".webp")).sort(), [...names].sort());
   assert.ok(fs.existsSync(path.join(root, "art/tribute-ranch/render_ranch.py")));
   assert.ok(JSON.parse(read("firebase.json")).hosting.ignore.includes("art/**"));

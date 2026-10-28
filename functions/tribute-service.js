@@ -245,6 +245,21 @@ function eventId(seq) {
 }
 
 // 牧場の経験値（設計書16.3）。記録のない管理人（公開より前から続けている人）は、迎えた財布の数 × 5 から始める。
+// 組の通算で仕えた日数。記録のない組は、献上の回数と、初めての献上からの日数（その日を含む）の小さい方。
+function servedTotalOf(pair, now) {
+  if (pair?.servedTotal !== undefined && pair?.servedTotal !== null) return integer(pair.servedTotal, 0, Number.MAX_SAFE_INTEGER, 0);
+  const firstAt = integer(pair?.firstAt, 0, Number.MAX_SAFE_INTEGER, 0);
+  if (!firstAt) return 0;
+  return Math.min(integer(pair.count, 0, Number.MAX_SAFE_INTEGER, 0), Math.floor(Math.max(0, now - firstAt) / DAY_MS) + 1);
+}
+
+// 契約の見え方の通算（tribute-core.mjs の servedTotalView と同じ）。記録のない契約は、この契約の献上の回数と日数から近い数を出す。
+function servedTotalView(contract, now) {
+  if (contract.servedTotal !== undefined && contract.servedTotal !== null) return integer(contract.servedTotal, 0, Number.MAX_SAFE_INTEGER, 0);
+  const acceptedAt = integer(contract.acceptedAt, 0, Number.MAX_SAFE_INTEGER, 0);
+  return acceptedAt > 0 ? Math.min(integer(contract.tributeCount, 0, Number.MAX_SAFE_INTEGER, 0), Math.floor(Math.max(0, now - acceptedAt) / DAY_MS) + 1) : 0;
+}
+
 function ranchXpOf(data) {
   if (data.ranchXp === undefined || data.ranchXp === null) return integer(data.collarCount, 0, Number.MAX_SAFE_INTEGER, 0) * RANCH_XP.accept;
   return integer(data.ranchXp, 0, Number.MAX_SAFE_INTEGER, 0);
@@ -691,6 +706,8 @@ function viewContract(contract, uid, now) {
     wordOfferings: integer(contract.wordOfferings, 0, Number.MAX_SAFE_INTEGER, 0),
     wordOffersToday: contract.wordOfferDayKey === jstDateKey(now) ? integer(contract.wordOfferDayCount, 0, 1_000, 0) : 0,
     // 最後に仕えた日（献上か言葉の献上をした日本時間の日）。牧場の動物のようすに使う。
+    // その財布が通算で仕えた日数（なつき）。
+    servedTotal: servedTotalView(contract, now),
     lastServedDayKey: [String(contract.todayKey || ""), String(contract.wordOfferDayKey || "")].filter((key) => /^\d{4}-\d{2}-\d{2}$/.test(key)).sort().at(-1) || "",
     extension: status === "active" ? extensionView(contract) : null,
     eventSeq,
@@ -942,6 +959,14 @@ function createTributeService(deps) {
     if (give <= 0) return;
     patchPair(ctx, { ranchXpDayKey: ctx.dateKey, ranchXpDay: used + give });
     patchProfile(ctx, "manager", { ranchXp: ctx.profiles.manager.value.ranchXp + give });
+  }
+
+  // なつき（設計書16）: その財布が通算で仕えた日数を、組と契約に残す。記録のない組（公開より前から続く組）は、
+  // 献上の回数と、初めての献上からの日数の小さい方から始める（servedTotalOf）。
+  function countServedTotal(ctx) {
+    const servedTotal = servedTotalOf(ctx.pair.value, ctx.now) + 1;
+    patchPair(ctx, { servedTotal });
+    setContract(ctx, { servedTotal });
   }
 
   // その日初めての献上・言葉の献上か（仕えた日が1日増えるか）。servedDayPatch を当てる前に読む。
@@ -1517,8 +1542,11 @@ function createTributeService(deps) {
     const receiptId = extra.receiptId || hashId("receipt", ctx.contractId, opKey);
     ctx.extraWrites.push((transaction) => transaction.create(receiptRef(ctx.payerUid, receiptId), receipt));
     // 貢ぎ帳と番付
-    // 牧場の経験値: 仕えた日が1日増えた（設計書16.3）。
-    if (newServedDay(ctx)) grantRanchXp(ctx, RANCH_XP.servedDay);
+    // 牧場の経験値と、なつき（通算で仕えた日数）: 仕えた日が1日増えた（設計書16）。
+    if (newServedDay(ctx)) {
+      grantRanchXp(ctx, RANCH_XP.servedDay);
+      countServedTotal(ctx);
+    }
     patchPair(ctx, {
       total: integer(pair.total, 0, Number.MAX_SAFE_INTEGER, 0) + amount,
       count: pairCountBefore + 1,
@@ -2318,8 +2346,9 @@ function createTributeService(deps) {
           managerPersonaName: managerName(ctx),
         });
         const collarNo = ensureCollar(ctx);
-        // 牧場の経験値: 新しい財布を迎えた（設計書16.3）。
+        // 牧場の経験値: 新しい財布を迎えた（設計書16.3）。なつきは組の通算を写す（契約をまたぐ）。
         grantRanchXp(ctx, RANCH_XP.accept);
+        setContract(ctx, { servedTotal: servedTotalOf(ctx.pair.value, ctx.now) });
         // 貢ぎオセロの戦績は組ごと（契約をまたぐ）。前の契約の戦績を、この契約に写して見せる。
         if (ctx.pair.value.othelloRecord) setContract(ctx, { othelloRecord: othelloRecordView(ctx.pair.value.othelloRecord) });
         pushEvent(ctx, { type: "accepted", actor: "manager", expiresAt: ctx.contract.expiresAt, collarNo });
@@ -2865,7 +2894,10 @@ function createTributeService(deps) {
         });
         pushEvent(ctx, { type: "word_offering", actor: "payer", text: normalized.text });
         // 言葉の献上も、仕えた日として数える（Pay は動かないので、額の記録は変えない）。
-        if (newServedDay(ctx)) grantRanchXp(ctx, RANCH_XP.servedDay);
+        if (newServedDay(ctx)) {
+          grantRanchXp(ctx, RANCH_XP.servedDay);
+          countServedTotal(ctx);
+        }
         patchPair(ctx, { ...servedDayPatch(ctx), rankOptIn: ctx.contract.rankOptIn === true, walletName: payerName(ctx) });
         return { ok: true, contract: view(ctx) };
       },

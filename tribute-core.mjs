@@ -33,7 +33,20 @@ export const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 // 運の要素は入れない。罰金は終わった時の石の差 × 1枚あたりの額（財布の1回の限度額まで）。
 // ───────────── 牧場経営（設計書16） ─────────────
 // 経験値は管理人と財布の間で起きた事実で積み、Pay の額では上げない。下がらない。サーバーの RANCH_* と同じ。
-export const RANCH_LEVELS = Object.freeze([0, 20, 60, 120, 200, 320, 480, 700, 1000, 1400]);
+// 絵が増えるのは Lv30 まで、その先は数字だけ上がり続ける（Lv11 からは、次までの経験値が1段ごとに100ずつ増える）。
+export const RANCH_LEVELS = Object.freeze([
+  0, 20, 60, 120, 200, 320, 480, 700, 1000, 1400,
+  1900, 2500, 3200, 4000, 4900, 5900, 7000, 8200, 9500, 10900,
+  12400, 14000, 15700, 17500, 19400, 21400, 23500, 25700, 28000, 30400,
+]);
+export const RANCH_ART_LEVELS = RANCH_LEVELS.length;
+// 動物ごとの「なつき」。その財布が通算で仕えた日数（契約をまたぐ）で、動物に飾りが増える。サーバーの RANCH_FONDNESS と同じ。
+export const RANCH_FONDNESS = Object.freeze([
+  Object.freeze({ tier: 1, days: 7, label: "鈴" }),
+  Object.freeze({ tier: 2, days: 30, label: "リボン" }),
+  Object.freeze({ tier: 3, days: 100, label: "花かんむり" }),
+  Object.freeze({ tier: 4, days: 365, label: "金の王冠" }),
+]);
 export const RANCH_XP = Object.freeze({ accept: 5, servedDay: 3, receive: 1, confirm: 2, plea: 1, extend: 2 });
 export const RANCH_XP_PAIR_DAY = 10;
 export const RANCH_ANIMALS = Object.freeze(["cow", "pig", "sheep"]);
@@ -49,6 +62,26 @@ export const RANCH_FACILITIES = Object.freeze([
   Object.freeze({ level: 8, label: "納屋" }),
   Object.freeze({ level: 9, label: "時計台" }),
   Object.freeze({ level: 10, label: "金の牛の像" }),
+  Object.freeze({ level: 11, label: "郵便受け" }),
+  Object.freeze({ level: 12, label: "街灯" }),
+  Object.freeze({ level: 13, label: "風見鶏" }),
+  Object.freeze({ level: 14, label: "花の鉢" }),
+  Object.freeze({ level: 15, label: "二階建ての家" }),
+  Object.freeze({ level: 16, label: "石の小道" }),
+  Object.freeze({ level: 17, label: "屋根の小鳥" }),
+  Object.freeze({ level: 18, label: "たくさんのりんご" }),
+  Object.freeze({ level: 19, label: "旗の飾り" }),
+  Object.freeze({ level: 20, label: "サイロ" }),
+  Object.freeze({ level: 21, label: "桜の木" }),
+  Object.freeze({ level: 22, label: "噴水" }),
+  Object.freeze({ level: 23, label: "風船" }),
+  Object.freeze({ level: 24, label: "灯りの飾り" }),
+  Object.freeze({ level: 25, label: "気球" }),
+  Object.freeze({ level: 26, label: "虹" }),
+  Object.freeze({ level: 27, label: "ちょうちょ" }),
+  Object.freeze({ level: 28, label: "風車の花飾り" }),
+  Object.freeze({ level: 29, label: "金の柵" }),
+  Object.freeze({ level: 30, label: "お城の塔" }),
 ]);
 // 絵の置き方（art/tribute-ranch/render_ranch.py の layout で書き出した値）。割合は、牧場の絵の幅・高さに対して。
 export const RANCH_LAYOUT = Object.freeze({
@@ -65,14 +98,29 @@ export const RANCH_LAYOUT = Object.freeze({
   stake: Object.freeze([0.3409, 0.4379]),
 });
 
+// そのレベルに必要な経験値の合計。Lv30 より上は、1段ごとに100ずつ増える。
+export function ranchThreshold(level) {
+  const target = Math.max(1, Math.floor(Number(level) || 1));
+  if (target <= RANCH_LEVELS.length) return RANCH_LEVELS[target - 1];
+  let need = RANCH_LEVELS[RANCH_LEVELS.length - 1];
+  for (let next = RANCH_LEVELS.length + 1; next <= target; next += 1) need += 100 * (next - 6);
+  return need;
+}
+
+// 通算で仕えた日数の見え方（サーバーの servedTotalView と同じ）。
+export function servedTotalView(raw, now = Date.now()) {
+  if (raw?.servedTotal !== undefined && raw?.servedTotal !== null) return integer(raw.servedTotal);
+  const acceptedAt = integer(raw?.acceptedAt);
+  return acceptedAt > 0 ? Math.min(integer(raw?.tributeCount), Math.floor(Math.max(0, now - acceptedAt) / 86_400_000) + 1) : 0;
+}
+
 export function ranchLevelFor(xp) {
   const value = Math.max(0, Math.floor(Number(xp) || 0));
   let level = 1;
-  RANCH_LEVELS.forEach((need, index) => {
-    if (value >= need) level = index + 1;
-  });
+  while (level < 100_000 && value >= ranchThreshold(level + 1)) level += 1;
   return level;
 }
+
 
 export function defaultRanchAnimal(contractId) {
   let sum = 0;
@@ -80,13 +128,22 @@ export function defaultRanchAnimal(contractId) {
   return RANCH_ANIMALS[sum % RANCH_ANIMALS.length];
 }
 
-// 次のレベルまでの進み具合。最後のレベルでは next が null。
+// 次のレベルまでの進み具合。天井はない。artLevel は絵のレベル（Lv30 まで）。
 export function ranchProgress(xp) {
   const value = Math.max(0, Math.floor(Number(xp) || 0));
   const level = ranchLevelFor(value);
-  const floor = RANCH_LEVELS[level - 1];
-  const next = RANCH_LEVELS[level] ?? null;
-  return { xp: value, level, floor, next, toNext: next === null ? 0 : next - value, ratio: next === null ? 1 : (value - floor) / (next - floor) };
+  const floor = ranchThreshold(level);
+  const next = ranchThreshold(level + 1);
+  return { xp: value, level, artLevel: Math.min(level, RANCH_ART_LEVELS), floor, next, toNext: next - value, ratio: (value - floor) / (next - floor) };
+}
+
+// なつき（飾りの段階）。サーバーの ranchFondness と同じ。
+export function ranchFondness(days) {
+  const value = Math.max(0, Math.floor(Number(days) || 0));
+  let current = null;
+  for (const step of RANCH_FONDNESS) if (value >= step.days) current = step;
+  const next = RANCH_FONDNESS.find((step) => step.days > value) || null;
+  return { days: value, tier: current ? current.tier : 0, label: current ? current.label : "", next: next ? { days: next.days, label: next.label, left: next.days - value } : null };
 }
 
 // 日本時間の時間帯。朝（6〜10時）・昼（10〜17時）・夕方（17〜19時）・夜（19〜6時）。絵は朝と昼で同じ。
@@ -129,6 +186,7 @@ export function ranchSnapshot(rows) {
     wordOfferings: integer(row.wordOfferings),
     workOrdersDone: integer(row.workOrdersDone),
     contestWon: integer(row.contestWon),
+    servedTotal: integer(row.servedTotal),
   }]));
 }
 
@@ -148,6 +206,8 @@ export function ranchDiary(previous, current, { limit = 5 } = {}) {
     if (letters > 0) lines.push(`${now.name}から手紙（言葉の献上）が${letters > 1 ? `${letters}通` : ""}届いた。`);
     if (now.workOrdersDone > before.workOrdersDone) lines.push(`${now.name}が出稼ぎから戻った。`);
     if (now.contestWon > before.contestWon) lines.push(`${now.name}が勝負に勝って戻った。`);
+    const fondness = ranchFondness(now.servedTotal);
+    if (fondness.tier > ranchFondness(before.servedTotal).tier) lines.push(`${now.name}は仕えた日が${fondness.days}日になり、${fondness.label}をつけた。`);
   }
   for (const [contractId, before] of Object.entries(previous)) {
     if (!(current || {})[contractId]) lines.push(`${before.name}は牧場を出ていった。`);
@@ -1140,6 +1200,8 @@ export function viewContract(contract, uid, now = Date.now()) {
     wordOfferings: integer(raw.wordOfferings),
     wordOffersToday: raw.wordOfferDayKey === jstDateKey(now) ? integer(raw.wordOfferDayCount, 0, 1_000) : 0,
     // 最後に仕えた日（献上か言葉の献上をした日本時間の日）。牧場の動物のようすに使う。
+    // その財布が通算で仕えた日数（契約をまたぐ）。記録のない契約は、この契約の献上の回数と日数から近い数を出す。
+    servedTotal: servedTotalView(raw, now),
     lastServedDayKey: [String(raw.todayKey || ""), String(raw.wordOfferDayKey || "")].filter((key) => /^\d{4}-\d{2}-\d{2}$/.test(key)).sort().at(-1) || "",
     extension: status === "active" ? extensionView(raw) : null,
     eventSeq,
