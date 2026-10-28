@@ -1,0 +1,137 @@
+{
+  "checkedAt": "2026-10-28T14:07:17.901Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "f4aaa6d",
+  "implementationCommits": [
+    "bb31bca (ranch photo, wallet record, ranch names)",
+    "f4aaa6d (ranch view tests pinned to 12:00 JST)"
+  ],
+  "baseCommit": "c12c2d3",
+  "decisions": {
+    "request": "１，２，３のみ実装をお願いします (ranch photo, wallet record, ranch name)",
+    "notDone": "ranch-level ranking (left for the user), usage check script",
+    "photo": "drawn on the device; name, level, facilities, season, weather, time, date and the manager's own card name and icon; animals only for wallets with allowScreenshots, without names and placed among themselves; no wallet names, nicknames, head count or URL; the AnjuPay footer always",
+    "record": "the wallet's peek shows the day welcomed, days served, each accessory and its day (fondnessAt, kept from now on), the next one, and days patted (patDays); pair-level, copied to new contracts; never compared with other wallets",
+    "name": "set_ranch_name: the ○○ of ○○牧場, 10 characters, a trailing 牧場 dropped, checked like the word of the day, not counted as board activity; the card tag reads ○○牧場 Lv.N",
+    "decidedBy": "user, 2026-10-28 JST"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "newActions": [
+      "set_ranch_name"
+    ],
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "tribute-share.mjs"
+    ],
+    "ranchImages": {
+      "total": 549,
+      "changed": 0,
+      "assetKeyUnchanged": "ranch-growth-v1"
+    },
+    "cacheKey": "ranch-photo-v1",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2360,
+    "passed": 2326,
+    "failed": 0,
+    "skipped": 34,
+    "newFiles": [
+      "functions/test/tribute-ranch-photo.test.js"
+    ],
+    "fixed": "the stage 2 moo-bubble test failed after 23:00 JST (animals sleep and hide moo lines); the vm renderers now use a clock stopped at 12:00 JST; without it the Functions predeploy suite would have failed at night"
+  },
+  "preview": {
+    "width": "375x812",
+    "consoleErrors": 0,
+    "horizontalOverflow": false,
+    "checked": [
+      "naming: over 10 characters stopped, saved title, toast, a 10-character name fits the card tag",
+      "photo at night in rain (live preview) and in the day in autumn (direct render)",
+      "wallet peek record rows"
+    ]
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "tribute-share.mjs"
+    ],
+    "unchangedImagesMatched": 549,
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "unchangedSinceLastRelease": true,
+      "tributeActionHash": "ee272f51d1cc1f2b8c3ff1fdddfe9296bad60109"
+    }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD f4aaa6d and origin/main contained)",
+    "order": [
+      "functions:tributeAction",
+      "git push origin HEAD:main (c12c2d3..f4aaa6d)",
+      "hosting"
+    ],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": {
+        "tributeAction": {
+          "before": "ee272f51d1cc1f2b8c3ff1fdddfe9296bad60109",
+          "after": "0da54b5c5f25081a3935cc5244d5544bf35ac8f1"
+        }
+      }
+    },
+    "workersBuild": {
+      "commit": "f4aaa6d",
+      "conclusion": "success",
+      "completedAt": "2026-10-28T14:06:03Z"
+    },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-ranch-photo-release.cjs",
+      "checkedAt": "2026-10-28T14:07:17.901Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "imagesPerRoute": 549,
+      "imagesByteIdentical": true,
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-photo-v1 on a freshly fetched index.html for tribute.js and tribute.css, and on the tribute-core.mjs and tribute-share.mjs imports",
+      "coreChecks": {
+        "ranchTitle": "ひだまり牧場",
+        "ranchNameProblem(おっぱい)": "the sexual-word message",
+        "viewContract fondnessAt": "passed through"
+      },
+      "shareChecks": "renderRanchPhotoImage exported, RANCH_PHOTO_TEXT #お貢ぎ牧場 #わたしの牧場",
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "the photo, record and names on real contracts can only be checked by signed-in managers and wallets; covered by tests and previews",
+    "accessory days are kept from this release on; earlier accessories show their day count only",
+    "ranch-level ranking and the usage check remain as ideas"
+  ]
+}
