@@ -24,7 +24,7 @@ Firestore transactionでウォレットと台帳を同時更新し、`creatorCar
 
 ## 配備手順
 
-1. `npm --prefix functions run check` を通す。
+1. `npm --prefix functions run check` を通す。配備時の `ANJU_PAY_LEDGER_REQUIRED` は既存方針どおり `true` を維持する（Git対象外の `functions/.env.gazostadium`）。
 2. カード更新の到達経路を含むFunctions (`economyAction`, `valueMarketAction`, `playerSafetyAction`, `cleanupPlayerSafety`) を配備する。
 3. RTDB RulesとHosting、Cloudflareの公開資材を配備する。
 4. `node functions/scripts/refund-retired-creator-cards.cjs --project gazostadium` で再確認する。
@@ -42,3 +42,16 @@ Firestore transactionでウォレットと台帳を同時更新し、`creatorCar
 初期配信の変更JS/CSSは合計95,097バイト削減（改行をLFへ統一して比較、圧縮前）。
 
 終了済みフリマの旧ソースや安全対応・アカウント引き継ぎの履歴確認は保持。現行画面の推しカード取得には使わない。
+
+## 本番結果
+
+- 実装PR #14をmainへ反映: `e86597705591ece2df0858881e88d0cd433b394e`。
+- 4関数の配備完了。いずれも `ACTIVE` / `nodejs24`、配備ハッシュ `e7b0960e0dc708fcc052f8e6b33efbd628987db9`。
+- Realtime Database RulesとFirebase Hostingを配備。Hostingは177ファイル。Cloudflareのmain連動配備も完了。
+- 14:41 JST: Firebaseの2ドメイン、workers.dev、新ドメインの4経路でHTMLと変更JS/CSSがコミットに一致。管理用ファイルは404。`CREATOR_CARD_RETIREMENT_PUBLIC_QA.json` に保存。
+- 本番のカード3経路を認証なしで読むと401。公開データを返さないことを確認。
+- 返還実行: **30人へ500 Payずつ、合計15,000 Pay。保留0 Pay**。集計のみを `CREATOR_CARD_REFUND_RESULT.json` に保存。
+- 14:42 JSTの再照合: **30人全員が返還完了、追加返還0 Pay、保留0 Pay**。`CREATOR_CARD_REFUND_VERIFY.json` に保存。個人のUIDや残高はレポートに含めない。
+- 公開された新ドメインの通信しないプレビューでも、推しカードがなくランキング案内が表示されることを確認。画面は `creator-card-retirement-preview.png`。
+
+残高は実行時の値へ加算済み。開きっぱなしの古い画面は再読み込みすると新しい画面になる。
