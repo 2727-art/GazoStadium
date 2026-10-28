@@ -626,7 +626,7 @@ Pay 0 でも差し出せるもの。Pay を動かさないので、番付・貢�
 
 ## 15. 競わせ方の見直しと貢ぎオセロ（設計、2026年10月）
 
-Status: 第1段を実装した（仕えた日数の番付と応援欄の並び、15.1）。2026-10-28 に `db48bf6` で本番に公開した（記録は `functions/docs/TRIBUTE_SERVED_DAYS_RELEASE.md`）。第2段（貢ぎオセロ）を実装した（15.2、キャッシュキー `ranch-othello-v1`）。第3段は設計（未実装）。採用はユーザーが決めた（2026-10-28）。
+Status: 第1段を実装した（仕えた日数の番付と応援欄の並び、15.1）。2026-10-28 に `db48bf6` で本番に公開した（記録は `functions/docs/TRIBUTE_SERVED_DAYS_RELEASE.md`）。第2段（貢ぎオセロ）を実装した（15.2、キャッシュキー `ranch-othello-v1`）。2026-10-28 に `05db1f2` で本番に公開した（記録は `functions/docs/TRIBUTE_OTHELLO_RELEASE.md`）。第3段は設計（未実装）。採用はユーザーが決めた（2026-10-28）。
 
 スタジアムは互いを競わせて続けてもらう場として作った。財布側と管理人側の note の分析（`functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md`・`TRIBUTE_MANAGER_PSYCHOLOGY.md`）を照らすと、競争は向け先によって効き方が逆になる。
 

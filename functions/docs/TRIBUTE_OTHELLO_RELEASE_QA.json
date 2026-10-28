@@ -1,0 +1,137 @@
+{
+  "checkedAt": "2026-10-28T07:57:05.023Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "05db1f2",
+  "implementationCommit": "f806549",
+  "mergeCommit": "9a1a329",
+  "baseCommit": "eba0fa8",
+  "alsoCommitted": [
+    "71c32f2 (release check reads the feature manifest)",
+    "05db1f2 (market records check compares with LF)"
+  ],
+  "decisions": {
+    "design": "TRIBUTE_DESIGN.md section 15.2",
+    "consent": "payer opts in per contract (allowOthello, default on for new applications, off for older contracts); only the manager starts a game and sets rate, handicap and first move; the payer can resign; turning the setting off ends a game without a penalty",
+    "hooks": "all nine recommended: coin stones and flips, stone difference x rate penalty, handicap, per-move notes by type, resign, recite after a loss, record and streak, result image, no turn deadline",
+    "penalty": "never debited automatically; the payer gives it with a long press, capped at one tribute, or the manager turns it into a request",
+    "decidedBy": "user, 2026-10-28 JST"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "tribute-share.mjs"
+    ],
+    "cacheKey": "ranch-othello-v1",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2309,
+    "passed": 2275,
+    "failed": 0,
+    "skipped": 34,
+    "afterMergingMain": true,
+    "newFiles": [
+      "functions/test/tribute-othello.test.js"
+    ],
+    "runtimeTestsAdded": 3
+  },
+  "preview": {
+    "width": "375x812",
+    "consoleErrors": 0,
+    "manager": [
+      "note chips by type and situation",
+      "move with note and automatic reply",
+      "two passes and a natural finish",
+      "start with 10 Pay, manager corner, manager first",
+      "end without a penalty"
+    ],
+    "payer": [
+      "give a 15 Pay penalty (recorded as 貢ぎオセロの罰金)",
+      "result image 1080x1350",
+      "turn the setting off"
+    ],
+    "notInPreview": [
+      "payer resign (covered by server runtime tests)"
+    ],
+    "bugFixed": "result image stone counts were overwritten by the manager card (renamed to managerStones/payerStones)"
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "tribute-share.mjs"
+    ],
+    "mainLazyLoadingAlreadyLive": true,
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "tributeActionHash": "562d8d7f89a530b231b6dfb083b9a8223473c3c6"
+    }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 05db1f2 and origin/main contained)",
+    "order": [
+      "functions:tributeAction",
+      "git push origin HEAD:main (eba0fa8..05db1f2)",
+      "hosting (177 files)"
+    ],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": {
+        "tributeAction": {
+          "before": "562d8d7f89a530b231b6dfb083b9a8223473c3c6",
+          "after": "247c71bfb59501ef4c9dc2683d9f3f8de12525f8"
+        }
+      },
+      "runtime": "nodejs24"
+    },
+    "workersBuild": {
+      "commit": "05db1f2",
+      "conclusion": "success",
+      "completedAt": "2026-10-28T07:54:32Z"
+    },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-othello-release.cjs",
+      "checkedAt": "2026-10-28T07:57:05.023Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "featureManifestTributeKey": "ranch-othello-v1",
+      "tributeCssDataSrcKey": "ranch-othello-v1",
+      "coreAndShareKeys": "ranch-othello-v1",
+      "consoleErrors": [
+        "403 (App Check in the check browser, same as earlier releases)"
+      ],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "a real game can only be checked by signed-in users; covered by tests and previews",
+    "contracts applied before the release stay off until the payer turns the setting on",
+    "next: stage 3 (work order contest type, design 15.3)"
+  ]
+}
