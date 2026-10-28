@@ -1,0 +1,183 @@
+{
+  "checkedAt": "2026-10-28T05:41:12.862Z",
+  "readOnly": true,
+  "routes": [
+    {
+      "origin": "https://gazostadium.web.app",
+      "assets": [
+        {
+          "file": "app.js",
+          "ok": true
+        },
+        {
+          "file": "online.js",
+          "ok": true
+        },
+        {
+          "file": "account.js",
+          "ok": true
+        },
+        {
+          "file": "styles.css",
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/database.rules.json",
+          "status": 404
+        },
+        {
+          "file": "/functions/creator-card-refund.js",
+          "status": 404
+        },
+        {
+          "file": "/functions/scripts/refund-retired-creator-cards.cjs",
+          "status": 404
+        },
+        {
+          "file": "/functions/docs/CREATOR_CARD_RETIREMENT_RELEASE.md",
+          "status": 404
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.firebaseapp.com",
+      "assets": [
+        {
+          "file": "app.js",
+          "ok": true
+        },
+        {
+          "file": "online.js",
+          "ok": true
+        },
+        {
+          "file": "account.js",
+          "ok": true
+        },
+        {
+          "file": "styles.css",
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/database.rules.json",
+          "status": 404
+        },
+        {
+          "file": "/functions/creator-card-refund.js",
+          "status": 404
+        },
+        {
+          "file": "/functions/scripts/refund-retired-creator-cards.cjs",
+          "status": 404
+        },
+        {
+          "file": "/functions/docs/CREATOR_CARD_RETIREMENT_RELEASE.md",
+          "status": 404
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.anjugames.workers.dev",
+      "assets": [
+        {
+          "file": "app.js",
+          "ok": true
+        },
+        {
+          "file": "online.js",
+          "ok": true
+        },
+        {
+          "file": "account.js",
+          "ok": true
+        },
+        {
+          "file": "styles.css",
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/database.rules.json",
+          "status": 404
+        },
+        {
+          "file": "/functions/creator-card-refund.js",
+          "status": 404
+        },
+        {
+          "file": "/functions/scripts/refund-retired-creator-cards.cjs",
+          "status": 404
+        },
+        {
+          "file": "/functions/docs/CREATOR_CARD_RETIREMENT_RELEASE.md",
+          "status": 404
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://hariaistadium.com",
+      "assets": [
+        {
+          "file": "app.js",
+          "ok": true
+        },
+        {
+          "file": "online.js",
+          "ok": true
+        },
+        {
+          "file": "account.js",
+          "ok": true
+        },
+        {
+          "file": "styles.css",
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/database.rules.json",
+          "status": 404
+        },
+        {
+          "file": "/functions/creator-card-refund.js",
+          "status": 404
+        },
+        {
+          "file": "/functions/scripts/refund-retired-creator-cards.cjs",
+          "status": 404
+        },
+        {
+          "file": "/functions/docs/CREATOR_CARD_RETIREMENT_RELEASE.md",
+          "status": 404
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "ok": true
+}
