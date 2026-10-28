@@ -66,6 +66,16 @@ const {
   capViolation,
   capsNeedGoogle,
   pairId,
+  OTHELLO_RATES,
+  OTHELLO_HANDICAPS,
+  othelloSide,
+  othelloInitialBoard,
+  othelloBoardValid,
+  othelloPlay,
+  othelloCount,
+  othelloNextTurn,
+  othelloOutcome,
+  normalizeOthelloStart,
 } = require("./tribute-rules");
 const {
   ACHIEVEMENT_BY_ID,
@@ -123,6 +133,12 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "extend_withdraw",
   "extend_accept",
   "extend_decline",
+  "set_othello",
+  "othello_start",
+  "othello_move",
+  "othello_resign",
+  "othello_end",
+  "othello_claim",
   "set_work_orders",
   "work_order",
   "work_withdraw",
@@ -439,6 +455,44 @@ function openReciteOrder(contract) {
   return order && !order.done ? order : null;
 }
 
+// 貢ぎオセロ（設計書15.2）。進行中の対局・決着した罰金（未払い）・組の戦績。
+function othelloView(contract) {
+  const game = contract.othello && typeof contract.othello === "object" ? contract.othello : null;
+  if (!game || !othelloBoardValid(game.board) || !["manager", "payer"].includes(game.turn)) return null;
+  const last = game.lastMove && typeof game.lastMove === "object" ? game.lastMove : null;
+  return {
+    gameSeq: integer(game.gameSeq, 0, Number.MAX_SAFE_INTEGER, 0),
+    board: game.board,
+    turn: game.turn,
+    rate: OTHELLO_RATES.includes(Number(game.rate)) ? Number(game.rate) : OTHELLO_RATES[0],
+    handicap: OTHELLO_HANDICAPS.includes(game.handicap) ? game.handicap : "none",
+    startedAt: integer(game.startedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    lastMoveAt: integer(game.lastMoveAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    lastMove: last ? { index: integer(last.index, 0, 63, 0), flipped: integer(last.flipped, 0, 64, 0), role: last.role === "manager" ? "manager" : "payer" } : null,
+    counts: othelloCount(game.board),
+  };
+}
+
+function othelloResultView(contract) {
+  const result = contract.othelloResult && typeof contract.othelloResult === "object" ? contract.othelloResult : null;
+  const penalty = integer(result?.penalty, 0, 1_000_000, 0);
+  if (!result || penalty <= 0) return null;
+  return {
+    gameSeq: integer(result.gameSeq, 0, Number.MAX_SAFE_INTEGER, 0),
+    penalty,
+    stones: integer(result.stones, 0, 64, 0),
+    rate: integer(result.rate, 0, 1_000, 0),
+    resigned: result.resigned === true,
+    finishedAt: integer(result.finishedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+  };
+}
+
+function othelloRecordView(value) {
+  const record = value && typeof value === "object" ? value : {};
+  const count = (key) => integer(record[key], 0, Number.MAX_SAFE_INTEGER, 0);
+  return { played: count("played"), lost: count("lost"), won: count("won"), drawn: count("drawn"), streak: count("streak") };
+}
+
 // 延長の申し込み（財布が日数を選び、管理人が受けると、いまの期限から延びる）。
 function extensionView(contract) {
   const extension = contract.extension && typeof contract.extension === "object" ? contract.extension : null;
@@ -534,6 +588,10 @@ function viewContract(contract, uid, now) {
     allowScreenshots: contract.allowScreenshots === true,
     allowWorkOrders: contract.allowWorkOrders === true,
     allowHolds: contract.allowHolds === true,
+    allowOthello: contract.allowOthello === true,
+    othello: status === "active" ? othelloView(contract) : null,
+    othelloResult: status === "active" ? othelloResultView(contract) : null,
+    othelloRecord: othelloRecordView(contract.othelloRecord),
     entryFee: integer(contract.entryFee, 0, 1_000, 0),
     renewal: contract.renewal === true,
     createdAt: integer(contract.createdAt, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -810,6 +868,51 @@ function createTributeService(deps) {
     return { servedMonthKey: ctx.monthKey, servedDays: countedToday ? days : days + 1, servedDayKey: ctx.dateKey };
   }
 
+  // 貢ぎオセロの決着（設計書15.2）。戦績は組と契約の両方に残し、財布が負けた時だけ罰金を残す（自動では引き落とさない）。
+  function finishOthello(ctx, game, board, { resigned = false } = {}) {
+    const outcome = othelloOutcome(board, game.rate, { resigned });
+    const record = othelloRecordView(ctx.pair.value.othelloRecord || ctx.contract.othelloRecord);
+    const next = {
+      played: record.played + 1,
+      lost: record.lost + (outcome.result === "lost" ? 1 : 0),
+      won: record.won + (outcome.result === "won" ? 1 : 0),
+      drawn: record.drawn + (outcome.result === "draw" ? 1 : 0),
+      streak: outcome.result === "lost" ? record.streak + 1 : 0,
+    };
+    patchPair(ctx, { othelloRecord: next });
+    setContract(ctx, {
+      othello: null,
+      othelloRecord: next,
+      othelloResult: outcome.penalty > 0
+        ? { gameSeq: game.gameSeq, penalty: outcome.penalty, stones: outcome.stones, rate: game.rate, resigned, finishedAt: ctx.now }
+        : null,
+    });
+    pushEvent(ctx, {
+      type: "othello_finish",
+      actor: resigned ? "payer" : "system",
+      gameSeq: game.gameSeq,
+      result: outcome.result,
+      manager: outcome.manager,
+      payer: outcome.payer,
+      stones: outcome.stones,
+      rate: game.rate,
+      penalty: outcome.penalty,
+      resigned,
+      board,
+      record: next,
+    });
+  }
+
+  // 一手に添える一言（60文字まで、会話と同じ確認）。添えた手は会話として数える（既読無視の判定）。
+  function othelloNote(ctx, value) {
+    const text = cleanLine(value, LIMITS.requestNote);
+    if (!text) return "";
+    const normalized = normalizeMessage(text);
+    if (normalized.error) fail("invalid-argument", normalized.error);
+    checkManagerText(ctx, normalized.text);
+    return normalized.text;
+  }
+
   // 願い出に答える（許す・退ける）。一言を添えられ、どちらも管理人の返事として既読無視を終える。
   function answerPlea(ctx, data, grant) {
     const plea = pleaView(ctx.contract);
@@ -1001,6 +1104,8 @@ function createTributeService(deps) {
       pendingRequests: {},
       reportRequestedAt: 0,
       workOrder: null,
+      othello: null,
+      othelloResult: null,
       pendingCaps: null,
       pendingCapsEffectiveDateKey: "",
       awaitingReceipt: 0,
@@ -1274,6 +1379,8 @@ function createTributeService(deps) {
     const purposeCounts = object(contract.purposeCounts);
     const tributeMarks = {
       ...(marks.granted === true ? { granted: true } : {}),
+      // 貢ぎオセロの罰金（何局目か）。記録の上は無言の献上で、名目は罰金。
+      ...(integer(marks.othello, 0, Number.MAX_SAFE_INTEGER, 0) > 0 ? { othello: integer(marks.othello, 0, Number.MAX_SAFE_INTEGER, 0) } : {}),
       ...(integer(marks.resisted, 0, LIMITS.resistsPerRequest, 0) > 0 ? { resisted: integer(marks.resisted, 0, LIMITS.resistsPerRequest, 0) } : {}),
     };
     setContract(ctx, {
@@ -1906,6 +2013,10 @@ function createTributeService(deps) {
         allowScreenshots: application.allowScreenshots,
         allowWorkOrders: application.allowWorkOrders,
         allowHolds: application.allowHolds,
+        allowOthello: application.allowOthello,
+        othello: null,
+        othelloSeq: 0,
+        othelloResult: null,
         workOrder: null,
         workOrderSeq: 0,
         workOrdersDone: 0,
@@ -1952,6 +2063,7 @@ function createTributeService(deps) {
         allowScreenshots: application.allowScreenshots,
         allowWorkOrders: application.allowWorkOrders,
         allowHolds: application.allowHolds,
+        allowOthello: application.allowOthello,
         createdAt: now,
       });
       transaction.set(profileRef(uid), {
@@ -2075,6 +2187,8 @@ function createTributeService(deps) {
           managerPersonaName: managerName(ctx),
         });
         const collarNo = ensureCollar(ctx);
+        // 貢ぎオセロの戦績は組ごと（契約をまたぐ）。前の契約の戦績を、この契約に写して見せる。
+        if (ctx.pair.value.othelloRecord) setContract(ctx, { othelloRecord: othelloRecordView(ctx.pair.value.othelloRecord) });
         pushEvent(ctx, { type: "accepted", actor: "manager", expiresAt: ctx.contract.expiresAt, collarNo });
         markManagerActive(ctx);
         ctx.caps = effectiveCaps(ctx.contract, ctx.now).caps;
@@ -2189,9 +2303,18 @@ function createTributeService(deps) {
           if (Number(data?.amount) !== amount) fail("failed-precondition", "請求の金額が変わりました。開き直してください。");
           note = cleanLine(request.note, LIMITS.requestNote);
           purpose = visiblePurpose(request.purpose, { allowSexual });
-          marks = { resisted: integer(request.resists, 0, LIMITS.resistsPerRequest, 0) };
+          marks = { resisted: integer(request.resists, 0, LIMITS.resistsPerRequest, 0), othello: integer(request.othello, 0, Number.MAX_SAFE_INTEGER, 0) };
           delete requests[requestId];
           setContract(ctx, { pendingRequests: requests });
+        } else if (requested === "othello") {
+          // 貢ぎオセロの罰金。財布の1回の限度額までを、財布が長押しで差し出す（管理人に限度額は見せない）。
+          const result = othelloResultView(ctx.contract);
+          if (!result) fail("failed-precondition", "払う罰金はありません。開き直してください。");
+          amount = Math.min(result.penalty, ctx.caps.perTribute);
+          if (Number(data?.amount) !== amount) fail("failed-precondition", "罰金の額が変わりました。開き直してください。");
+          purpose = "penalty";
+          marks = { othello: result.gameSeq };
+          setContract(ctx, { othelloResult: null });
         } else if (requested === "granted") {
           const plea = pleaView(ctx.contract);
           if (!plea?.granted) fail("failed-precondition", "許された願い出はありません。開き直してください。");
@@ -2729,6 +2852,148 @@ function createTributeService(deps) {
       },
     },
     // 出稼ぎ命令を受けるか。決めるのは預ける側だけで、いつでも変えられる。外すと、まだ果たしていない命令はその場で消える。
+    // 貢ぎオセロを受けるか（設計書15.2）。決めるのは財布。外すと、進行中の対局は罰金なしで終わる。
+    set_othello: {
+      roles: ["payer"],
+      statuses: ["pending", "active"],
+      write(ctx, _extra, data) {
+        const allow = data?.allowOthello === true;
+        if ((ctx.contract.allowOthello === true) === allow) return { ok: true, contract: view(ctx), unchanged: true };
+        const game = othelloView(ctx.contract);
+        setContract(ctx, { allowOthello: allow });
+        pushEvent(ctx, { type: "othello_setting", actor: "payer", allowOthello: allow });
+        if (!allow && game) {
+          setContract(ctx, { othello: null });
+          pushEvent(ctx, { type: "othello_stopped", actor: "payer", gameSeq: game.gameSeq });
+        }
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 対局を始めるかどうか・1枚あたりの額・ハンデ・先手は、管理人だけが決める。財布は個々の対局を断れない。
+    othello_start: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        if (ctx.contract.allowOthello !== true) fail("failed-precondition", "この契約では、貢ぎオセロを始められません。");
+        if (othelloView(ctx.contract)) fail("failed-precondition", "対局は1つずつです。");
+        if (othelloResultView(ctx.contract)) fail("failed-precondition", "前の対局の罰金が、まだ払われていません。");
+        const options = normalizeOthelloStart(data);
+        if (options.error) fail("invalid-argument", options.error);
+        messageRate(ctx);
+        const gameSeq = integer(ctx.contract.othelloSeq, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+        setContract(ctx, {
+          othelloSeq: gameSeq,
+          othello: {
+            gameSeq,
+            board: othelloInitialBoard(options.handicap),
+            turn: options.managerFirst ? "manager" : "payer",
+            rate: options.rate,
+            handicap: options.handicap,
+            startedAt: ctx.now,
+            lastMoveAt: ctx.now,
+            lastMove: null,
+          },
+        });
+        pushEvent(ctx, { type: "othello_start", actor: "manager", gameSeq, rate: options.rate, handicap: options.handicap, managerFirst: options.managerFirst });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    othello_move: {
+      roles: ["manager", "payer"],
+      statuses: ["active"],
+      write(ctx, _extra, data) {
+        const game = othelloView(ctx.contract);
+        if (!game) fail("failed-precondition", "進行中の対局はありません。");
+        if (game.turn !== ctx.role) fail("failed-precondition", "いまは相手の手番です。");
+        if (Number(data?.gameSeq) !== game.gameSeq) fail("failed-precondition", "対局が変わりました。開き直してください。");
+        const played = othelloPlay(game.board, othelloSide(ctx.role), Number(data?.index));
+        if (played.error) fail("invalid-argument", played.error);
+        const note = othelloNote(ctx, data?.note);
+        messageRate(ctx);
+        pushEvent(ctx, {
+          type: "othello_move",
+          actor: ctx.role,
+          gameSeq: game.gameSeq,
+          index: Number(data.index),
+          flipped: played.flipped,
+          corner: played.corner,
+          ...othelloCount(played.board),
+          ...(note ? { note } : {}),
+        });
+        if (note) {
+          if (ctx.role === "payer") setContract(ctx, { lastPayerMessageSeq: ctx.seq });
+          else setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
+        }
+        if (ctx.role === "manager") markManagerActive(ctx);
+        const next = othelloNextTurn(played.board, ctx.role);
+        if (!next.turn) {
+          finishOthello(ctx, game, played.board);
+          return { ok: true, contract: view(ctx) };
+        }
+        if (next.passed) pushEvent(ctx, { type: "othello_pass", actor: "system", gameSeq: game.gameSeq, passed: next.passed });
+        setContract(ctx, {
+          othello: {
+            ...object(ctx.contract.othello),
+            board: played.board,
+            turn: next.turn,
+            lastMoveAt: ctx.now,
+            lastMove: { index: Number(data.index), flipped: played.flipped, role: ctx.role },
+          },
+        });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 降参。その場で負けになり、罰金はその時の差と1枚分の大きい方。
+    othello_resign: {
+      roles: ["payer"],
+      statuses: ["active"],
+      write(ctx) {
+        const game = othelloView(ctx.contract);
+        if (!game) fail("failed-precondition", "進行中の対局はありません。");
+        messageRate(ctx);
+        finishOthello(ctx, game, game.board, { resigned: true });
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 止まった対局を、管理人が罰金なしで終わらせる。
+    othello_end: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        const game = othelloView(ctx.contract);
+        if (!game) fail("failed-precondition", "進行中の対局はありません。");
+        setContract(ctx, { othello: null });
+        pushEvent(ctx, { type: "othello_end", actor: "manager", gameSeq: game.gameSeq });
+        markManagerActive(ctx);
+        return { ok: true, contract: view(ctx) };
+      },
+    },
+    // 払われない罰金を、管理人が同じ額の請求にする（請求は断れない決まりのまま。抵抗はできる）。
+    othello_claim: {
+      roles: ["manager"],
+      statuses: ["active"],
+      write(ctx) {
+        const result = othelloResultView(ctx.contract);
+        if (!result) fail("failed-precondition", "請求できる罰金はありません。");
+        const pending = pendingRequestList(ctx.contract);
+        if (pending.length >= LIMITS.pendingRequests) fail("failed-precondition", "未払いの請求は3件までです。");
+        messageRate(ctx);
+        const requestId = randomHex(8);
+        const amount = Math.min(result.penalty, LIMITS.requestMax);
+        const note = "貢ぎオセロの罰金";
+        setContract(ctx, {
+          othelloResult: null,
+          pendingRequests: {
+            ...object(ctx.contract.pendingRequests),
+            [requestId]: { amount, note, purpose: "penalty", othello: result.gameSeq, createdAt: ctx.now },
+          },
+        });
+        pushEvent(ctx, { type: "request", actor: "manager", requestId, amount, note, purpose: "penalty", othello: result.gameSeq });
+        markManagerActive(ctx);
+        return { ok: true, requestId };
+      },
+    },
     set_work_orders: {
       roles: ["payer"],
       statuses: ["pending", "active"],
@@ -3057,6 +3322,7 @@ function createTributeService(deps) {
         reward: typeof value.reward === "string" && /^[a-z_]{1,24}$/.test(value.reward) ? value.reward : "",
         rewardText: storedRewardText(value),
         granted: value.granted === true,
+        othello: integer(value.othello, 0, Number.MAX_SAFE_INTEGER, 0),
         resisted: integer(value.resisted, 0, LIMITS.resistsPerRequest, 0),
         seal: storedSeal(value.seal),
         ...sealLook(value),
@@ -3105,6 +3371,7 @@ function createTributeService(deps) {
         reward: typeof stored.reward === "string" && /^[a-z_]{1,24}$/.test(stored.reward) ? stored.reward : "",
         rewardText: storedRewardText(stored),
         granted: stored.granted === true,
+        othello: integer(stored.othello, 0, Number.MAX_SAFE_INTEGER, 0),
         resisted: integer(stored.resisted, 0, LIMITS.resistsPerRequest, 0),
       }
       : null;

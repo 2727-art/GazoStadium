@@ -25,6 +25,98 @@ export const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
 // 復唱の回数。サーバーの RECITE_TARGETS と同じ。
 export const RECITE_TARGETS = Object.freeze([1, 3, 5]);
 
+// 貢ぎオセロ（設計書15.2。サーバーの tribute-rules.js と同じ）。盤は64文字（"." 空き・"M" 管理人の石・"P" 財布の石＝Payのコイン）。左上から右へ、上の段から並べる。
+// 運の要素は入れない。罰金は終わった時の石の差 × 1枚あたりの額（財布の1回の限度額まで）。
+export const OTHELLO_RATES = Object.freeze([1, 5, 10]);
+export const OTHELLO_HANDICAPS = Object.freeze(["none", "manager_corner", "payer_corner"]);
+const OTHELLO_DIRECTIONS = Object.freeze([[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]);
+export const OTHELLO_CORNERS = Object.freeze([0, 7, 56, 63]);
+
+export function othelloSide(role) {
+  return role === "manager" ? "M" : "P";
+}
+
+// 始めの盤。ハンデは左上の角（a1）を、管理人が持って始めるか、財布にあげるか。
+export function othelloInitialBoard(handicap = "none") {
+  const cells = Array(64).fill(".");
+  cells[27] = "M";
+  cells[36] = "M";
+  cells[28] = "P";
+  cells[35] = "P";
+  if (handicap === "manager_corner") cells[0] = "M";
+  if (handicap === "payer_corner") cells[0] = "P";
+  return cells.join("");
+}
+
+export function othelloBoardValid(board) {
+  return typeof board === "string" && /^[.MP]{64}$/.test(board);
+}
+
+// その手でひっくり返る石の位置。打てない手は空。
+export function othelloFlips(board, side, index) {
+  if (!othelloBoardValid(board) || !Number.isInteger(index) || index < 0 || index > 63 || board[index] !== ".") return [];
+  const other = side === "M" ? "P" : "M";
+  const row = Math.floor(index / 8);
+  const column = index % 8;
+  const flips = [];
+  for (const [dr, dc] of OTHELLO_DIRECTIONS) {
+    const line = [];
+    let r = row + dr;
+    let c = column + dc;
+    while (r >= 0 && r < 8 && c >= 0 && c < 8 && board[r * 8 + c] === other) {
+      line.push(r * 8 + c);
+      r += dr;
+      c += dc;
+    }
+    if (line.length && r >= 0 && r < 8 && c >= 0 && c < 8 && board[r * 8 + c] === side) flips.push(...line);
+  }
+  return flips;
+}
+
+export function othelloMoves(board, side) {
+  const moves = [];
+  for (let index = 0; index < 64; index += 1) {
+    if (othelloFlips(board, side, index).length) moves.push(index);
+  }
+  return moves;
+}
+
+export function othelloPlay(board, side, index) {
+  const flips = othelloFlips(board, side, index);
+  if (!flips.length) return { error: "そこには打てません。" };
+  const cells = board.split("");
+  cells[index] = side;
+  for (const flip of flips) cells[flip] = side;
+  return { board: cells.join(""), flipped: flips.length, corner: OTHELLO_CORNERS.includes(index) };
+}
+
+export function othelloCount(board) {
+  let manager = 0;
+  let payer = 0;
+  for (const cell of othelloBoardValid(board) ? board : "") {
+    if (cell === "M") manager += 1;
+    else if (cell === "P") payer += 1;
+  }
+  return { manager, payer, empty: 64 - manager - payer };
+}
+
+// 打った後の手番。相手が打てなければ同じ側が続け（相手はパス）、どちらも打てなければ終局（空）。
+export function othelloNextTurn(board, movedRole) {
+  const other = movedRole === "manager" ? "payer" : "manager";
+  if (othelloMoves(board, othelloSide(other)).length) return { turn: other, passed: "" };
+  if (othelloMoves(board, othelloSide(movedRole)).length) return { turn: movedRole, passed: other };
+  return { turn: "", passed: "" };
+}
+
+// 決着。財布が負けた時だけ罰金。降参は、その時の差と1枚分の大きい方。
+export function othelloOutcome(board, rate, { resigned = false } = {}) {
+  const { manager, payer } = othelloCount(board);
+  const diff = manager - payer;
+  const result = resigned || diff > 0 ? "lost" : diff < 0 ? "won" : "draw";
+  const stones = result === "lost" ? Math.max(diff, 1) : 0;
+  return { result, manager, payer, stones, penalty: stones * (OTHELLO_RATES.includes(Number(rate)) ? Number(rate) : 0) };
+}
+
 export const LIMITS = Object.freeze({
   personaName: 16,
   intro: 60,
@@ -289,6 +381,65 @@ export const STYLE_REQUEST_NOTES = Object.freeze({
   ]),
 });
 
+// 貢ぎオセロの一手に添える一言の候補（設計書15.2）。場面（角を取った・ひっくり返した・財布がパスした・終局）ごとに、
+// 管理人が選んだ型ごと・強さごとに用意する（型を選んでいない管理人には、型のない一言）。請求の一言と同じ決まりで、性的な言葉は使わない。
+export const OTHELLO_SITUATIONS = Object.freeze([
+  Object.freeze({ id: "corner", label: "角を取った" }),
+  Object.freeze({ id: "flip", label: "ひっくり返した" }),
+  Object.freeze({ id: "pass", label: "財布がパスした" }),
+  Object.freeze({ id: "finish", label: "終局" }),
+]);
+const othelloSet = (corner, flip, pass, finish) => Object.freeze({ corner: Object.freeze(corner), flip: Object.freeze(flip), pass: Object.freeze(pass), finish: Object.freeze(finish) });
+// 並びは [甘め, 普通, 辛口]。
+export const OTHELLO_LINES = Object.freeze({
+  "": othelloSet(
+    ["角、もらうね。", "角はいただき。", "角も取れないの？"],
+    ["私の色が増えてきたね。", "また何枚か奪ったよ。", "ほら、また奪われた。"],
+    ["打てないなら、待っててね。", "打つ場所、ないみたい。", "パスしかできないの？"],
+    ["おしまい。よく頑張ったね。", "終局。罰金の時間。", "負け。約束どおり払って。"],
+  ),
+  insight: othelloSet(
+    ["角はいただきますね。分かっていたでしょう。", "その角、空けておくと思っていました。", "角を明け渡すのも、想定どおりです。"],
+    ["少しずつ、私の色になっていきますね。", "その数だけ、あなたの負けが見えます。", "ひっくり返されるのも、読みどおりです。"],
+    ["打てませんね。そのまま待っていなさい。", "打つ場所、もうありませんよ。", "打てないのは、読みが浅いからです。"],
+    ["よく頑張りました。結果はこのとおりです。", "数えるまでもありませんね。", "最初から、こうなると分かっていました。"],
+  ),
+  manage: othelloSet(
+    ["角は管理人のもの、覚えておこうね。", "角はこちらで預かります。", "角まで管理される自覚を持ちなさい。"],
+    ["ひっくり返った分、きちんと数えておこうね。", "奪った枚数は記録しておきます。", "一枚残らず、こちらで管理する。"],
+    ["今は待つ番。ちゃんと待てるよね。", "打てない時は、待つのがルール。", "打てないなら黙って待て。"],
+    ["最後までやり切れたね。罰金はきちんと。", "終局。罰金の約束は守ること。", "負けは負け。約束どおり払いなさい。"],
+  ),
+  tease: othelloSet(
+    ["角、もーらいっ♡", "角あけといてくれたの？やさしー♡", "角取られて固まってるの、丸見え♡"],
+    ["くるくる私の色になってくね♡", "また奪われちゃったね♡", "ひっくり返されるの、好きでしょ♡"],
+    ["打てないの？かわいそ♡", "パスしかできないんだ♡", "打つとこないの、ざまぁないね♡"],
+    ["おつかれさま、負けちゃったね♡", "ほら、私の色でいっぱい♡", "最初から勝てると思ってた？♡"],
+  ),
+  pamper: othelloSet(
+    ["角はもらうね。よく見てたよ。", "角、取っちゃった。ちゃんと見てる？", "角くらいでへこまないの。"],
+    ["たくさん返されても、えらいよ。", "返された分、あとで褒めてあげる。", "泣かないの。次の一手、待ってる。"],
+    ["打てなくても大丈夫。待っててね。", "休憩だね。待っててあげる。", "打てないなら、お礼でも言ってて。"],
+    ["最後まで打てて、えらかったね。", "よく頑張りました。お礼は？", "来たことは褒めてあげる。罰金は別。"],
+  ),
+  aloof: othelloSet(
+    ["角、もらっとくね。", "角。それだけ。", "角ひとつで騒がないで。"],
+    ["ふーん、返っちゃったね。", "どうでもいいけど、私の色。", "何枚でも、興味ない。"],
+    ["打てないなら、待ってて。", "パス？あっそ。", "打てないなら、静かにしてて。"],
+    ["終わり。気が向いたら、また相手してあげる。", "終わったね。罰金だけ置いてって。", "勝ち負けより、罰金のほうが大事。"],
+  ),
+});
+const OTHELLO_TONE_INDEX = Object.freeze({ sweet: 0, normal: 1, harsh: 2 });
+
+// 管理人の一言の候補。選んだ型の分を、契約の上限までの強さで、強い順に出す（型がなければ型のない一言）。
+export function othelloLinesFor({ styles = [], tone = "normal", situation = "flip", ngWords = [] } = {}) {
+  const chosen = normalizeStyles(styles);
+  const sets = chosen.length ? chosen.map((id) => OTHELLO_LINES[id]) : [OTHELLO_LINES[""]];
+  const tones = tonesUpTo(tone).reverse();
+  const lines = sets.flatMap((set) => tones.map((key) => set[situation]?.[OTHELLO_TONE_INDEX[key]]).filter(Boolean));
+  return [...new Set(lines)].filter((line) => !contractTextProblem(line, { role: "manager", ngWords }));
+}
+
 // 請求のシートに出す一言の候補。名目の一言を先に、管理人の型の一言をその後に並べる。
 // 強さの上限・言われたくない言葉・契約後の会話の決まりで絞る。
 export function requestNotesFor({ purpose = "", tone = "normal", styles = [], ngWords = [] } = {}) {
@@ -342,8 +493,11 @@ export const KIND_LABELS = Object.freeze({
 export const GRANTED_LABEL = "願い出て許された献上";
 
 // 献上の種類の表示。願い出て許された献上は、記録の上は無言の献上（granted の印）。
+export const OTHELLO_PENALTY_LABEL = "貢ぎオセロの罰金";
+
 export function tributeKindLabel(record) {
   if (record?.granted === true) return GRANTED_LABEL;
+  if (Number(record?.othello) > 0) return OTHELLO_PENALTY_LABEL;
   return KIND_LABELS[record?.kind] || "献上";
 }
 
@@ -645,6 +799,43 @@ export function extensionView(raw) {
   return { days, createdAt: integer(extension.createdAt) };
 }
 
+// 貢ぎオセロ（設計書15.2）。サーバーの othelloView・othelloResultView・othelloRecordView と同じ。
+export function othelloView(raw) {
+  const game = raw?.othello && typeof raw.othello === "object" ? raw.othello : null;
+  if (!game || !othelloBoardValid(game.board) || !["manager", "payer"].includes(game.turn)) return null;
+  const last = game.lastMove && typeof game.lastMove === "object" ? game.lastMove : null;
+  return {
+    gameSeq: integer(game.gameSeq),
+    board: game.board,
+    turn: game.turn,
+    rate: OTHELLO_RATES.includes(Number(game.rate)) ? Number(game.rate) : OTHELLO_RATES[0],
+    handicap: OTHELLO_HANDICAPS.includes(game.handicap) ? game.handicap : "none",
+    startedAt: integer(game.startedAt),
+    lastMoveAt: integer(game.lastMoveAt),
+    lastMove: last ? { index: integer(last.index, 0, 63), flipped: integer(last.flipped, 0, 64), role: last.role === "manager" ? "manager" : "payer" } : null,
+    counts: othelloCount(game.board),
+  };
+}
+
+export function othelloResultView(raw) {
+  const result = raw?.othelloResult && typeof raw.othelloResult === "object" ? raw.othelloResult : null;
+  const penalty = integer(result?.penalty, 0, 1_000_000);
+  if (!result || penalty <= 0) return null;
+  return {
+    gameSeq: integer(result.gameSeq),
+    penalty,
+    stones: integer(result.stones, 0, 64),
+    rate: integer(result.rate, 0, 1_000),
+    resigned: result.resigned === true,
+    finishedAt: integer(result.finishedAt),
+  };
+}
+
+export function othelloRecordView(value) {
+  const record = value && typeof value === "object" ? value : {};
+  return { played: integer(record.played), lost: integer(record.lost), won: integer(record.won), drawn: integer(record.drawn), streak: integer(record.streak) };
+}
+
 // お預けと願い出。サーバーの holdView・pleaView と同じ。
 export function holdView(raw) {
   const hold = raw?.hold && typeof raw.hold === "object" ? raw.hold : null;
@@ -735,6 +926,10 @@ export function viewContract(contract, uid, now = Date.now()) {
     allowScreenshots: raw.allowScreenshots === true,
     allowWorkOrders: raw.allowWorkOrders === true,
     allowHolds: raw.allowHolds === true,
+    allowOthello: raw.allowOthello === true,
+    othello: status === "active" ? othelloView(raw) : null,
+    othelloResult: status === "active" ? othelloResultView(raw) : null,
+    othelloRecord: othelloRecordView(raw.othelloRecord),
     entryFee: integer(raw.entryFee, 0, 1_000),
     renewal: raw.renewal === true,
     createdAt: integer(raw.createdAt),
@@ -1154,6 +1349,9 @@ export const CONTRACT_TODOS = Object.freeze([
   Object.freeze({ kind: "granted", label: "許された献上", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.plea?.granted ? 1 : 0) }),
   Object.freeze({ kind: "recite_done", label: "復唱の確認", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.reciteOrder?.done ? 1 : 0) }),
   Object.freeze({ kind: "extend", label: "延長の申し込み", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.extension ? 1 : 0) }),
+  // 貢ぎオセロ（設計書15.2）: 自分の手番と、財布の罰金。
+  Object.freeze({ kind: "othello_turn", label: "オセロの手番", count: (contract) => (contract.status === "active" && contract.othello && contract.othello.turn === contract.role ? 1 : 0) }),
+  Object.freeze({ kind: "othello_penalty", label: "オセロの罰金", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.othelloResult ? 1 : 0) }),
   Object.freeze({ kind: "recite", label: "復唱", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reciteOrder && !contract.reciteOrder.done ? 1 : 0) }),
   Object.freeze({ kind: "withdraw", label: "使用許可の申請", count: (contract) => (contract.role === "manager" && contract.status === "active" && contract.escrowWithdrawRequest ? 1 : 0) }),
   Object.freeze({ kind: "report", label: "残高報告の依頼", count: (contract) => (contract.role === "payer" && contract.status === "active" && contract.reportRequested ? 1 : 0) }),

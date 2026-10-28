@@ -626,7 +626,7 @@ Pay 0 でも差し出せるもの。Pay を動かさないので、番付・貢�
 
 ## 15. 競わせ方の見直しと貢ぎオセロ（設計、2026年10月）
 
-Status: 第1段を実装した（仕えた日数の番付と応援欄の並び、15.1）。2026-10-28 に `db48bf6` で本番に公開した（記録は `functions/docs/TRIBUTE_SERVED_DAYS_RELEASE.md`）。第2段・第3段は設計（未実装）。採用はユーザーが決めた（2026-10-28）。
+Status: 第1段を実装した（仕えた日数の番付と応援欄の並び、15.1）。2026-10-28 に `db48bf6` で本番に公開した（記録は `functions/docs/TRIBUTE_SERVED_DAYS_RELEASE.md`）。第2段（貢ぎオセロ）を実装した（15.2、キャッシュキー `ranch-othello-v1`）。第3段は設計（未実装）。採用はユーザーが決めた（2026-10-28）。
 
 スタジアムは互いを競わせて続けてもらう場として作った。財布側と管理人側の note の分析（`functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md`・`TRIBUTE_MANAGER_PSYCHOLOGY.md`）を照らすと、競争は向け先によって効き方が逆になる。
 
@@ -674,7 +674,7 @@ Status: 第1段を実装した（仕えた日数の番付と応援欄の並び�
   - 契約の設定「貢ぎオセロを受ける」（`allowOthello`）。財布が申し込みとスレッドの設定で切り替える。既定は「受ける」。この設定より前の契約は「受けない」として扱う（お預けと同じ）。
   - その範囲の中で、始めるかどうか・1枚あたりの額・ハンデ・先手は、管理人だけが決める（`othello_start`）。財布は個々の対局を断れない。
   - 財布には出口を2つ残す。
-    - 降参（`othello_resign`）: その場で負けになる。
+    - 降参（`othello_resign` の操作）: その場で負けになる。
     - 設定を「受けない」に変える: 進行中の対局は罰金なしで終わる。管理人には「財布が貢ぎオセロを止めた」と出る。
 - 始める時に管理人が決めるもの:
   - 1枚あたりの額: 1／5／10 Pay。
@@ -706,10 +706,22 @@ Status: 第1段を実装した（仕えた日数の番付と応援欄の並び�
   - Pay の新しい発行。
   - 手番を急かす期限。
   - 財布どうしの戦績の比較。
-- データ（予定）:
-  - 契約の `allowOthello`、`othello`（`gameSeq`・`board`（64文字）・`turn`・`handicap`・`rate`・`managerFirst`・`startedAt`・`lastMoveAt`）、`othelloSeq`。
-  - 組の `othelloRecord`（`played`・`lost`・`won`・`streak`）。
-  - 出来事 `othello_start`・`othello_move`（手・ひっくり返した数・一言）・`othello_pass`・`othello_finish`（結果・差・罰金）・`othello_resign`・`othello_end`・`othello_stopped`。
+- データ（実装）:
+  - 契約:
+    - `allowOthello`（申し込みで選ぶ。古い画面と古い契約は `false`）。
+    - `othello`（進行中の対局。`gameSeq`・`board`（64文字。`M` が管理人、`P` が財布、`.` が空き）・`turn`・`handicap`・`rate`・`startedAt`・`lastMoveAt`・`lastMove`（`index`・`flipped`・`role`））。先手は始めた時の `turn` で決まるので、別には持たない。
+    - `othelloSeq`（何局目か）。
+    - `othelloResult`（払われていない罰金。`gameSeq`・`penalty`・`stones`・`rate`・`resigned`・`finishedAt`）。罰金がない決着では空。
+    - `othelloRecord`（組の戦績の写し。申し込みを受けた時に組から写す）。
+  - 組の `othelloRecord`（`played`・`lost`・`won`・`drawn`・`streak`）。`streak` は連敗の数で、負け以外で0に戻る。
+  - 操作: `set_othello`（財布）・`othello_start`・`othello_end`・`othello_claim`（管理人）・`othello_move`（手番の側）・`othello_resign`（財布）。罰金を差し出すのは献上（`tribute`）の `kind: "othello"`。
+  - 出来事:
+    - `othello_setting`（財布が設定を変えた）・`othello_stopped`（設定を外して対局が終わった）。
+    - `othello_start`（額・ハンデ・先手）・`othello_move`（手・ひっくり返した数・角か・その後の石の数・一言）・`othello_pass`。
+    - `othello_finish`（結果・石の数・差・罰金・降参か・最後の盤面・戦績）。降参は別の出来事にせず、`othello_finish` の `resigned` で表す。
+    - `othello_end`（管理人が罰金なしで終わらせた）。
+  - 献上と請求の記録に `othello`（何局目の罰金か）の印。種類の表示は「貢ぎオセロの罰金」。
+  - スレッドのやることに「オセロの手番」（手番の側）と「オセロの罰金」（財布）を足した。
 
 ### 15.3 出稼ぎ命令の勝負の型（第3段）
 

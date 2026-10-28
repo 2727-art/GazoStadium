@@ -37,6 +37,9 @@ import {
   MANAGER_STYLES,
   MAX_MANAGER_STYLES,
   MAX_SEALS,
+  OTHELLO_HANDICAPS,
+  OTHELLO_RATES,
+  OTHELLO_SITUATIONS,
   PURPOSES,
   RECEIVABLE_KINDS,
   RECITE_TARGETS,
@@ -85,6 +88,14 @@ import {
   sealWordProblem,
   wordOfferingProblem,
   normalizeStyles,
+  othelloCount,
+  othelloInitialBoard,
+  othelloLinesFor,
+  othelloMoves,
+  othelloNextTurn,
+  othelloOutcome,
+  othelloPlay,
+  othelloSide,
   requestNotesFor,
   styleTemplatesFor,
   stylesLabel,
@@ -114,14 +125,15 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1";
 import {
   SHARE_TEXT,
   canvasToPngBlob,
   renderExcerptImage,
+  renderOthelloImage,
   renderReceiptImage,
   renderRecruitImage,
-} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1";
+} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1";
 import {
   CARD_FRAMES,
   FRAME_PALETTES,
@@ -989,6 +1001,7 @@ function renderApply() {
       <small>管理人のスレッドに出て、言葉選びの手がかりになります。ご褒美にも使われます。契約の「言われたい言葉」でいつでも変えられます。</small></label>
     <label class="tribute-check"><input type="checkbox" name="allowReportRequests" ${checked("allowReportRequests")} /><span>残高報告を求められてもよい</span></label>
     <label class="tribute-check is-hold"><input type="checkbox" name="allowHolds" ${checked("allowHolds", true)} /><span>お預けを受ける<small>管理人が「お預け」にすると、自分からは差し出せなくなり、「貢がせてください」と願い出て許されると1回だけ差し出せます。請求に応えるのはいつもどおりです。契約の「お預けの設定」でいつでも外せます。</small></span></label>
+    <label class="tribute-check is-othello"><input type="checkbox" name="allowOthello" ${checked("allowOthello", true)} /><span>貢ぎオセロを受ける<small>管理人と交互に打つオセロです。始めるかどうかと1枚あたりの額は管理人が決め、終わった時の石の差が罰金になります（1回の限度額まで）。降参でき、契約の「貢ぎオセロの設定」で外すと進行中の対局は罰金なしで終わります。</small></span></label>
     <label class="tribute-check is-work"><input type="checkbox" name="allowWorkOrders" ${checked("allowWorkOrders", true)} /><span>出稼ぎ命令を受ける<small>管理人が「1on1を○回完走して稼いでこい」と命じられます。命令ではPayは動かず、期限も罰もありません。命令の後に完走した数を、あなたが報告します。契約の「出稼ぎの設定」でいつでも外せます。</small></span></label>
     <label class="tribute-check"><input type="checkbox" name="rankOptIn" ${checked("rankOptIn")} /><span>この管理人の番付に財布名で載る</span></label>
     <label class="tribute-check is-consent"><input type="checkbox" name="acceptNoDecline" required /><span>請求は断れず、払うか解約するかであることを確かめました<small>限度額を超える請求は、払えないまま残ります。限度額と解約は、いつでも自分で設定できます。</small></span></label>
@@ -1536,6 +1549,7 @@ function renderTally(view) {
   if (view.allowWorkOrders) parts.push('<span class="is-work">出稼ぎ命令 可</span>');
   if (view.hold) parts.push('<span class="is-hold">お預け中</span>');
   else if (view.allowHolds) parts.push('<span class="is-hold-ok">お預け 可</span>');
+  if (view.othelloRecord?.played) parts.push(`<span class="is-othello">オセロ ${escapeHtml(othelloRecordText(view.othelloRecord))}</span>`);
   return parts.length ? `<p class="tribute-tally">${parts.join("")}</p>` : "";
 }
 
@@ -1557,7 +1571,7 @@ function renderEvent(event, view, statuses) {
         <span class="tribute-bubble">${escapeHtml(event.text)}</span>${mine && view.role === "payer" && view.peerReadSeq >= Number(event.seq) ? '<span class="tribute-read">既読</span>' : ""}${time}</li>`;
     case "applied":
       // 限度額は出さない（管理人も読む出来事のため）。
-      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_CEILING_LABELS[event.tone] || "普通まで")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}${event.allowWorkOrders ? " ・ 出稼ぎ命令 可" : ""}${event.allowHolds ? " ・ お預け 可" : ""}`);
+      return system(`申し込み：${Number(event.durationDays)}日 ・ 言葉は${escapeHtml(TONE_CEILING_LABELS[event.tone] || "普通まで")}${event.entryFee ? ` ・ 入場料 ${escapeHtml(formatPay(event.entryFee))}` : ""}${event.allowSexualPurposes ? " ・ 性的な名目 可" : ""}${event.allowScreenshots ? " ・ スクショ掲載 可" : ""}${event.allowWorkOrders ? " ・ 出稼ぎ命令 可" : ""}${event.allowHolds ? " ・ お預け 可" : ""}${event.allowOthello ? " ・ 貢ぎオセロ 可" : ""}`);
     case "accepted": {
       const collarNo = Number(event.collarNo) || 0;
       const collar = collarNo
@@ -1637,6 +1651,31 @@ function renderEvent(event, view, statuses) {
       return system(event.reason === "purpose"
         ? "性的な名目の許可が外れたので、性的な言葉の復唱を取り下げました。"
         : `${escapeHtml(managerName)}が復唱を取り下げました。`);
+    case "othello_setting":
+      return system(`${escapeHtml(payerName)}が貢ぎオセロを${event.allowOthello ? "受ける" : "受けない"}ようにしました。`);
+    case "othello_start":
+      return system(`${escapeHtml(managerName)}が貢ぎオセロを始めました：1枚 ${escapeHtml(formatPay(event.rate))}・${escapeHtml(OTHELLO_HANDICAP_LABELS[event.handicap] || "ハンデなし")}・${event.managerFirst ? "管理人" : "財布"}が先手`, "is-othello");
+    case "othello_move": {
+      const who = event.actor === "manager" ? managerName : payerName;
+      const flipped = event.actor === "manager" ? `${Number(event.flipped)}枚奪った` : `${Number(event.flipped)}枚取り返した`;
+      const move = `<span class="tribute-othello-move">${escapeHtml(who)}が ${othelloCellName(Number(event.index))} に打った・${flipped}${event.corner ? "（角）" : ""}・財布 ${Number(event.payer)}枚／${escapeHtml(managerName)} ${Number(event.manager)}枚</span>`;
+      return event.note
+        ? `<li class="tribute-event is-message is-othello ${mine ? "is-mine" : "is-theirs"} is-${event.actor}">${move}<span class="tribute-bubble">${escapeHtml(event.note)}</span>${time}</li>`
+        : `<li class="tribute-event is-system is-othello"><p>${move}</p>${time}</li>`;
+    }
+    case "othello_pass":
+      return system(`${escapeHtml(event.passed === "manager" ? managerName : payerName)}は打てる所がないので、パスしました。`, "is-othello");
+    case "othello_finish": {
+      const verdict = event.result === "lost" ? `${Number(event.stones)}枚差で財布の負け` : event.result === "won" ? "財布の勝ち" : "引き分け";
+      const save = view.role === "payer"
+        ? `<button class="tribute-save-image" type="button" data-t="othello-share" data-seq="${Number(event.seq)}">画像で保存</button>`
+        : "";
+      return `<li class="tribute-event is-othello-finish"><div class="tribute-othello-finish"><span class="tribute-eyebrow">貢ぎオセロ ${event.resigned ? "降参" : "決着"}</span><strong>${escapeHtml(verdict)}</strong><small>財布 ${Number(event.payer)}枚／${escapeHtml(managerName)} ${Number(event.manager)}枚${Number(event.penalty) > 0 ? `・罰金 ${escapeHtml(formatPay(event.penalty))}` : "・罰金なし"}${othelloRecordText(event.record) ? `・${escapeHtml(othelloRecordText(event.record))}` : ""}</small></div>${save}${time}</li>`;
+    }
+    case "othello_end":
+      return system(`${escapeHtml(managerName)}が対局をやめました（罰金なし）。`, "is-othello");
+    case "othello_stopped":
+      return system(`${escapeHtml(payerName)}が貢ぎオセロを止めました。進行中の対局は罰金なしで終わりました。`, "is-othello");
     case "extend_request":
       return system(`${escapeHtml(payerName)}が ${Number(event.days)}日の延長を申し込みました。`, "is-caps");
     case "extend_withdrawn":
@@ -1903,6 +1942,7 @@ function renderThreadActionButtons(view) {
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="caps">限度額を変える</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="want-words">言われたい言葉</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="holds-settings">お預けの設定</button>
+      <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="othello-settings">貢ぎオセロの設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="purposes">名目の設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="screenshots">スクショの設定</button>
       <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="work-settings">出稼ぎの設定</button>
@@ -1943,6 +1983,86 @@ function renderGiveButton(view) {
     return `<button class="button button-primary tribute-give-button" type="button" data-t="give-granted">許された献上を差し出す（${escapeHtml(formatPay(view.plea.amount))}）</button>`;
   }
   return `<button class="button button-primary tribute-give-button" type="button" data-t="sheet" data-sheet="give" ${view.allowance ? "" : "disabled"}>差し出す${view.allowance ? "" : "（今日の枠なし）"}</button>`;
+}
+
+// 貢ぎオセロ（設計書15.2）。財布の石は Pay のコインで、ひっくり返されるたびに管理人の色になる。
+// 始めるかどうかは管理人だけが決め、財布は契約で受けるかを選ぶ。手番の期限はない。
+const OTHELLO_HANDICAP_LABELS = Object.freeze({ none: "ハンデなし", manager_corner: "管理人が角を1つ持って始める", payer_corner: "財布に角を1つあげる" });
+const OTHELLO_COLUMNS = "abcdefgh";
+
+function othelloCellName(index) {
+  return `${OTHELLO_COLUMNS[index % 8]}${Math.floor(index / 8) + 1}`;
+}
+
+function othelloRecordText(record) {
+  if (!record?.played) return "";
+  return `通算${Number(record.played)}戦${Number(record.lost)}敗${Number(record.streak) > 1 ? `（${Number(record.streak)}連敗中）` : ""}`;
+}
+
+// 財布が差し出す罰金。財布の1回の限度額まで（限度額は財布の画面にだけある）。
+function othelloPayable(view, result) {
+  const cap = Number(view?.caps?.perTribute) || 0;
+  return cap > 0 ? Math.min(result.penalty, cap) : result.penalty;
+}
+
+function renderOthelloNoteChips(view) {
+  const situation = OTHELLO_SITUATIONS.some((entry) => entry.id === state.thread.othelloSituation) ? state.thread.othelloSituation : "flip";
+  const lines = othelloLinesFor({ styles: state.profile?.card?.styles, tone: view.tone, situation, ngWords: view.ngWords });
+  return `<div class="tribute-othello-situations" role="group" aria-label="一言の場面">${OTHELLO_SITUATIONS.map((entry) => `<button type="button" data-t="othello-situation" data-situation="${entry.id}" aria-pressed="${entry.id === situation}">${escapeHtml(entry.label)}</button>`).join("")}</div>
+    <div class="tribute-note-chips">${lines.map((line) => `<button type="button" data-t="othello-note-pick" data-text="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div>`;
+}
+
+function renderOthello(view) {
+  if (view.status !== "active" || state.thread.demo) return "";
+  const manager = view.role === "manager";
+  const record = othelloRecordText(view.othelloRecord);
+  const game = view.othello;
+  const result = view.othelloResult;
+  if (!game) {
+    if (result) {
+      const payable = othelloPayable(view, result);
+      return `<section class="tribute-othello is-result">
+        <span class="tribute-eyebrow">貢ぎオセロ ${result.resigned ? "降参" : "決着"}</span>
+        <p><b>${Number(result.stones)}枚差</b> × ${escapeHtml(formatPay(result.rate))} ＝ 罰金 <b>${escapeHtml(formatPay(result.penalty))}</b>${record ? ` <small>${escapeHtml(record)}</small>` : ""}</p>
+        ${manager
+          ? `<p class="tribute-note">財布が差し出すのを待っています。払われない時は、同じ額の請求にできます。</p>
+            <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="othello-claim">罰金を請求する</button><button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="recite-order">復唱させる</button></div>`
+          : `<button class="button button-primary tribute-give-button" type="button" data-t="give-othello">罰金 ${escapeHtml(formatPay(payable))} を差し出す</button>
+            ${payable < result.penalty ? `<p class="tribute-note">1回の限度額までを差し出します（この額は管理人には見えません）。</p>` : ""}`}
+      </section>`;
+    }
+    if (!view.allowOthello) return "";
+    if (manager) {
+      return `<section class="tribute-othello is-idle"><span class="tribute-eyebrow">貢ぎオセロ</span>
+        <p>財布の石は Pay のコインです。終わった時の石の差 × 1枚あたりの額が罰金になります（財布の1回の限度額まで）。${record ? ` ${escapeHtml(record)}` : ""}</p>
+        <button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="othello-start">貢ぎオセロを始める</button></section>`;
+    }
+    return record ? `<section class="tribute-othello is-idle"><span class="tribute-eyebrow">貢ぎオセロ</span><p>${escapeHtml(record)}</p></section>` : "";
+  }
+  const myTurn = game.turn === view.role;
+  const playable = myTurn ? new Set(othelloMoves(game.board, othelloSide(view.role))) : new Set();
+  const cells = game.board.split("").map((cell, index) => {
+    const canPlay = playable.has(index);
+    const owner = cell === "M" ? " is-manager" : cell === "P" ? " is-payer" : "";
+    const label = cell === "M" ? "管理人の石" : cell === "P" ? "財布のコイン" : canPlay ? "打てる" : "空き";
+    return `<button type="button" class="tribute-othello-cell${owner}${canPlay ? " is-playable" : ""}${game.lastMove?.index === index ? " is-last" : ""}" ${canPlay ? `data-t="othello-move" data-index="${index}"` : "disabled"} aria-label="${othelloCellName(index)} ${label}"></button>`;
+  }).join("");
+  const last = game.lastMove
+    ? game.lastMove.role === "manager"
+      ? manager ? `${game.lastMove.flipped}枚奪った` : `${game.lastMove.flipped}枚奪われた`
+      : manager ? `${game.lastMove.flipped}枚取り返された` : `${game.lastMove.flipped}枚取り返した`
+    : "";
+  const turnText = myTurn ? "あなたの手番" : manager ? "財布の手番" : `${view.manager.personaName}の手番`;
+  return `<section class="tribute-othello" style="--sigil:${sigilColor(view.manager)}">
+    <div class="tribute-othello-head"><span class="tribute-eyebrow">貢ぎオセロ</span><b>${escapeHtml(turnText)}</b><small>1枚 ${escapeHtml(formatPay(game.rate))}・${escapeHtml(OTHELLO_HANDICAP_LABELS[game.handicap] || "")}</small></div>
+    <div class="tribute-othello-score"><span class="is-payer">財布 ${Number(game.counts.payer)}枚</span><span class="is-manager">${escapeHtml(view.manager.personaName)} ${Number(game.counts.manager)}枚</span>${last ? `<em>${escapeHtml(last)}</em>` : ""}</div>
+    <div class="tribute-othello-board" role="group" aria-label="貢ぎオセロの盤">${cells}</div>
+    ${myTurn ? `<label class="tribute-field"><span>一手に添える一言（任意・${LIMITS.requestNote}文字まで）</span><input data-othello-note maxlength="${LIMITS.requestNote}" autocomplete="off" /></label>${manager ? renderOthelloNoteChips(view) : ""}` : `<p class="tribute-note">相手の手番です。手番に期限はありません。</p>`}
+    <div class="tribute-row">${manager
+      ? '<button class="button button-ghost button-small" type="button" data-t="othello-end">対局をやめる（罰金なし）</button>'
+      : '<button class="button button-ghost button-small" type="button" data-t="sheet" data-sheet="othello-resign">降参する</button>'}</div>
+    ${record ? `<small class="tribute-othello-record">${escapeHtml(record)}</small>` : ""}
+  </section>`;
 }
 
 // 復唱の欄。財布には言わせたい一言と回数、管理人には進み具合と、果たした復唱の確認を出す。
@@ -2200,6 +2320,7 @@ function renderThread() {
     <div id="tributeHold">${renderHold(view)}</div>
     <div id="tributeRecite">${renderRecite(view)}</div>
     <div id="tributeExtension">${renderExtension(view)}</div>
+    <div id="tributeOthello">${renderOthello(view)}</div>
     <div id="tributeThreadHistory">${renderThreadHistory()}</div>
     <ol class="tribute-events" id="tributeThreadEvents" aria-live="polite">${renderThreadEvents(view)}</ol>
     ${view.status === "active" && !thread.demo ? `<form class="tribute-composer" data-form="message">
@@ -2246,6 +2367,8 @@ function updateThreadParts() {
   if (recitePanel) recitePanel.innerHTML = renderRecite(view);
   const extensionPanel = document.querySelector("#tributeExtension");
   if (extensionPanel) extensionPanel.innerHTML = renderExtension(view);
+  const othelloPanel = document.querySelector("#tributeOthello");
+  if (othelloPanel) othelloPanel.innerHTML = renderOthello(view);
   const wantChips = document.querySelector("#tributeWantChips");
   if (wantChips) wantChips.innerHTML = renderWantChips(view);
   if (history) history.innerHTML = renderThreadHistory();
@@ -2286,7 +2409,7 @@ function renderSheet() {
         const fee = tributeFee(sheet.amount);
         const balanceAfter = state.walletBalance === null ? null : state.walletBalance - sheet.amount;
         return wrap("差し出す", `<div class="tribute-confirm">
-          <p class="tribute-eyebrow">${sheet.granted ? "願い出て許された献上" : sheet.requestId ? "請求に応える" : "無言の献上"}</p>
+          <p class="tribute-eyebrow">${sheet.othello ? "貢ぎオセロの罰金" : sheet.granted ? "願い出て許された献上" : sheet.requestId ? "請求に応える" : "無言の献上"}</p>
           ${sheet.purpose ? `<p class="tribute-confirm-purpose">${purposeTag(sheet.purpose, view)}として</p>` : ""}
           <strong class="tribute-confirm-amount">${escapeHtml(formatPay(sheet.amount))}</strong>
           <dl class="tribute-facts">
@@ -2297,7 +2420,7 @@ function renderSheet() {
           </dl>
           <button type="button" class="tribute-hold" data-tribute-hold ${state.busy ? "disabled" : ""}><span class="tribute-hold-fill" aria-hidden="true"></span><span class="tribute-hold-label">長押しで差し出す</span></button>
           <small>指を離すと止まります。換金できないAnjuPayだけが動きます。</small>
-          ${sheet.granted ? "" : '<button class="button button-ghost button-small" type="button" data-t="give-back">金額を変える</button>'}
+          ${sheet.granted || sheet.othello ? "" : '<button class="button button-ghost button-small" type="button" data-t="give-back">金額を変える</button>'}
         </div>`);
       }
       const maximum = view.allowance;
@@ -2502,6 +2625,39 @@ function renderSheet() {
         <button class="button button-primary" type="submit" ${state.busy || left < 1 ? "disabled" : ""}>抵抗する</button>
       </form>`);
     }
+    case "othello-settings": {
+      if (view.role !== "payer") return "";
+      const allow = view.allowOthello;
+      return wrap("貢ぎオセロの設定", `<div class="tribute-confirm">
+        <p>${escapeHtml(view.manager.personaName)}と「貢ぎオセロ」をするかを決めます。決めるのはあなただけで、いつでも変えられます。</p>
+        <p>いま：<b>${allow ? "受けている" : "受けていない"}</b></p>
+        <p class="tribute-note">受けている間は、始めるかどうか・1枚あたりの額・ハンデを管理人が決めます。終わった時の石の差が罰金になり、あなたが差し出します（1回の限度額まで）。受けるのをやめると、進行中の対局は罰金なしで終わります。</p>
+        <button class="button ${allow ? "button-ghost" : "button-primary"}" type="button" data-t="set-othello" data-allow="${allow ? "0" : "1"}" ${state.busy ? "disabled" : ""}>${allow ? "受けるのをやめる" : "受ける"}</button>
+        <button class="button button-ghost" type="button" data-t="sheet-close">閉じる</button>
+      </div>`);
+    }
+    case "othello-start": {
+      if (view.role !== "manager") return "";
+      return wrap("貢ぎオセロを始める", `<form class="tribute-sheet-form" data-form="othello-start">
+        <p>${escapeHtml(view.payer.walletName || "財布")}と交互に打ちます。財布の石は Pay のコインで、終わった時の石の差 × 1枚あたりの額が罰金になります（財布の1回の限度額まで）。財布は降参できます。</p>
+        <fieldset><legend>1枚あたりの額</legend><div class="tribute-radio-row">${OTHELLO_RATES.map((rate, index) => `<label><input type="radio" name="rate" value="${rate}" ${index === 0 ? "checked" : ""} /><span>${escapeHtml(formatPay(rate))}</span></label>`).join("")}</div></fieldset>
+        <fieldset><legend>ハンデ</legend><div class="tribute-radio-col">${OTHELLO_HANDICAPS.map((id) => `<label><input type="radio" name="handicap" value="${id}" ${id === "none" ? "checked" : ""} /><span>${escapeHtml(OTHELLO_HANDICAP_LABELS[id])}</span></label>`).join("")}</div></fieldset>
+        <label class="tribute-check"><input type="checkbox" name="managerFirst" /><span>自分が先に打つ（外すと財布が先手）</span></label>
+        <p class="tribute-form-error" data-form-error role="alert"></p>
+        <button class="button button-primary" type="submit" ${state.busy ? "disabled" : ""}>始める</button>
+      </form>`);
+    }
+    case "othello-resign": {
+      if (view.role !== "payer" || !view.othello) return "";
+      const counts = view.othello.counts;
+      const stones = Math.max(counts.manager - counts.payer, 1);
+      return wrap("降参する", `<div class="tribute-confirm">
+        <p>降参すると、その場であなたの負けになります。</p>
+        <p>罰金：<b>${stones}枚</b> × ${escapeHtml(formatPay(view.othello.rate))} ＝ <b>${escapeHtml(formatPay(stones * view.othello.rate))}</b><small>（いまの差と1枚分の大きい方）</small></p>
+        <button class="button button-primary" type="button" data-t="othello-resign" ${state.busy ? "disabled" : ""}>降参する</button>
+        <button class="button button-ghost" type="button" data-t="sheet-close">まだ打つ</button>
+      </div>`);
+    }
     case "holds-settings": {
       if (view.role !== "payer") return "";
       const allow = view.allowHolds;
@@ -2583,7 +2739,7 @@ function openShare({ contractId, receiptId = "", seq = 0, mode = "receipt" }) {
     contractId,
     receiptId,
     seq: Number(seq) || 0,
-    mode: mode === "excerpt" ? "excerpt" : "receipt",
+    mode: mode === "excerpt" || mode === "othello" ? mode : "receipt",
     options: { purpose: true, amount: true, marks: true, wallet: false },
     info: null,
     status: "loading",
@@ -2749,9 +2905,31 @@ function shareExcerptData(sheet) {
   };
 }
 
+// 貢ぎオセロの決着の画像。最後の盤面と石の差・罰金・戦績を、財布の端末で描く（URL は入れない）。
+function shareOthelloData(sheet) {
+  const info = sheet.info || {};
+  const finish = state.thread.events.find((event) => event.type === "othello_finish" && Number(event.seq) === sheet.seq) || {};
+  return {
+    at: Number(finish.createdAt) || Date.now(),
+    board: String(finish.board || ""),
+    result: finish.result || "lost",
+    resigned: finish.resigned === true,
+    managerStones: Number(finish.manager) || 0,
+    payerStones: Number(finish.payer) || 0,
+    stones: Number(finish.stones) || 0,
+    penalty: Number(finish.penalty) || 0,
+    rate: Number(finish.rate) || 0,
+    record: othelloRecordText(finish.record),
+    collarNo: Number(info.collarNo) || 0,
+    walletLabel: shareWalletLabel(sheet),
+    manager: shareManager(info),
+  };
+}
+
 function shareFileName(sheet) {
   const stamp = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll("-", "");
   if (sheet.mode === "excerpt") return `omitsugi-record-${stamp}.png`;
+  if (sheet.mode === "othello") return `omitsugi-othello-${stamp}.png`;
   const number = sheet.info?.receipt?.receiptNo;
   return number ? `omitsugi-receipt-${String(number).padStart(5, "0")}.png` : `omitsugi-receipt-${stamp}.png`;
 }
@@ -2763,9 +2941,11 @@ async function refreshSharePreview() {
   sheet.rendering = true;
   paintSharePreview();
   try {
-    const canvas = sheet.mode === "excerpt"
-      ? await renderExcerptImage(shareExcerptData(sheet), sheet.options)
-      : await renderReceiptImage(shareReceiptData(sheet), sheet.options);
+    const canvas = sheet.mode === "othello"
+      ? await renderOthelloImage(shareOthelloData(sheet), sheet.options)
+      : sheet.mode === "excerpt"
+        ? await renderExcerptImage(shareExcerptData(sheet), sheet.options)
+        : await renderReceiptImage(shareReceiptData(sheet), sheet.options);
     const blob = await canvasToPngBlob(canvas);
     if (ticket !== shareRenderTicket || state.sheet !== sheet) return;
     if (sheet.previewUrl) URL.revokeObjectURL(sheet.previewUrl);
@@ -2803,11 +2983,13 @@ function renderShareSheet(sheet, wrap) {
   // 献上からは「レシート」と「切り抜き」を選べる。言葉の献上はレシートがないので切り抜きだけ。
   const canChoose = sheet.seq > 0 && Boolean(shareTribute(sheet));
   const plainWallet = info.collarNo ? `財布 ${info.collarNo}号` : "財布";
+  // 貢ぎオセロの決着の画像には、名目・受取印・ご褒美がない（金額と財布名だけを選ぶ）。
+  const options = sheet.mode === "othello" ? SHARE_OPTIONS.filter((option) => option.key === "amount" || option.key === "wallet") : SHARE_OPTIONS;
   return wrap("貢ぎ報告の画像", `<div class="tribute-share">
     ${canChoose ? `<div class="tribute-radio-row" role="radiogroup" aria-label="画像の種類">${[["receipt", "このレシート"], ["excerpt", "やりとりを切り抜く"]].map(([mode, label]) => `<label><input type="radio" name="shareMode" value="${mode}" data-share-mode ${sheet.mode === mode ? "checked" : ""} /><span>${label}</span></label>`).join("")}</div>` : ""}
     <div class="tribute-share-body">
       <div class="tribute-share-preview" data-share-preview>${sharePreviewMarkup(sheet)}</div>
-      <div class="tribute-share-options">${SHARE_OPTIONS.map((option) => `<label class="tribute-check"><input type="checkbox" data-share-option="${option.key}" ${sheet.options[option.key] ? "checked" : ""} /><span>${escapeHtml(option.label)}${option.key === "wallet" ? `<small>入れない時は「${escapeHtml(plainWallet)}」</small>` : ""}</span></label>`).join("")}</div>
+      <div class="tribute-share-options">${options.map((option) => `<label class="tribute-check"><input type="checkbox" data-share-option="${option.key}" ${sheet.options[option.key] ? "checked" : ""} /><span>${escapeHtml(option.label)}${option.key === "wallet" ? `<small>入れない時は「${escapeHtml(plainWallet)}」</small>` : ""}</span></label>`).join("")}</div>
     </div>
     <p class="tribute-note">${info.consent ? "管理人の名前とアイコンは、管理人が「貢ぎ報告に出してよい」にしているので入ります。" : "管理人が名前とアイコンを出す許可をしていないので、「管理人様」とシルエットになります。"}「AnjuPay・換金不可」の表記とお貢ぎ牧場の名前は必ず入り、URLは入りません。</p>
     <div class="tribute-row"><button class="button button-primary" type="button" data-t="share-send" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>共有（X など）</button><button class="button button-ghost" type="button" data-t="share-save" data-share-action ${sheet.blob && !sheet.rendering ? "" : "disabled"}>画像で保存</button></div>
@@ -3557,10 +3739,10 @@ async function completeGive() {
   const sheet = state.sheet;
   if (!sheet || sheet.type !== "give") return;
   const result = await mutate("tribute", contractPayload({
-    kind: sheet.granted ? "granted" : sheet.requestId ? "request" : "silent",
+    kind: sheet.othello ? "othello" : sheet.granted ? "granted" : sheet.requestId ? "request" : "silent",
     requestId: sheet.requestId || undefined,
     amount: sheet.amount,
-    purpose: sheet.requestId || sheet.granted ? undefined : sheet.purpose || undefined,
+    purpose: sheet.requestId || sheet.granted || sheet.othello ? undefined : sheet.purpose || undefined,
     clientRequestId: sheet.clientRequestId,
   }));
   if (!result) {
@@ -3754,6 +3936,7 @@ async function handleSubmit(form) {
           allowScreenshots: data.get("allowScreenshots") === "on",
           allowWorkOrders: data.get("allowWorkOrders") === "on",
           allowHolds: data.get("allowHolds") === "on",
+          allowOthello: data.get("allowOthello") === "on",
           acceptNoDecline: data.get("acceptNoDecline") === "on",
           walletName: String(data.get("walletName") || ""),
         },
@@ -3867,6 +4050,16 @@ async function handleSubmit(form) {
           state.profile = result.profile;
         },
       });
+      return;
+    }
+    case "othello-start": {
+      const data = new FormData(form);
+      const result = await mutate("othello_start", contractPayload({
+        rate: Number(data.get("rate")),
+        handicap: String(data.get("handicap") || "none"),
+        managerFirst: data.get("managerFirst") === "on",
+      }), { form, success: "貢ぎオセロを始めました。" });
+      if (result) closeSheet();
       return;
     }
     case "offer-words": {
@@ -4402,6 +4595,56 @@ async function handleClick(target) {
     case "resist-open":
       openSheet("resist", { requestId: target.dataset.request });
       return;
+    // 貢ぎオセロの罰金を差し出す。額は罰金（1回の上限まで）、名目は罰金のまま、いつもの長押しで差し出す。
+    case "give-othello": {
+      const result = view?.othelloResult;
+      if (!result || view.role !== "payer") return;
+      openSheet("give", { othello: true, amount: othelloPayable(view, result), purpose: "penalty", step: "hold" });
+      return;
+    }
+    case "set-othello": {
+      const allow = target.dataset.allow === "1";
+      const result = await mutate("set_othello", contractPayload({ allowOthello: allow }), {
+        success: allow ? "貢ぎオセロを受けるようにしました。" : "貢ぎオセロを受けるのをやめました。",
+      });
+      if (result) closeSheet();
+      return;
+    }
+    case "othello-move": {
+      const game = view?.othello;
+      if (!game || game.turn !== view.role) return;
+      const note = String(document.querySelector("[data-othello-note]")?.value || "").trim();
+      await mutate("othello_move", contractPayload({ gameSeq: game.gameSeq, index: Number(target.dataset.index), ...(note ? { note } : {}) }));
+      return;
+    }
+    case "othello-situation":
+      state.thread.othelloSituation = target.dataset.situation || "flip";
+      if (state.screen === "thread") updateThreadParts();
+      return;
+    case "othello-note-pick": {
+      const input = document.querySelector("[data-othello-note]");
+      if (input) {
+        input.value = String(target.dataset.text || "").slice(0, LIMITS.requestNote);
+        input.focus();
+      }
+      return;
+    }
+    case "othello-resign": {
+      const result = await mutate("othello_resign", contractPayload(), { success: "降参しました。" });
+      if (result) closeSheet();
+      return;
+    }
+    case "othello-end":
+      await mutate("othello_end", contractPayload(), { success: "対局をやめました（罰金なし）。" });
+      return;
+    case "othello-claim":
+      await mutate("othello_claim", contractPayload(), { success: "罰金を請求しました。" });
+      return;
+    case "othello-share": {
+      if (!view || view.role !== "payer") return;
+      openShare({ contractId: view.contractId, seq: Number(target.dataset.seq), mode: "othello" });
+      return;
+    }
     // 許された願い出を差し出す。金額と名目は願い出のまま、いつもの長押しで差し出す。
     case "give-granted": {
       const plea = view?.plea;
@@ -5073,9 +5316,51 @@ function previewRaw(role, status = "active") {
       ? { orderSeq: 1, target: 3, note: "財布が空なら稼いでこい。", issuedAt: now - 50 * 60_000, reportedCount: 1, reportedAt: now - 20 * 60_000, doneAt: 0 }
       : { orderSeq: 1, target: 3, note: "稼いでから顔を出せ。", issuedAt: now - 50 * 60_000, reportedCount: 3, reportedAt: now - 4 * 60_000, doneAt: now - 4 * 60_000 },
     workOrdersDone: role === "payer" ? 0 : 1,
-    eventSeq: 17,
+    // 貢ぎオセロ: 管理人の見本は自分の手番の対局、財布の見本は差し出す罰金。
+    allowOthello: true,
+    othelloSeq: role === "payer" ? 2 : 3,
+    othello: role === "manager" ? previewOthelloGame(now) : null,
+    othelloResult: role === "payer" ? { gameSeq: 2, penalty: 15, stones: 3, rate: 5, resigned: false, finishedAt: now - 20 * 60_000 } : null,
+    othelloRecord: { played: 2, lost: 2, won: 0, drawn: 0, streak: 2 },
+    eventSeq: role === "payer" ? 18 : 17,
     readSeq: { manager: 16, payer: 14 },
   };
+}
+
+// 見本の決着（サーバーの finishOthello と同じ）。
+function previewFinishOthello(raw, push, game, board, resigned) {
+  const outcome = othelloOutcome(board, game.rate, { resigned });
+  const record = raw.othelloRecord || { played: 0, lost: 0, won: 0, drawn: 0, streak: 0 };
+  const next = {
+    played: record.played + 1,
+    lost: record.lost + (outcome.result === "lost" ? 1 : 0),
+    won: record.won + (outcome.result === "won" ? 1 : 0),
+    drawn: record.drawn + (outcome.result === "draw" ? 1 : 0),
+    streak: outcome.result === "lost" ? record.streak + 1 : 0,
+  };
+  raw.othello = null;
+  raw.othelloRecord = next;
+  raw.othelloResult = outcome.penalty > 0 ? { gameSeq: game.gameSeq, penalty: outcome.penalty, stones: outcome.stones, rate: game.rate, resigned, finishedAt: Date.now() } : null;
+  push({ type: "othello_finish", actor: resigned ? "payer" : "system", gameSeq: game.gameSeq, result: outcome.result, manager: outcome.manager, payer: outcome.payer, stones: outcome.stones, rate: game.rate, penalty: outcome.penalty, resigned, board, record: next });
+}
+
+// 見本の対局（数手進めた盤）。管理人の手番で止める。
+function previewOthelloGame(now) {
+  let board = othelloInitialBoard("manager_corner");
+  let turn = "payer";
+  let lastMove = null;
+  for (let step = 0; step < 5; step += 1) {
+    const moves = othelloMoves(board, othelloSide(turn));
+    if (!moves.length) break;
+    const played = othelloPlay(board, othelloSide(turn), moves[moves.length - 1]);
+    lastMove = { index: moves[moves.length - 1], flipped: played.flipped, role: turn };
+    board = played.board;
+    const next = othelloNextTurn(board, turn);
+    if (!next.turn) break;
+    turn = next.turn;
+  }
+  if (turn !== "manager") turn = othelloMoves(board, "M").length ? "manager" : turn;
+  return { gameSeq: 3, board, turn, rate: 5, handicap: "manager_corner", startedAt: now - 30 * 60_000, lastMoveAt: now - 2 * 60_000, lastMove };
 }
 
 function previewEvents(raw) {
@@ -5102,7 +5387,19 @@ function previewEvents(raw) {
     { seq: 15, type: "message", actor: "payer", text: "寸止め料です。", createdAt: at(2) },
     { seq: 16, type: "request", actor: "manager", requestId: "abcdef0123456789", amount: 10_000, note: "払えないなら黙ってな。", purpose: "release", createdAt: Date.now() - 3 * 86_400_000 },
     { seq: 17, type: "word_offering", actor: "payer", text: "今日も負けました。\n貢げなかった分、言葉だけ置いていきます。", createdAt: at(1) },
+    // 財布の見本は、罰金の残る決着（画像で保存の確認用）。
+    ...(raw.othelloResult ? [{ seq: 18, type: "othello_finish", actor: "system", gameSeq: raw.othelloResult.gameSeq, result: "lost", manager: 32, payer: 29, stones: 3, rate: 5, penalty: 15, resigned: false, board: previewFinishedBoard(), record: raw.othelloRecord, createdAt: at(0.5) }] : []),
   ];
+}
+
+// 見本の決着の盤（管理人32枚・財布29枚・空き3）。
+function previewFinishedBoard() {
+  const cells = Array.from({ length: 64 }, (_, index) => ((index * 7 + Math.floor(index / 8)) % 61 < 31 ? "M" : "P"));
+  [5, 30, 58].forEach((index) => { cells[index] = "."; });
+  let manager = cells.filter((cell) => cell === "M").length;
+  for (let index = 0; manager > 32 && index < 64; index += 1) if (cells[index] === "M") { cells[index] = "P"; manager -= 1; }
+  for (let index = 63; manager < 32 && index >= 0; index -= 1) if (cells[index] === "P") { cells[index] = "M"; manager += 1; }
+  return cells.join("");
 }
 
 function previewThread(contractId) {
@@ -5284,11 +5581,14 @@ function previewCall(action, payload) {
     case "tribute": {
       const request = payload.requestId ? state.thread.raw?.pendingRequests?.[payload.requestId] : null;
       const granted = payload.kind === "granted";
-      const purpose = request ? request.purpose || "" : granted ? state.thread.raw?.plea?.purpose || "" : payload.purpose || "";
-      const marks = { ...(granted ? { granted: true } : {}), ...(Number(request?.resists) ? { resisted: Number(request.resists) } : {}) };
-      payload = { ...payload, kind: granted ? "silent" : payload.kind };
+      const othello = payload.kind === "othello" ? Number(state.thread.raw?.othelloResult?.gameSeq) || 1 : Number(request?.othello) || 0;
+      const purpose = request ? request.purpose || "" : granted ? state.thread.raw?.plea?.purpose || "" : payload.kind === "othello" ? "penalty" : payload.purpose || "";
+      const marks = { ...(granted ? { granted: true } : {}), ...(othello ? { othello } : {}), ...(Number(request?.resists) ? { resisted: Number(request.resists) } : {}) };
+      const othelloPenalty = payload.kind === "othello";
+      payload = { ...payload, kind: granted || othelloPenalty ? "silent" : payload.kind };
       previewThreadChange((raw, push) => {
         if (granted) raw.plea = null;
+        if (othelloPenalty) raw.othelloResult = null;
         if (marks.resisted) raw.resistedTributes = Number(raw.resistedTributes || 0) + 1;
         if (payload.requestId && raw.pendingRequests) {
           const { [payload.requestId]: _paid, ...rest } = raw.pendingRequests;
@@ -5482,6 +5782,79 @@ function previewCall(action, payload) {
         push(action === "extend_accept"
           ? { type: "extend_accepted", actor: "manager", days, expiresAt: raw.expiresAt }
           : { type: action === "extend_withdraw" ? "extend_withdrawn" : "extend_declined", actor: action === "extend_withdraw" ? "payer" : "manager", days });
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "set_othello": {
+      const view = previewThreadChange((raw, push) => {
+        raw.allowOthello = payload.allowOthello === true;
+        push({ type: "othello_setting", actor: "payer", allowOthello: raw.allowOthello });
+        if (!raw.allowOthello && raw.othello) {
+          push({ type: "othello_stopped", actor: "payer", gameSeq: raw.othello.gameSeq });
+          raw.othello = null;
+        }
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "othello_start": {
+      const view = previewThreadChange((raw, push, at) => {
+        raw.othelloSeq = Number(raw.othelloSeq || 0) + 1;
+        raw.othello = { gameSeq: raw.othelloSeq, board: othelloInitialBoard(payload.handicap), turn: payload.managerFirst ? "manager" : "payer", rate: Number(payload.rate), handicap: payload.handicap || "none", startedAt: at, lastMoveAt: at, lastMove: null };
+        push({ type: "othello_start", actor: "manager", gameSeq: raw.othelloSeq, rate: Number(payload.rate), handicap: payload.handicap || "none", managerFirst: payload.managerFirst === true });
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "othello_move": {
+      // 見本では、相手の手もその場で打つ（相手がいないため）。
+      const role = state.thread.view?.role || "payer";
+      const view = previewThreadChange((raw, push, at) => {
+        let game = raw.othello;
+        if (!game) return;
+        const playOne = (who, index, note) => {
+          const played = othelloPlay(game.board, othelloSide(who), index);
+          if (played.error) return false;
+          push({ type: "othello_move", actor: who, gameSeq: game.gameSeq, index, flipped: played.flipped, corner: played.corner, ...othelloCount(played.board), ...(note ? { note } : {}) });
+          const next = othelloNextTurn(played.board, who);
+          if (!next.turn) {
+            previewFinishOthello(raw, push, game, played.board, false);
+            game = null;
+            return true;
+          }
+          if (next.passed) push({ type: "othello_pass", actor: "system", gameSeq: game.gameSeq, passed: next.passed });
+          game = { ...game, board: played.board, turn: next.turn, lastMoveAt: at, lastMove: { index, flipped: played.flipped, role: who } };
+          raw.othello = game;
+          return true;
+        };
+        if (!playOne(role, Number(payload.index), payload.note)) return;
+        while (game && game.turn !== role) {
+          const moves = othelloMoves(game.board, othelloSide(game.turn));
+          if (!moves.length || !playOne(game.turn, moves[0], "")) break;
+        }
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "othello_resign": {
+      const view = previewThreadChange((raw, push) => {
+        if (raw.othello) previewFinishOthello(raw, push, raw.othello, raw.othello.board, true);
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "othello_end": {
+      const view = previewThreadChange((raw, push) => {
+        if (!raw.othello) return;
+        push({ type: "othello_end", actor: "manager", gameSeq: raw.othello.gameSeq });
+        raw.othello = null;
+      });
+      return Promise.resolve({ ok: true, contract: view });
+    }
+    case "othello_claim": {
+      const view = previewThreadChange((raw, push, at) => {
+        const result = raw.othelloResult;
+        if (!result) return;
+        const requestId = "0".repeat(15) + String(result.gameSeq % 10);
+        raw.pendingRequests = { ...(raw.pendingRequests || {}), [requestId]: { amount: result.penalty, note: "貢ぎオセロの罰金", purpose: "penalty", othello: result.gameSeq, createdAt: at } };
+        raw.othelloResult = null;
+        push({ type: "request", actor: "manager", requestId, amount: result.penalty, note: "貢ぎオセロの罰金", purpose: "penalty", othello: result.gameSeq });
       });
       return Promise.resolve({ ok: true, contract: view });
     }

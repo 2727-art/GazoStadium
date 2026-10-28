@@ -2085,3 +2085,109 @@ test("the cheer column lists the newest cheer first, not the biggest tributer", 
   await harness.act("big", "set_cheer", { publicManagerId, text: "書き直しました" });
   assert.deepEqual(await order(), ["太い財布", "細い財布"], "a rewritten cheer moves to the top");
 });
+
+// 貢ぎオセロ（設計書15.2、2026-10-28 ユーザー決定）: 財布は契約で受けるかを選び、その中で始めるかは管理人だけが決める。
+// 降参はその場で負け、設定を外すと罰金なしで終わる。罰金は自動で引き落とさない。
+test("貢ぎオセロ: only the manager starts within the payer's setting, moves are checked, and a resign leaves a penalty the payer gives", async () => {
+  const rules = require("../tribute-rules");
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { allowOthello: true });
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+  const game = () => harness.contract(contractId).othello;
+  await rejects(act("payer", "othello_start", { rate: 5 }), /この操作はできません/);
+  await rejects(act("manager", "othello_start", { rate: 3 }), /1枚あたりの額/);
+  const started = await act("manager", "othello_start", { rate: 5, handicap: "manager_corner", managerFirst: false });
+  assert.deepEqual([started.contract.othello.turn, started.contract.othello.counts.manager, started.contract.othello.counts.payer], ["payer", 3, 2]);
+  await rejects(act("manager", "othello_start", { rate: 1 }), /1つずつ/);
+  await rejects(act("manager", "othello_move", { gameSeq: 1, index: 20 }), /相手の手番/);
+  await rejects(act("payer", "othello_move", { gameSeq: 1, index: 0 }), /打てません/);
+  await rejects(act("payer", "othello_move", { gameSeq: 9, index: 19 }), /対局が変わりました/);
+  await rejects(act("payer", "othello_move", { gameSeq: 1, index: 19, note: "現金で払います" }), /外部の決済|現金/);
+  const moved = await act("payer", "othello_move", { gameSeq: 1, index: 19, note: "まだ負けません" });
+  assert.equal(moved.contract.othello.turn, "manager");
+  const move = harness.events(contractId).at(-1);
+  assert.deepEqual([move.type, move.actor, move.flipped, move.note], ["othello_move", "payer", 1, "まだ負けません"]);
+  assert.equal(harness.contract(contractId).lastPayerMessageSeq, move.seq, "a move with a word counts as the payer's message");
+  const managerMove = rules.othelloMoves(game().board, "M")[0];
+  await act("manager", "othello_move", { gameSeq: 1, index: managerMove, note: "その一手、読んでいました。" });
+  assert.equal(harness.contract(contractId).lastManagerReplySeq, harness.events(contractId).at(-1).seq);
+
+  // 降参: その時の差と1枚分の大きい方 × 1枚あたりの額。戦績は負け1・1連敗。
+  const counts = rules.othelloCount(game().board);
+  const resigned = await act("payer", "othello_resign");
+  const finish = harness.events(contractId).at(-1);
+  assert.deepEqual([finish.type, finish.result, finish.resigned], ["othello_finish", "lost", true]);
+  const stones = Math.max(counts.manager - counts.payer, 1);
+  assert.deepEqual([resigned.contract.othelloResult.penalty, resigned.contract.othello], [stones * 5, null]);
+  assert.deepEqual(resigned.contract.othelloRecord, { played: 1, lost: 1, won: 0, drawn: 0, streak: 1 });
+  await rejects(act("manager", "othello_start", { rate: 1 }), /罰金が、まだ払われていません/);
+
+  // 罰金は財布が差し出す（1回の限度額まで）。記録には対局の印が残る。
+  const balance = harness.balance("payer");
+  await rejects(act("payer", "tribute", { kind: "othello", amount: stones * 5 + 1, clientRequestId: nextRequestId() }), /罰金の額が変わりました/);
+  const paid = await act("payer", "tribute", { kind: "othello", amount: stones * 5, clientRequestId: nextRequestId() });
+  assert.equal(harness.balance("payer"), balance - stones * 5);
+  assert.equal(paid.contract.othelloResult, null);
+  const tribute = harness.events(contractId).find((event) => event.type === "tribute" && event.othello === 1);
+  assert.deepEqual([tribute.kind, tribute.purpose], ["silent", "penalty"]);
+  const receipt = (await harness.act("payer", "receipts")).receipts.find((row) => row.receiptId === paid.receipt.receiptId);
+  assert.equal(receipt.othello, 1);
+});
+
+test("貢ぎオセロ: a game plays out with passes to a natural finish; the record crosses contracts", async () => {
+  const rules = require("../tribute-rules");
+  const harness = createHarness({ balances: { manager: 0, payer: 50_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { allowOthello: true, durationDays: 7 });
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+  await act("manager", "othello_start", { rate: 1, handicap: "none", managerFirst: true });
+  for (let turn = 0; turn < 80 && harness.contract(contractId).othello; turn += 1) {
+    const game = harness.contract(contractId).othello;
+    const uid = game.turn === "manager" ? "manager" : "payer";
+    const moves = rules.othelloMoves(game.board, rules.othelloSide(game.turn));
+    await act(uid, "othello_move", { gameSeq: game.gameSeq, index: moves[moves.length - 1] });
+  }
+  const events = harness.events(contractId);
+  const finish = events.find((event) => event.type === "othello_finish");
+  assert.ok(finish, "the game finishes");
+  assert.equal(finish.manager + finish.payer <= 64, true);
+  assert.equal(finish.penalty, finish.result === "lost" ? finish.stones : 0);
+  assert.equal(rules.othelloBoardValid(finish.board), true);
+  const record = harness.contract(contractId).othelloRecord;
+  assert.equal(record.played, 1);
+  // 組の戦績は、次の契約にも写る。
+  if (harness.contract(contractId).othelloResult) await act("manager", "othello_claim");
+  await act("payer", "terminate");
+  const again = await startContract(harness, "manager", "payer", publicManagerId, { allowOthello: true });
+  assert.deepEqual(harness.contract(again).othelloRecord, record);
+});
+
+test("貢ぎオセロ: turning the setting off ends a game without a penalty, the manager can end or claim, and old contracts never get games", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000, other: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  const old = await startContract(harness, "manager", "other", publicManagerId);
+  await rejects(harness.act("manager", "othello_start", { contractId: old, rate: 1 }), /始められません/);
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, { allowOthello: true });
+  const act = (uid, action, data = {}) => { harness.advance(2_100); return harness.act(uid, action, { contractId, ...data }); };
+  await act("manager", "othello_start", { rate: 10 });
+  const off = await act("payer", "set_othello", { allowOthello: false });
+  assert.deepEqual([off.contract.othello, off.contract.othelloResult, off.contract.othelloRecord.played], [null, null, 0]);
+  assert.equal(harness.events(contractId).at(-1).type, "othello_stopped");
+  await rejects(act("manager", "othello_start", { rate: 1 }), /始められません/);
+  await act("payer", "set_othello", { allowOthello: true });
+  await act("manager", "othello_start", { rate: 1 });
+  await act("manager", "othello_end");
+  assert.deepEqual([harness.contract(contractId).othello, harness.events(contractId).at(-1).type], [null, "othello_end"]);
+  // 払われない罰金は、管理人が同じ額の請求にできる。
+  await act("manager", "othello_start", { rate: 10, handicap: "manager_corner" });
+  await act("payer", "othello_resign");
+  const penalty = harness.contract(contractId).othelloResult.penalty;
+  await rejects(act("payer", "othello_claim"), /この操作はできません/);
+  const claimed = await act("manager", "othello_claim");
+  const request = harness.contract(contractId).pendingRequests[claimed.requestId];
+  assert.deepEqual([request.amount, request.purpose, request.othello, harness.contract(contractId).othelloResult], [penalty, "penalty", 3, null]);
+  const paid = await act("payer", "tribute", { kind: "request", requestId: claimed.requestId, amount: penalty, clientRequestId: nextRequestId() });
+  assert.equal(harness.events(contractId).find((event) => event.type === "tribute" && event.requestId === claimed.requestId).othello, 3);
+  assert.ok(paid.receipt);
+});

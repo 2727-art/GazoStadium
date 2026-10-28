@@ -17,6 +17,105 @@ const ENTRY_FEE_OPTIONS = Object.freeze([0, 5, 10, 30, 50, 100]);
 const WORK_ORDER_TARGETS = Object.freeze([1, 3, 5, 10]);
 // 復唱の回数（管理人が言わせたい一言を、財布が一字一句同じに打つ回数）。
 const RECITE_TARGETS = Object.freeze([1, 3, 5]);
+
+// 貢ぎオセロ（設計書15.2）。盤は64文字（"." 空き・"M" 管理人の石・"P" 財布の石＝Payのコイン）。左上から右へ、上の段から並べる。
+// 運の要素は入れない。罰金は終わった時の石の差 × 1枚あたりの額（財布の1回の限度額まで）。
+const OTHELLO_RATES = Object.freeze([1, 5, 10]);
+const OTHELLO_HANDICAPS = Object.freeze(["none", "manager_corner", "payer_corner"]);
+const OTHELLO_DIRECTIONS = Object.freeze([[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]);
+const OTHELLO_CORNERS = Object.freeze([0, 7, 56, 63]);
+
+function othelloSide(role) {
+  return role === "manager" ? "M" : "P";
+}
+
+// 始めの盤。ハンデは左上の角（a1）を、管理人が持って始めるか、財布にあげるか。
+function othelloInitialBoard(handicap = "none") {
+  const cells = Array(64).fill(".");
+  cells[27] = "M";
+  cells[36] = "M";
+  cells[28] = "P";
+  cells[35] = "P";
+  if (handicap === "manager_corner") cells[0] = "M";
+  if (handicap === "payer_corner") cells[0] = "P";
+  return cells.join("");
+}
+
+function othelloBoardValid(board) {
+  return typeof board === "string" && /^[.MP]{64}$/.test(board);
+}
+
+// その手でひっくり返る石の位置。打てない手は空。
+function othelloFlips(board, side, index) {
+  if (!othelloBoardValid(board) || !Number.isInteger(index) || index < 0 || index > 63 || board[index] !== ".") return [];
+  const other = side === "M" ? "P" : "M";
+  const row = Math.floor(index / 8);
+  const column = index % 8;
+  const flips = [];
+  for (const [dr, dc] of OTHELLO_DIRECTIONS) {
+    const line = [];
+    let r = row + dr;
+    let c = column + dc;
+    while (r >= 0 && r < 8 && c >= 0 && c < 8 && board[r * 8 + c] === other) {
+      line.push(r * 8 + c);
+      r += dr;
+      c += dc;
+    }
+    if (line.length && r >= 0 && r < 8 && c >= 0 && c < 8 && board[r * 8 + c] === side) flips.push(...line);
+  }
+  return flips;
+}
+
+function othelloMoves(board, side) {
+  const moves = [];
+  for (let index = 0; index < 64; index += 1) {
+    if (othelloFlips(board, side, index).length) moves.push(index);
+  }
+  return moves;
+}
+
+function othelloPlay(board, side, index) {
+  const flips = othelloFlips(board, side, index);
+  if (!flips.length) return { error: "そこには打てません。" };
+  const cells = board.split("");
+  cells[index] = side;
+  for (const flip of flips) cells[flip] = side;
+  return { board: cells.join(""), flipped: flips.length, corner: OTHELLO_CORNERS.includes(index) };
+}
+
+function othelloCount(board) {
+  let manager = 0;
+  let payer = 0;
+  for (const cell of othelloBoardValid(board) ? board : "") {
+    if (cell === "M") manager += 1;
+    else if (cell === "P") payer += 1;
+  }
+  return { manager, payer, empty: 64 - manager - payer };
+}
+
+// 打った後の手番。相手が打てなければ同じ側が続け（相手はパス）、どちらも打てなければ終局（空）。
+function othelloNextTurn(board, movedRole) {
+  const other = movedRole === "manager" ? "payer" : "manager";
+  if (othelloMoves(board, othelloSide(other)).length) return { turn: other, passed: "" };
+  if (othelloMoves(board, othelloSide(movedRole)).length) return { turn: movedRole, passed: other };
+  return { turn: "", passed: "" };
+}
+
+// 決着。財布が負けた時だけ罰金。降参は、その時の差と1枚分の大きい方。
+function othelloOutcome(board, rate, { resigned = false } = {}) {
+  const { manager, payer } = othelloCount(board);
+  const diff = manager - payer;
+  const result = resigned || diff > 0 ? "lost" : diff < 0 ? "won" : "draw";
+  const stones = result === "lost" ? Math.max(diff, 1) : 0;
+  return { result, manager, payer, stones, penalty: stones * (OTHELLO_RATES.includes(Number(rate)) ? Number(rate) : 0) };
+}
+
+function normalizeOthelloStart(value) {
+  const rate = Number(value?.rate);
+  if (!OTHELLO_RATES.includes(rate)) return { error: "1枚あたりの額を選び直してください。" };
+  const handicap = OTHELLO_HANDICAPS.includes(String(value?.handicap)) ? String(value.handicap) : "none";
+  return { rate, handicap, managerFirst: value?.managerFirst === true };
+}
 const TONES = Object.freeze(["sweet", "normal", "harsh"]);
 const DISCLOSURES = Object.freeze(["nekama", "as_is", "undisclosed"]);
 // 管理の型（2026-10-27 に5つへ）。見透かす・管理する・煽る・甘やかす・突き放す。カードに1つか2つ選ぶ。
@@ -665,6 +764,8 @@ function normalizeApplication(value, { entryFee = 0 } = {}) {
       allowWorkOrders: value?.allowWorkOrders === true,
       // 管理人の「お預け」（財布から勝手に差し出せなくする）を受けるか。古い画面から届いた申し込みは受けない。
       allowHolds: value?.allowHolds === true,
+      // 貢ぎオセロを受けるか（設計書15.2）。始めるかどうかは管理人だけが決める。
+      allowOthello: value?.allowOthello === true,
       walletName: normalizeWalletName(value?.walletName),
     },
   };
@@ -873,6 +974,18 @@ module.exports = {
   tonesUpTo,
   DISCLOSURES,
   MANAGER_STYLES,
+  OTHELLO_RATES,
+  OTHELLO_HANDICAPS,
+  othelloSide,
+  othelloInitialBoard,
+  othelloBoardValid,
+  othelloFlips,
+  othelloMoves,
+  othelloPlay,
+  othelloCount,
+  othelloNextTurn,
+  othelloOutcome,
+  normalizeOthelloStart,
   MAX_MANAGER_STYLES,
   normalizeStyles,
   SIGIL_COLORS,

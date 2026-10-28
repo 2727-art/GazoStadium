@@ -1055,6 +1055,110 @@ export async function renderExcerptImage(data, options = {}) {
   return canvas;
 }
 
+// ───────────── 貢ぎオセロの決着 ─────────────
+
+// 最後の盤面（管理人の石は印の色、財布の石は Pay のコイン）と、石の差・罰金・戦績。財布の端末で描き、URL は入れない。
+export async function renderOthelloImage(data, options = {}) {
+  const show = { amount: true, ...options };
+  const manager = managerPresentation(data.manager);
+  const created = jstParts(data.at);
+  const verdict = data.result === "lost"
+    ? (data.resigned ? `降参・${Number(data.stones)}枚差` : `${Number(data.stones)}枚差で完敗`)
+    : data.result === "won" ? "財布の勝ち" : "引き分け";
+  await loadFonts([manager.personaName, data.walletLabel, verdict, data.record, "貢ぎオセロ財布枚罰金の色に染まった盤面通算戦敗連敗中PayなしP"].join(""));
+  const image = await loadImage(manager.avatarUrl);
+  const canvas = canvasFor();
+  const ctx = canvas.getContext("2d");
+  paintBackdrop(ctx);
+  paintHeader(ctx, "貢ぎオセロ", created.date);
+
+  paintAvatar(ctx, { image, manager, x: 110, y: 214, radius: 46, ringWidth: 5 });
+  ctx.fillStyle = TEXT;
+  fitFont(ctx, manager.personaName, 520, 48, MINCHO, 800, 30);
+  ctx.fillText(manager.personaName, 180, 214);
+  ctx.fillStyle = MIST;
+  ctx.font = `400 22px ${SANS}`;
+  ctx.fillText(`${data.walletLabel} との貢ぎオセロ`, 180, 252);
+
+  // 盤
+  const size = 720;
+  const cell = size / 8;
+  const left = (SHARE_WIDTH - size) / 2;
+  const top = 290;
+  roundRectPath(ctx, left - 14, top - 14, size + 28, size + 28, 22);
+  ctx.fillStyle = "#16301f";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(232, 194, 122, 0.55)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.45)";
+  ctx.lineWidth = 2;
+  for (let line = 0; line <= 8; line += 1) {
+    ctx.beginPath();
+    ctx.moveTo(left + line * cell, top);
+    ctx.lineTo(left + line * cell, top + size);
+    ctx.moveTo(left, top + line * cell);
+    ctx.lineTo(left + size, top + line * cell);
+    ctx.stroke();
+  }
+  const board = /^[.MP]{64}$/.test(String(data.board || "")) ? data.board : "";
+  for (let index = 0; index < board.length; index += 1) {
+    const owner = board[index];
+    if (owner === ".") continue;
+    const cx = left + (index % 8) * cell + cell / 2;
+    const cy = top + Math.floor(index / 8) * cell + cell / 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cell * 0.4, 0, Math.PI * 2);
+    if (owner === "M") {
+      ctx.fillStyle = manager.color;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    } else {
+      const coin = ctx.createRadialGradient(cx - cell * 0.12, cy - cell * 0.12, 4, cx, cy, cell * 0.42);
+      coin.addColorStop(0, "#fff1c4");
+      coin.addColorStop(1, GOLD);
+      ctx.fillStyle = coin;
+      ctx.fill();
+      ctx.strokeStyle = "#a07a2a";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fillStyle = "#6b4c12";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `700 ${Math.round(cell * 0.36)}px ${NUM}`;
+      ctx.fillText("P", cx, cy + 1);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+    }
+  }
+
+  // 決着
+  const resultTop = top + size + 90;
+  ctx.textAlign = "center";
+  ctx.fillStyle = data.result === "lost" ? "#ff8fc4" : TEXT;
+  fitFont(ctx, verdict, SHARE_WIDTH - 160, 56, DISPLAY, 400, 32);
+  ctx.fillText(verdict, SHARE_WIDTH / 2, resultTop);
+  ctx.fillStyle = MIST;
+  ctx.font = `400 26px ${SANS}`;
+  ctx.fillText(`財布 ${Number(data.payerStones)}枚 ／ ${manager.personaName} ${Number(data.managerStones)}枚`, SHARE_WIDTH / 2, resultTop + 52);
+  const penalty = Number(data.penalty) > 0
+    ? `罰金 ${show.amount ? `${formatPayNumber(data.penalty)} Pay` : "＊＊＊ Pay"}`
+    : "罰金なし";
+  ctx.fillStyle = GOLD;
+  ctx.font = `600 34px ${NUM}`;
+  ctx.fillText(penalty, SHARE_WIDTH / 2, resultTop + 104);
+  if (data.record) {
+    ctx.fillStyle = TEXT;
+    ctx.font = `700 24px ${SANS}`;
+    ctx.fillText(data.record, SHARE_WIDTH / 2, resultTop + 146);
+  }
+  ctx.textAlign = "left";
+  paintFooter(ctx);
+  return canvas;
+}
+
 // ───────────── 財布募集の画像 ─────────────
 // 管理人が自分のカードを X に貼るための画像。管理人の端末の中で描き、サーバーへは送らない。
 // URL は入れない（招待リンクは投稿の文に付ける）。中の人の札は略さず全文で入れ、AnjuPay だけで現金がないことを必ず書く。
