@@ -800,6 +800,16 @@ function createTributeService(deps) {
     Object.assign(ctx.pair.value, values);
   }
 
+  // 仕えた日数（設計書15.1）。献上か言葉の献上をした日本時間の日を、組ごとに1日1回まで数える。
+  // 月は貢ぎ帳の monthKey と分けて持つ（言葉の献上だけの月に monthKey を進めると、貢がれ総額の財布の人数がずれるため）。
+  function servedDayPatch(ctx) {
+    const pair = ctx.pair.value;
+    const sameMonth = pair.servedMonthKey === ctx.monthKey;
+    const days = sameMonth ? integer(pair.servedDays, 0, 31, 0) : 0;
+    const countedToday = sameMonth && pair.servedDayKey === ctx.dateKey;
+    return { servedMonthKey: ctx.monthKey, servedDays: countedToday ? days : days + 1, servedDayKey: ctx.dateKey };
+  }
+
   // 願い出に答える（許す・退ける）。一言を添えられ、どちらも管理人の返事として既読無視を終える。
   function answerPlea(ctx, data, grant) {
     const plea = pleaView(ctx.contract);
@@ -1327,6 +1337,7 @@ function createTributeService(deps) {
       rankOptIn: contract.rankOptIn === true,
       walletName: payerName(ctx),
       managerPersonaName: card.personaName,
+      ...servedDayPatch(ctx),
     });
     const month = extra.month.value;
     const managerProfileValue = ctx.profiles.manager.value;
@@ -1748,32 +1759,43 @@ function createTributeService(deps) {
     return { ok: true, nekamaOnly, managers: board };
   }
 
+  // 管理人ごとの番付（設計書15.1）。財布どうしを額で比べないよう、見せるのは仕えた日数の順だけにする。
+  // 当月は仕えた日数の多い順（同じなら首輪番号の古い順）、累計は首輪番号の古い順。額の順位は管理人本人にだけ返す。
   async function managerRanking(managerUid, monthKey, uid) {
-    const [monthSnapshot, lifetimeSnapshot] = await Promise.all([
-      firestore.collection("tributePairs")
-        .where("managerUid", "==", managerUid)
-        .where("rankOptIn", "==", true)
-        .where("monthKey", "==", monthKey)
-        .orderBy("monthTotal", "desc")
-        .limit(LIMITS.rankingLimit)
-        .get(),
-      firestore.collection("tributePairs")
-        .where("managerUid", "==", managerUid)
-        .where("rankOptIn", "==", true)
-        .orderBy("total", "desc")
-        .limit(LIMITS.rankingLimit)
-        .get(),
+    const pairs = () => firestore.collection("tributePairs").where("managerUid", "==", managerUid).where("rankOptIn", "==", true);
+    const read = async (label, query) => {
+      try {
+        return (await query.get()).docs.map((document) => object(document.data()));
+      } catch (error) {
+        // インデックスを作っている間などは、その欄だけ空にして詳細は開けるようにする。
+        console.error(`tribute ranking ${label} failed`, error);
+        return [];
+      }
+    };
+    const isManager = managerUid === uid;
+    const [monthPairs, lifetimePairs, amountMonth, amountLifetime] = await Promise.all([
+      read("month", pairs().where("servedMonthKey", "==", monthKey).orderBy("servedDays", "desc").orderBy("collarNo", "asc").limit(LIMITS.rankingLimit)),
+      read("lifetime", pairs().orderBy("collarNo", "asc").limit(LIMITS.rankingLimit)),
+      isManager ? read("amount-month", pairs().where("monthKey", "==", monthKey).orderBy("monthTotal", "desc").limit(LIMITS.rankingLimit)) : [],
+      isManager ? read("amount-lifetime", pairs().orderBy("total", "desc").limit(LIMITS.rankingLimit)) : [],
     ]);
-    const rows = (snapshot, field) => snapshot.docs
-      .map((document) => object(document.data()))
-      .filter((pair) => integer(pair[field], 0, Number.MAX_SAFE_INTEGER, 0) > 0)
-      .map((pair, index) => ({
-        rank: index + 1,
-        walletName: normalizeWalletName(pair.walletName),
-        amount: integer(pair[field], 0, Number.MAX_SAFE_INTEGER, 0),
-        mine: pair.payerUid === uid,
-      }));
-    return { month: rows(monthSnapshot, "monthTotal"), lifetime: rows(lifetimeSnapshot, "total") };
+    const count = (value) => integer(value, 0, Number.MAX_SAFE_INTEGER, 0);
+    const ranked = (list, fields) => list.map((pair, index) => ({
+      rank: index + 1,
+      walletName: normalizeWalletName(pair.walletName),
+      ...fields(pair),
+      mine: pair.payerUid === uid,
+    }));
+    return {
+      month: ranked(monthPairs.filter((pair) => count(pair.servedDays) > 0), (pair) => ({ days: count(pair.servedDays), collarNo: count(pair.collarNo) })),
+      lifetime: ranked(lifetimePairs.filter((pair) => count(pair.count) > 0 && count(pair.collarNo) > 0), (pair) => ({ collarNo: count(pair.collarNo) })),
+      ...(isManager ? {
+        amounts: {
+          month: ranked(amountMonth.filter((pair) => count(pair.monthTotal) > 0), (pair) => ({ amount: count(pair.monthTotal) })),
+          lifetime: ranked(amountLifetime.filter((pair) => count(pair.total) > 0), (pair) => ({ amount: count(pair.total) })),
+        },
+      } : {}),
+    };
   }
 
   async function managerAction(uid, data) {
@@ -2573,6 +2595,8 @@ function createTributeService(deps) {
           awaitingReceipt: integer(ctx.contract.awaitingReceipt, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
         });
         pushEvent(ctx, { type: "word_offering", actor: "payer", text: normalized.text });
+        // 言葉の献上も、仕えた日として数える（Pay は動かないので、額の記録は変えない）。
+        patchPair(ctx, { ...servedDayPatch(ctx), rankOptIn: ctx.contract.rankOptIn === true, walletName: payerName(ctx) });
         return { ok: true, contract: view(ctx) };
       },
     },
@@ -3209,17 +3233,22 @@ function createTributeService(deps) {
 
   async function cheerList(managerUid, monthKey, uid) {
     try {
-      const snapshot = await firestore.collection("tributePairs")
-        .where("managerUid", "==", managerUid)
-        .where("cheerMonthKey", "==", monthKey)
-        .orderBy("monthTotal", "desc")
-        .limit(LIMITS.cheersLimit)
-        .get();
-      const rows = snapshot.docs
+      // 新しい順（書いた・書き直した時刻）。額の順にすると、額を出さなくても財布どうしの比較になるため（設計書15.1）。
+      const cheers = () => firestore.collection("tributePairs").where("managerUid", "==", managerUid).where("cheerMonthKey", "==", monthKey);
+      let docs;
+      try {
+        docs = (await cheers().orderBy("cheerAt", "desc").limit(LIMITS.cheersLimit).get()).docs;
+      } catch (error) {
+        // 新しいインデックスを作っている間は、前のインデックスで読み、ここで並べ替える。
+        console.error("tribute cheers by time failed", error);
+        docs = (await cheers().orderBy("monthTotal", "desc").limit(LIMITS.cheersLimit).get()).docs;
+      }
+      const rows = docs
         .map((document) => object(document.data()))
         .map((pair) => ({ uid: String(pair.payerUid || ""), pair, cheer: cheerState(pair, monthKey) }))
         .filter((row) => row.uid && row.cheer.text && CHEER_ID_PATTERN.test(String(row.pair.cheerId || "")))
-        .filter((row) => !row.cheer.hidden || managerUid === uid || row.uid === uid);
+        .filter((row) => !row.cheer.hidden || managerUid === uid || row.uid === uid)
+        .sort((left, right) => right.cheer.at - left.cheer.at);
       return (await visibleRows(uid, rows)).map((row) => ({
         cheerId: row.pair.cheerId,
         walletName: normalizeWalletName(row.pair.walletName),

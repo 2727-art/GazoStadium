@@ -1,0 +1,477 @@
+{
+  "checkedAt": "2026-10-28T07:15:00.321Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "db48bf6",
+  "implementationCommit": "2709c3c",
+  "baseCommit": "e04aac2",
+  "alsoPushed": [
+    "725367c (type stock lines release record)"
+  ],
+  "decisions": {
+    "design": "TRIBUTE_DESIGN.md section 15.1",
+    "ranking": "per-manager ranking by days served this month (once per JST day, tributes and word offerings), then collar number; lifetime by collar number; no amounts between wallets",
+    "managerOnlyAmounts": true,
+    "cheers": "newest first",
+    "decidedBy": "user, 2026-10-28 JST"
+  },
+  "scope": {
+    "firestoreIndexes": [
+      "tributePairs: managerUid, rankOptIn, servedMonthKey, servedDays desc, collarNo",
+      "tributePairs: managerUid, rankOptIn, collarNo",
+      "tributePairs: managerUid, cheerMonthKey, cheerAt desc"
+    ],
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2288,
+    "passed": 2254,
+    "failed": 0,
+    "skipped": 34,
+    "afterMergingMain": true
+  },
+  "preRelease": {
+    "deliveryCheckedAt": "2026-10-28T07:09:06.806Z",
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css"
+    ],
+    "otherSessionFunctionsChangedBefore": [
+      "cleanupPlayerSafety",
+      "economyAction",
+      "playerSafetyAction",
+      "valueMarketAction"
+    ],
+    "tributeActionUnchangedSinceLastRelease": true
+  },
+  "push": "e04aac2..db48bf6",
+  "indexes": {
+    "liveTributePairs": [
+      "managerUid:ASCENDING,cheerId:ASCENDING,__name__:ASCENDING",
+      "managerUid:ASCENDING,cheerMonthKey:ASCENDING,cheerAt:DESCENDING,__name__:DESCENDING",
+      "managerUid:ASCENDING,cheerMonthKey:ASCENDING,monthTotal:DESCENDING,__name__:DESCENDING",
+      "managerUid:ASCENDING,lastAt:DESCENDING,__name__:DESCENDING",
+      "managerUid:ASCENDING,rankOptIn:ASCENDING,collarNo:ASCENDING,__name__:ASCENDING",
+      "managerUid:ASCENDING,rankOptIn:ASCENDING,monthKey:ASCENDING,monthTotal:DESCENDING,__name__:DESCENDING",
+      "managerUid:ASCENDING,rankOptIn:ASCENDING,servedMonthKey:ASCENDING,servedDays:DESCENDING,collarNo:ASCENDING,__name__:ASCENDING",
+      "managerUid:ASCENDING,rankOptIn:ASCENDING,total:DESCENDING,__name__:DESCENDING",
+      "payerUid:ASCENDING,lastAt:DESCENDING,__name__:DESCENDING"
+    ],
+    "newIndexesPresent": true,
+    "buildStateVisible": false
+  },
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "f899ed6d290697f3625337221d4dac643691b5ca",
+        "sourceHash": "562d8d7f89a530b231b6dfb083b9a8223473c3c6"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "commit": "db48bf6",
+    "conclusion": "success",
+    "completedAt": "2026-10-28T07:14:16Z"
+  },
+  "delivery": {
+    "checkedAt": "2026-10-28T07:15:00.321Z",
+    "readOnly": true,
+    "marker": "ranch-served-days-v1",
+    "commit": "db48bf69a537d2e92b36e92551e176495e73ab4c",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-served-days-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-served-days.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_MANAGER_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-styles.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-served-days-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-served-days.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_MANAGER_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-styles.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-served-days-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-served-days.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_MANAGER_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-styles.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-served-days-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-served-days.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_MANAGER_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-styles.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": true,
+    "ranchModuleReady": true,
+    "servedClientHas": {
+      "daysRanking": true,
+      "managerOnlyAmountSection": true,
+      "cheersNewestFirst": true
+    },
+    "consoleErrors": 1,
+    "consoleErrorNote": "the same single 403 seen in earlier checks (App Check in the check browser)",
+    "storedAuthRecords": 0
+  },
+  "open": [
+    "the ranking and cheers were not seen by a signed-in user in production (tests and preview)",
+    "the ranking column is empty until the new indexes finish building",
+    "October days are counted from the release day",
+    "next: stage 2 (貢ぎオセロ, design 15.2)"
+  ]
+}

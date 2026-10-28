@@ -1,0 +1,414 @@
+{
+  "checkedAt": "2026-10-27T12:48:48.810Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "c78e89f",
+  "baseCommit": "dd54b58",
+  "decisions": {
+    "what": "chat stock lines and rewards follow the manager types",
+    "stockLines": "3 per tone per type (45), shown only for the chosen types, at the tone picked in the template panel",
+    "rewards": "3 per type (15) with a style tag, offered and accepted only for the types on the card",
+    "sexualWords": false,
+    "decidedBy": "user, 2026-10-27 JST"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreRules": false,
+    "firestoreIndexes": [],
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2284,
+    "passed": 2251,
+    "failed": 0,
+    "skipped": 33
+  },
+  "preRelease": {
+    "deliveryCheckedAt": "2026-10-27T12:42:20.279Z",
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "functionsUnchangedSinceLastRelease": true
+  },
+  "push": "dd54b58..c78e89f",
+  "functions": {
+    "listed": 37,
+    "allActive": true,
+    "changed": [
+      {
+        "id": "tributeAction",
+        "previousSourceHash": "dd0273aa1a6ab1fa0ed81dad8d488c3889af09b9",
+        "sourceHash": "f899ed6d290697f3625337221d4dac643691b5ca"
+      }
+    ],
+    "othersUnchanged": true
+  },
+  "workersBuild": {
+    "name": "Workers Builds: gazostadium",
+    "commit": "c78e89f",
+    "conclusion": "success",
+    "completedAt": "2026-10-27T12:48:35Z"
+  },
+  "delivery": {
+    "checkedAt": "2026-10-27T12:48:48.810Z",
+    "readOnly": true,
+    "marker": "ranch-style-words-v1",
+    "commit": "c78e89fcb5997d205ecda8df2fefd2fd377b8623",
+    "ok": true,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-style-words-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-styles.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-style-words-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-styles.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-style-words-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-styles.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://hariaistadium.com",
+        "ok": true,
+        "indexPlainInviteAndOpenMatchRelease": true,
+        "previousReleaseMarkers": true,
+        "files": [
+          {
+            "file": "tribute.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute.css",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "account.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "app.js",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-core.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-share.mjs",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "file": "tribute-deco.mjs",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/TRIBUTE_DESIGN.md",
+            "status": 404
+          },
+          {
+            "file": "/firebase.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-service.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/tribute-rules.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/scripts/verify-tribute-style-words-release.cjs",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-styles.test.js",
+            "status": 404
+          },
+          {
+            "file": "/functions/docs/TRIBUTE_WALLET_PSYCHOLOGY.md",
+            "status": 404
+          },
+          {
+            "file": "/firestore.indexes.json",
+            "status": 404
+          },
+          {
+            "file": "/functions/test/tribute-service-runtime.test.js",
+            "status": 404
+          }
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "origin": "https://gazostadium.web.app",
+    "pageLoadOnly": true,
+    "newCacheKeys": true,
+    "ranchModuleReady": true,
+    "servedClientHas": {
+      "typeStockLines": true,
+      "typeRewards": true
+    },
+    "consoleErrors": 1,
+    "consoleErrorNote": "the same single 403 seen in earlier checks (App Check in the check browser)",
+    "storedAuthRecords": 0
+  },
+  "open": [
+    "type stock lines and rewards were not used in production (tests and preview)",
+    "renaming 財布募集の画像 is left to the user"
+  ]
+}
