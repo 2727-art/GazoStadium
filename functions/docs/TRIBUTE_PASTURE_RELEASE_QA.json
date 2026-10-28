@@ -1,0 +1,138 @@
+{
+  "checkedAt": "2026-10-28T10:40:26Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "5a417a6",
+  "implementationCommit": "7b6db98",
+  "baseCommit": "1847297",
+  "decisions": {
+    "design": "TRIBUTE_DESIGN.md section 16, stage 1",
+    "level": "grows from the relationship (welcome 5, served day 3, receive 1, confirm 2, plea answer 1, extension 2), at most 10 a day per wallet, never from Pay amounts, never decreases",
+    "seed": "managers from before start at collarCount x 5",
+    "grazing": "payer consent per contract (allowGrazing), default on for new applications, off for older contracts; only the manager sees the ranch in stage 1",
+    "animals": "cow, pig, sheep picked by the manager; default by contract id",
+    "moods": "from the contract's facts only; narrator lines in the third person",
+    "art": "soft diorama drawn in Blender, original (no copied game assets)",
+    "placement": "top of the manager's contracts screen",
+    "decidedBy": "user, 2026-10-28 JST (all recommended options)"
+  },
+  "scope": {
+    "functions": [
+      "tributeAction"
+    ],
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs"
+    ],
+    "newPublicFiles": {
+      "dir": "assets/tribute-ranch/",
+      "count": 84,
+      "bytes": 740200
+    },
+    "privateFiles": [
+      "art/tribute-ranch/render_ranch.py"
+    ],
+    "cacheKey": "ranch-pasture-v1",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2329,
+    "passed": 2295,
+    "failed": 0,
+    "skipped": 34,
+    "afterMergingMain": true,
+    "newFiles": [
+      "functions/test/tribute-pasture.test.js"
+    ]
+  },
+  "preview": {
+    "width": "375x812",
+    "consoleErrors": 0,
+    "horizontalOverflow": false,
+    "checked": [
+      "ranch at night and switched to day",
+      "tap card and switching an animal to cow",
+      "day log",
+      "payer grazing settings and grazing_changed",
+      "application consent default on",
+      "board badge Lv.6"
+    ],
+    "notChecked": [
+      "evening art in the preview"
+    ]
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "84 ranch images"
+    ],
+    "mainPr19AlreadyLive": true,
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "tributeActionHash": "b7c1e82290530d76f42d3ca89b8e56796ac21379"
+    }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 5a417a6 and origin/main contained)",
+    "order": [
+      "functions:tributeAction",
+      "git push origin HEAD:main (1847297..5a417a6)",
+      "hosting"
+    ],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": {
+        "tributeAction": {
+          "before": "b7c1e82290530d76f42d3ca89b8e56796ac21379",
+          "after": "d5a1ac1ae19e3aec8e9d24318afdab28c4cb06ed"
+        }
+      }
+    },
+    "workersBuild": {
+      "commit": "5a417a6",
+      "conclusion": "success",
+      "completedAt": "2026-10-28T10:39:35Z"
+    },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-pasture-release.cjs",
+      "checkedAt": "2026-10-28T10:40:26.142Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "imagesPerRoute": 84,
+      "imagesByteIdentical": true,
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-pasture-v1 on the manifest tribute.js, the tribute.css data-src and tribute-core.mjs",
+      "ranchPanelServed": true,
+      "imageContentType": "image/webp",
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "a real ranch level can only be checked by signed-in managers; covered by tests and previews",
+    "contracts from before stay off until the payer turns grazing on",
+    "evening art not checked in the preview",
+    "next: stage 2 (payer's view, moo lines, weather and seasons, more animals)"
+  ]
+}
