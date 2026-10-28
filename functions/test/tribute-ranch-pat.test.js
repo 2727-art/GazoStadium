@@ -19,6 +19,18 @@ const styles = read("tribute.css");
 const design = read("TRIBUTE_DESIGN.md");
 const loadCore = () => import(pathToFileURL(path.join(root, "tribute-core.mjs")).href);
 const DAY = 86_400_000;
+// 画面は Date.now() で時間帯を決める（日本時間23〜6時は眠っていて、鳴き声も出ない）。いつ走らせても同じ結果になるよう、
+// 画面の時計を日本時間の昼に止める。
+const NOON = Date.UTC(2026, 9, 28, 3);
+class NoonDate extends Date {
+  constructor(...args) {
+    super(...(args.length ? args : [NOON]));
+  }
+
+  static now() {
+    return NOON;
+  }
+}
 
 function extract(source, name) {
   const start = new RegExp(`(?:async )?function ${name}\\(`).exec(source);
@@ -70,6 +82,7 @@ async function ranchRenderer() {
   const core = await loadCore();
   const context = vm.createContext({
     ...core,
+    Date: NoonDate,
     escapeHtml: (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;"),
     previewScreen: "",
     window: { localStorage: { getItem: () => null, setItem: () => {} } },
@@ -93,7 +106,7 @@ function herdOf(core, now, count, extra = () => ({})) {
 
 test("the manager's card has a pat button, then 'patted today'; animals away cannot be patted", async () => {
   const { core, context } = await ranchRenderer();
-  const now = Date.now();
+  const now = NOON;
   const herd = herdOf(core, now, 3, (index) => (index === 1 ? { pattedAt: now - 60_000 } : index === 2 ? { workOrder: { orderSeq: 1, target: 3, note: "", issuedAt: now - 1000, reportedCount: 0, doneAt: 0 } } : {}));
   context.state.contracts = herd;
   context.state.ranch.selected = herd[0].contractId;
@@ -115,7 +128,7 @@ test("the manager's card has a pat button, then 'patted today'; animals away can
 
 test("the wallet's peek shows when it was last patted", async () => {
   const { core, context } = await ranchRenderer();
-  const now = Date.now();
+  const now = NOON;
   const raw = {
     contractId: "1".repeat(40), managerUid: "manager", payerUid: "u", status: "active", acceptedAt: now - 9 * DAY, expiresAt: now + 9 * DAY,
     managerCard: { personaName: "ミオ様" }, payerWalletName: "ポチ財布", allowGrazing: true, ranchAnimal: "rabbit", todayKey: core.jstDateKey(now),
@@ -142,7 +155,7 @@ test("more than twelve animals stand next to the twelve spots, smaller, and neve
     const [x, y] = core.ranchSpot(index);
     assert.ok(x > 0.2 && x < 0.8 && y > 0.4 && y < 0.82, `${index}: ${x},${y} stays on the island`);
   }
-  const now = Date.now();
+  const now = NOON;
   const twelve = herdOf(core, now, 12);
   context.state.contracts = twelve;
   assert.doesNotMatch(context.renderRanch(twelve, { card: {}, ranch: { xp: 0 } }), /is-crowded/);
@@ -156,7 +169,7 @@ test("more than twelve animals stand next to the twelve spots, smaller, and neve
 
 test("speech bubbles take turns: one animal at a time, whatever the herd size", async () => {
   const { core, context } = await ranchRenderer();
-  const now = Date.now();
+  const now = NOON;
   for (const count of [1, 3, 4, 7, 12, 20]) {
     const herd = herdOf(core, now, count);
     context.state.contracts = herd;

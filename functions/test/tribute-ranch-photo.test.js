@@ -21,6 +21,18 @@ const styles = read("tribute.css");
 const design = read("TRIBUTE_DESIGN.md");
 const loadCore = () => import(pathToFileURL(path.join(root, "tribute-core.mjs")).href);
 const DAY = 86_400_000;
+// 画面は Date.now() で時間帯を決める（日本時間23〜6時は眠っていて、鳴き声も出ない）。いつ走らせても同じ結果になるよう、
+// 画面の時計を日本時間の昼に止める。
+const NOON = Date.UTC(2026, 9, 28, 3);
+class NoonDate extends Date {
+  constructor(...args) {
+    super(...(args.length ? args : [NOON]));
+  }
+
+  static now() {
+    return NOON;
+  }
+}
 
 function extract(source, name) {
   const start = new RegExp(`(?:async )?function ${name}\\(`).exec(source);
@@ -127,6 +139,7 @@ async function ranchRenderer(extra = {}) {
   const core = await loadCore();
   const context = vm.createContext({
     ...core,
+    Date: NoonDate,
     escapeHtml: (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;"),
     previewScreen: "",
     avatarUrl: () => "",
@@ -146,7 +159,7 @@ async function ranchRenderer(extra = {}) {
 
 test("the wallet's peek shows its own record, and the ranch name", async () => {
   const { core, context } = await ranchRenderer();
-  const now = Date.now();
+  const now = NOON;
   const day = (at) => new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "numeric", day: "numeric" }).format(new Date(at));
   const raw = {
     contractId: "1".repeat(40), managerUid: "manager", payerUid: "u", status: "active", acceptedAt: now - 50 * DAY, expiresAt: now + 9 * DAY,

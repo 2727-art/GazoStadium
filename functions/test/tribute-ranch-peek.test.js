@@ -21,6 +21,18 @@ const art = read("art/tribute-ranch/render_ranch.py");
 const design = read("TRIBUTE_DESIGN.md");
 const loadCore = () => import(pathToFileURL(path.join(root, "tribute-core.mjs")).href);
 const DAY = 86_400_000;
+// 画面は Date.now() で時間帯を決める（日本時間23〜6時は眠っていて、鳴き声も出ない）。いつ走らせても同じ結果になるよう、
+// 画面の時計を日本時間の昼に止める。
+const NOON = Date.UTC(2026, 9, 28, 3);
+class NoonDate extends Date {
+  constructor(...args) {
+    super(...(args.length ? args : [NOON]));
+  }
+
+  static now() {
+    return NOON;
+  }
+}
 const JST_NOON = (year, month, day) => Date.UTC(year, month - 1, day, 3);
 
 function extract(source, name) {
@@ -178,6 +190,7 @@ async function ranchRenderer() {
   const core = await loadCore();
   const context = vm.createContext({
     ...core,
+    Date: NoonDate,
     escapeHtml: (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;"),
     previewScreen: "",
     window: { localStorage: { getItem: () => null, setItem: () => {} } },
@@ -193,7 +206,7 @@ async function ranchRenderer() {
 
 test("the manager's ranch alternates narrator facts with the wallet's own moo lines, and shows the weather", async () => {
   const { core, context } = await ranchRenderer();
-  const now = Date.now();
+  const now = NOON;
   const contract = (id, extra = {}) => core.viewContract({
     contractId: id.repeat(40), managerUid: "manager", payerUid: `payer-${id}`, status: "active", acceptedAt: now - DAY, expiresAt: now + 9 * DAY,
     payerWalletName: `財布${id}`, allowGrazing: true, ranchAnimal: "goat", todayKey: core.jstDateKey(now), ...extra,
@@ -219,7 +232,7 @@ test("the manager's ranch alternates narrator facts with the wallet's own moo li
 
 test("the wallet's peek shows the manager's ranch with only its own animal, under its wallet name", async () => {
   const { core, context } = await ranchRenderer();
-  const now = Date.now();
+  const now = NOON;
   const view = core.viewContract({
     contractId: "1".repeat(40), managerUid: "manager", payerUid: "u", status: "active", acceptedAt: now - DAY, expiresAt: now + 9 * DAY,
     managerCard: { personaName: "ミオ様" }, payerWalletName: "ポチ財布", allowGrazing: true, ranchAnimal: "rabbit", servedTotal: 45,
