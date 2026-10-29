@@ -9,11 +9,12 @@ const source = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const body = acorn.parse(source, { ecmaVersion: 'latest' }).body[0].expression.callee.body.body;
 const scheduler = body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'scheduleLandingPresence');
 
-function harness({ idle = true, ready = 'loading', visible = true, landing = true } = {}) {
+function harness({ idle = true, ready = 'loading', visible = true, landing = true, busy = false } = {}) {
   const events = new Map(), frames = [], timers = [], idleTasks = [], loads = [];
-  const state = { landing };
+  const state = { landing, busy };
   const listen = (name, callback) => events.set(name, callback);
-  const document = { readyState: ready, visibilityState: visible ? 'visible' : 'hidden', addEventListener: listen };
+  const document = { readyState: ready, visibilityState: visible ? 'visible' : 'hidden', addEventListener: listen,
+    querySelector: () => state.busy ? {} : null };
   const window = { addEventListener: listen, requestAnimationFrame: callback => frames.push(callback),
     HariaiFeatures: { load: name => { loads.push(name); return Promise.resolve(); } } };
   if (idle) window.requestIdleCallback = callback => idleTasks.push(callback);
@@ -45,6 +46,34 @@ test('leaving the landing cancels pending counts and returning home reschedules 
   h.paint(); h.state.landing = false; h.finish(); assert.deepEqual(h.loads, []);
   h.state.landing = true; h.events.get('hariai-landing-rendered')();
   h.paint(); h.finish(); assert.deepEqual(h.loads, ['presence']);
+});
+
+test('a slow game load suspends lobby requests, and canceling it restores one landing request', () => {
+  const h = harness({ ready: 'complete', busy: true });
+  assert.equal(h.frames.length, 0);
+  h.state.busy = false; h.events.get('hariai-feature-load-settled')();
+  h.paint(); h.state.busy = true; h.finish();
+  assert.deepEqual(h.loads, [], 'a feature opened during the quiet period also suppresses counts');
+  h.state.busy = false; h.events.get('hariai-feature-load-settled')();
+  h.paint(); h.finish(); assert.deepEqual(h.loads, ['presence']);
+  h.events.get('hariai-feature-load-settled')();assert.equal(h.frames.length, 0);
+});
+
+test('finishing a feature does not start lobby traffic behind its screen', () => {
+  const h = harness({ ready: 'complete', busy: true });
+  h.state.busy = false; h.events.get('hariai-feature-load-settled')();
+  h.state.landing = false; h.paint(); h.finish();
+  assert.deepEqual(h.loads, []);
+});
+
+test('clearing the loading overlay announces settled navigation without changing stored data', () => {
+  const busy = body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'setBusy');
+  const events = [];
+  vm.runInNewContext(source.slice(busy.start, busy.end) + '; setBusy(false);', {
+    document: { querySelector: () => ({ remove(){events.push('removed');} }) },
+    window: { dispatchEvent: event => events.push(event.type) }, Event: class { constructor(type){this.type=type;} },
+  });
+  assert.deepEqual(events, ['removed', 'hariai-feature-load-settled']);
 });
 
 test('background tabs wait until visible; browsers without idle callbacks still load counts', () => {
