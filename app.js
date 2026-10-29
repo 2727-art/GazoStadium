@@ -532,7 +532,10 @@
 
   function setBusy(isBusy, message = "画像を準備しています…") {
     document.querySelector("#loadingOverlay")?.remove();
-    if (!isBusy) return;
+    if (!isBusy) {
+      window.dispatchEvent(new Event("hariai-feature-load-settled"));
+      return;
+    }
     document.body.insertAdjacentHTML(
       "beforeend",
       `<div class="loading-overlay" id="loadingOverlay" role="status" aria-live="polite">
@@ -2181,7 +2184,8 @@
   function scheduleLandingPresence() {
     let queued = false;
     let started = false;
-    const isLanding = () => document.visibilityState === "visible" && !!app.querySelector(".vl-landing");
+    const isLanding = () => document.visibilityState === "visible"
+      && !document.querySelector("#loadingOverlay") && !!app.querySelector(".vl-landing");
     const schedule = () => {
       if (queued || started || document.readyState !== "complete" || !isLanding()) return;
       queued = true;
@@ -2202,6 +2206,7 @@
     };
     window.addEventListener("load", schedule, { once: true });
     window.addEventListener("hariai-landing-rendered", schedule);
+    window.addEventListener("hariai-feature-load-settled", schedule);
     document.addEventListener("visibilitychange", schedule);
     schedule();
   }
