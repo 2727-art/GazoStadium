@@ -587,7 +587,7 @@
       <div class="vl-hero">
         <div class="vl-copy">
           <p class="vl-eyebrow">#貼り合い ・ 1on1</p>
-          <h1 class="vl-title">貼って、刺して、<br />点で返す。</h1>
+          <h1 class="vl-title"><span class="vl-title-name">貼り合いスタジアム｜</span>貼って、刺して、<br />点で返す。</h1>
           <p class="vl-lead">DMじゃ物足りない貼り合いに。<em>女の子になり切れる吹き出し</em>で、刺さり具合を点で返す。</p>
         </div>
         <div class="vl-hero-stage" data-landing-hero>
@@ -2176,11 +2176,33 @@
   } else if (recoverAccount) {
     launchFeature("account", () => window.HariaiAccount.openRequestedLink());
   }
-  const loadCounts = () => {
-    const run = () => window.HariaiFeatures.load("presence").catch(() => {});
-    if ("requestIdleCallback" in window) window.requestIdleCallback(run, { timeout: 2500 });
-    else setTimeout(run, 0);
-  };
-  if (document.readyState === "complete") loadCounts();
-  else window.addEventListener("load", loadCounts, { once: true });
+  scheduleLandingPresence();
+
+  function scheduleLandingPresence() {
+    let queued = false;
+    let started = false;
+    const isLanding = () => document.visibilityState === "visible" && !!app.querySelector(".vl-landing");
+    const schedule = () => {
+      if (queued || started || document.readyState !== "complete" || !isLanding()) return;
+      queued = true;
+      // A load/idle callback alone can precede the first paint. Leave a painted
+      // frame and a short quiet period before importing Firebase for counts.
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        setTimeout(() => {
+          const run = () => {
+            queued = false;
+            if (!isLanding()) return;
+            started = true;
+            window.HariaiFeatures.load("presence").catch(() => { started = false; });
+          };
+          if ("requestIdleCallback" in window) window.requestIdleCallback(run, { timeout: 5000 });
+          else run();
+        }, 1200);
+      }));
+    };
+    window.addEventListener("load", schedule, { once: true });
+    window.addEventListener("hariai-landing-rendered", schedule);
+    document.addEventListener("visibilitychange", schedule);
+    schedule();
+  }
 })();
