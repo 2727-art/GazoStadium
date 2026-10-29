@@ -1,17 +1,20 @@
 import {
   connectAuthEmulator,
-  getAuth,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
-import { database } from "./firebase-database-client.mjs?v=lazy-loading-v1";
+  initializeAuth,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+} from "./assets/firebase/firebase-auth-BU4OMZEH.js";
+import { database } from "./firebase-database-client.mjs?v=lazy-loading-v1-mobile-loading-v1";
 import {
   connectFirestoreEmulator,
   getFirestore,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+} from "./assets/firebase/firebase-firestore-QNR56A4P.js";
 import {
   connectFunctionsEmulator,
   getFunctions,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
-import { firebaseApp } from "./firebase-client.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
+} from "./assets/firebase/firebase-functions-TFNFZUKR.js";
+import { firebaseApp } from "./firebase-client.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-mobile-loading-v1";
 
 const isLocalhost = ["127.0.0.1", "localhost"].includes(location.hostname);
 const searchParams = new URLSearchParams(location.search);
@@ -23,7 +26,11 @@ export const useOfflineMarketPreview = isLocalhost
     || searchParams.has("rouletteTrainingPreview"))
   && !useFirebaseEmulators;
 
-export const auth = getAuth(firebaseApp);
+// Keep the same persistence search order as getAuth(), including existing users.
+// Popup/redirect infrastructure is only needed when the user links Google.
+export const auth = initializeAuth(firebaseApp, {
+  persistence: [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence],
+});
 export { database };
 export const firestore = getFirestore(firebaseApp);
 export const functions = getFunctions(firebaseApp, "us-central1");

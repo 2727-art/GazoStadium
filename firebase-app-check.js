@@ -2,7 +2,7 @@ import {
   CustomProvider,
   ReCaptchaEnterpriseProvider,
   initializeAppCheck,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app-check.js";
+} from "./assets/firebase/firebase-app-check-GJ5H5HVI.js";
 import { appCheckRecaptchaEnterpriseSiteKey } from "./firebase-config.js?v=app-check-v3";
 
 let appCheck = null;

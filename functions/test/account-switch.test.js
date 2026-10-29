@@ -66,7 +66,8 @@ test("a sign-in error after identity changes retains the original return session
 
 test("Google selection uses an isolated Auth session and never changes the current game", async () => {
   const { c, current } = harness();
-  c.signInWithPopup = async (targetAuth) => {
+  c.signInWithPopup = async (targetAuth, _provider, resolver) => {
+    assert.equal(resolver, c.browserPopupRedirectResolver);
     assert.notEqual(targetAuth, c.auth);
     targetAuth.currentUser = { uid: "selected" };
     return { user: targetAuth.currentUser };

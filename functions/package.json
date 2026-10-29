@@ -13,7 +13,7 @@
     "test:flea-emulator": "node test/run-anju-pay-flea-e2e-emulator.js",
     "test:flea-emulator:run": "node --test --test-concurrency=1 test/anju-pay-flea-e2e-emulator.test.js",
     "serve": "firebase emulators:start --only auth,functions,firestore,database --project demo-gazostadium",
-    "build:client": "node ../scripts/build-landing.cjs && node ../scripts/build-market-records.cjs && node ../scripts/build-ranch-css.cjs"
+    "build:client": "node ../scripts/build-firebase-sdk.cjs && node ../scripts/build-landing.cjs && node ../scripts/build-market-records.cjs && node ../scripts/build-ranch-css.cjs"
   },
   "dependencies": {
     "firebase-admin": "14.3.0",
@@ -22,7 +22,9 @@
   "devDependencies": {
     "@firebase/rules-unit-testing": "5.0.1",
     "acorn": "8.15.0",
+    "esbuild": "0.28.2",
     "firebase": "12.19.0",
+    "firebase-web": "npm:firebase@12.16.0",
     "postcss": "8.5.6"
   },
   "overrides": {

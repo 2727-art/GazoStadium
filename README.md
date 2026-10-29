@@ -755,4 +755,14 @@ GitHub Pagesにはフロントエンドの静的ファイルだけを配置で�
 
 旧市場は `market-records.js` / `market-records.css` だけを配信し、記録閲覧時の取引初期化・ウォレット/取引ルーム監視・P2P通信を行いません。購入済み証書、累計/月間ランキング、永久実績、公開プロフィール設定を残します。元の `market.js` / `market.css` は歴史的な表示の生成元と回帰テスト用です。廃止済みの市場・フリマ・断惑NOTE・自由卓の単独JS/CSSは両ホストで公開対象から除外します。共有の自由卓由来メディア/環境音ライブラリや保存済み購入・実績データは維持します。
 
-Googleフォントは2種類に絞り、表示を止めない読み込みと `display=optional` を使います。引き継ぎ案内は初期HTMLに含め、読み込み後の挿入によるレイアウト移動を防ぎます。faviconも配信します。
+トップは Dela Gothic One の見出し用文字だけを約6KBのローカルWOFF2で配信します。通常画面の全字形は `display-fonts`、手書き書体は戦略型・ルーレットの `memo-fonts` として使用時に取得します。牧場では画像作成時まで全字形を読み込みません。元フォントのライセンスと文字集合は `assets/fonts/` に保存しています。引き継ぎ案内は初期HTMLに含め、読み込み後の挿入によるレイアウト移動を防ぎます。faviconも配信します。
+
+## Firebase配信とスマホの初期化（2026-10-29）
+
+ブラウザ用SDKは従来と同じ12.16.0です。`functions` の開発依存 `firebase-web` を固定し、`scripts/build-firebase-sdk.cjs` が実際に使う名前付きexportだけをesbuildでまとめ、`assets/firebase/` に内容指紋付きESMを生成します。共通chunkを共有するため、Auth・App Check・Firestore・Realtime Database・Functionsのアプリ登録は一つです。`npm --prefix functions ci` の後、`npm --prefix functions run build:client` と `npm --prefix functions run check` を実行してください。生成物とソースのSDK参照、ライセンス、manifestもコミットします。SDKの更新は軽量化と別に検証します。
+
+Authは `getAuth()` と同じ保存領域の探索順序で `initializeAuth()` します。ログインUIDと既存セッションは引き継ぎ、Google連携・選択時だけ `browserPopupRedirectResolver` を渡します。App Checkは全サービスより先に初期化し、Enterprise provider・自動更新・サーバーの強制設定を維持します。
+
+長期キャッシュは `_headers` と `firebase.json` に列挙した内容指紋付きファイルだけに限定します。SDKの生成ファイル名が変わったら両方のキャッシュ対象を合わせて更新してください（全体テストで不一致を検出します）。HTML、通常のJS/CSS、manifestには長期キャッシュを設定しません。通常のソース変更では従来どおり参照元の `?v=` も更新します。
+
+`functions/test/fixtures/mobile-sdk-session.html` は、ローカルエミュレーター専用のブラウザ検証画面です。旧CDN版が保存したlocalStorage・IndexedDB・sessionStorageのユーザーを新しい配信コードで復元し、UID維持、ウォレット・契約履歴の購読、他人のデータの拒否、AuthとApp Checkのヘッダー伝達を確認します。本番には配信しません。

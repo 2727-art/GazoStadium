@@ -17,12 +17,12 @@ test('initial document excludes game and retired requests, and every lazy import
  assert.deepEqual(initial,['domain-move.js','audio.js','feature-loader.js','app.js','landing-hero.mjs']);
  assert.ok(index.includes('<main id="app" tabindex="-1"><section class="screen hero vl-landing">'));
  const seen=new Map();const visited=new Set();
- function walk(raw){
-  const url=new URL(raw,'https://test.example/');if(url.origin!=='https://test.example')return;
+ function walk(raw,base='https://test.example/'){
+  const url=new URL(raw,base);if(url.origin!=='https://test.example')return;
   const old=seen.get(url.pathname);assert.ok(!old||old===url.href,`duplicate module ${url.pathname}: ${old} vs ${url.href}`);seen.set(url.pathname,url.href);
   if(visited.has(url.href))return;visited.add(url.href);
   const ast=acorn.parse(read(url.pathname.slice(1)),{ecmaVersion:'latest',sourceType:'module'});
-  const imports=node=>{if(!node||typeof node!=='object')return;if(['ImportDeclaration','ImportExpression','ExportNamedDeclaration','ExportAllDeclaration'].includes(node.type)&&node.source?.value)walk(node.source.value);for(const value of Object.values(node)){if(Array.isArray(value))value.forEach(imports);else if(value&&typeof value==='object')imports(value);}};
+  const imports=node=>{if(!node||typeof node!=='object')return;if(['ImportDeclaration','ImportExpression','ExportNamedDeclaration','ExportAllDeclaration'].includes(node.type)&&node.source?.value)walk(node.source.value,url.href);for(const value of Object.values(node)){if(Array.isArray(value))value.forEach(imports);else if(value&&typeof value==='object')imports(value);}};
   imports(ast);
  }
  for(const entry of Object.values(manifest))if(entry.module)walk(entry.module);
@@ -35,7 +35,7 @@ test('initial document excludes game and retired requests, and every lazy import
 });
 
 test('generated landing and record assets stay synchronized with their source renderers', () => {
- for(const script of ['build-landing.cjs','build-market-records.cjs','build-ranch-css.cjs']) execFileSync(process.execPath,[`scripts/${script}`,'--check'],{cwd:root,stdio:'pipe'});
+ for(const script of ['build-firebase-sdk.cjs','build-landing.cjs','build-market-records.cjs','build-ranch-css.cjs']) execFileSync(process.execPath,[`scripts/${script}`,'--check'],{cwd:root,stdio:'pipe'});
 });
 
 test('parallel feature loads coalesce and await their dependencies/styles; a failed stylesheet can retry', async () => {
@@ -61,6 +61,20 @@ test('canceling a pending feature keeps its eventual import from navigating; lat
  const first=context.launchFeature('online',()=>launched.push('old'));cancel();pending.resolve();await first;assert.deepEqual(launched,[]);
  await context.launchFeature('online',()=>launched.push('new'));assert.deepEqual(launched,['new']);assert.equal(busy.at(-1),false);
 });
+
+test('optional fonts neither block a feature nor fail it when the font server fails', async () => {
+ const loaded=[];let font;
+ const sandbox={URL,Promise,Map,window:{},document:{baseURI:'https://test.example/',querySelector(selector){
+  return selector==='#featureManifest'?{textContent:JSON.stringify({game:{optionalStyles:['font'],module:'game.js'}})}:font;
+ },head:{appendChild(){}},createElement(){return {};}} ,loadModule:async url=>loaded.push(url)};
+ font={dataset:{src:'https://fonts.example/font.css'},removeAttribute(){},set href(value){}};
+ vm.runInNewContext(read('feature-loader.js').replace('await import(new URL(config.module, document.baseURI).href)','await loadModule(new URL(config.module, document.baseURI).href)'),sandbox);
+ await sandbox.window.HariaiFeatures.load('game');
+ assert.equal(loaded.length,1,'entry finishes while font is still pending');
+ font.onerror();await tick();
+ await sandbox.window.HariaiFeatures.load('game');assert.equal(loaded.length,1);
+});
+
 
 for (const regular of [false, true]) {
  test(`initial landing retains its painted nodes and binds navigation${regular ? ' with the saved ranch shortcut' : ''}`, () => {

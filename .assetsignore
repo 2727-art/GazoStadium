@@ -9,6 +9,7 @@ functions/
 # Repository and local development files.
 .git/
 .gitignore
+.gitattributes
 .assetsignore
 .firebase/
 .wrangler/

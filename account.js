@@ -1,21 +1,22 @@
 import { getShopProductLabel } from "./shop-products.mjs?v=lazy-loading-v1";
-import { ensureHariaiUser, assertHariaiUser, runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
-import { getPreviousAccount, selectGoogleAccount, useSelectedAccount, runSafeAccountSwitch } from "./account-switch.js?v=account-switch-v1-lazy-loading-v1";
+import { ensureHariaiUser, assertHariaiUser, runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1-mobile-loading-v1";
+import { getPreviousAccount, selectGoogleAccount, useSelectedAccount, runSafeAccountSwitch } from "./account-switch.js?v=account-switch-v1-lazy-loading-v1-mobile-loading-v1";
 import {
   GoogleAuthProvider,
+  browserPopupRedirectResolver,
   linkWithPopup,
   onIdTokenChanged,
   signInWithCredential,
   signInWithCustomToken,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+} from "./assets/firebase/firebase-auth-BU4OMZEH.js";
 import {
   httpsCallable,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+} from "./assets/firebase/firebase-functions-TFNFZUKR.js";
 import {
   auth,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1-mobile-loading-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -1291,7 +1292,7 @@ async function protectWithGoogle() {
       return;
     }
     const user = requireCurrentAccount();
-    const result = await runHariaiAccountTransition(() => linkWithPopup(user, googleProvider));
+    const result = await runHariaiAccountTransition(() => linkWithPopup(user, googleProvider, browserPopupRedirectResolver));
     state.user = result.user;
     await refreshAfterAccountSignIn(result.user, "Google連携が完了しました。現在のデータをそのまま保護しました。");
   } catch (error) {
@@ -1430,7 +1431,7 @@ async function restoreWithGoogle() {
       return;
     }
     const user = requireCurrentAccount();
-    const result = await runHariaiAccountTransition(() => linkWithPopup(user, googleProvider));
+    const result = await runHariaiAccountTransition(() => linkWithPopup(user, googleProvider, browserPopupRedirectResolver));
     state.user = result.user;
     await refreshAfterAccountSignIn(result.user, "このGoogleアカウントとの連携が完了しました。現在のデータをそのまま保護しました。");
   } catch (error) {

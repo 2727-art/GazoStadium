@@ -158,7 +158,7 @@ function signInHarness(kind) {
   c.state.loading = false;
   Object.assign(c, {
     window: { confirm: () => true },
-    GoogleAuthProvider: { credentialFromError: () => null }, googleProvider: {},
+    GoogleAuthProvider: { credentialFromError: () => null }, googleProvider: {}, browserPopupRedirectResolver: {},
     isGoogleLinked: () => !!c.state.user?.providerData?.some(p => p.providerId === "google.com"),
     accountKind: () => c.state.user?.isAnonymous ? "guest" : "protected",
     requireCurrentAccount: () => c.auth.currentUser,
@@ -171,7 +171,7 @@ function signInHarness(kind) {
       c.state.user = user;
       c.reloadPending = c.refreshAfterAccountSignIn(user, notice);
     },
-    linkWithPopup: async () => { counts.link++; c.auth.currentUser = target; return { user: target }; },
+    linkWithPopup: async (_user, _provider, resolver) => { assert.equal(resolver, c.browserPopupRedirectResolver); counts.link++; c.auth.currentUser = target; return { user: target }; },
     signInWithCredential: async () => { counts.credential++; c.auth.currentUser = target; return { user: target }; },
     signInWithCustomToken: async () => { counts.custom++; c.auth.currentUser = target; return { user: target }; },
     accountTransferCallable: async () => { counts.transfer++; return { data: { token: "handoff-token" } }; },
