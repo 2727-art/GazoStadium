@@ -163,7 +163,7 @@ test("the recruit image accepts wallets instead of recruiting them, and the rele
   assert.match(share, /#お貢ぎ牧場 #財布募集/, "the hashtag the scene searches stays");
   for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-wallet-words-v1(?:-[a-z0-9-]+)?"`), name);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-wallet-words-v1(?:-[a-z0-9-]+)?"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=[^"]*-ranch-wallet-words-v1(?:-[a-z0-9-]+)?"/);
+  assert.match(client, /import\("\.\/tribute-share\.mjs\?v=[^"]*-ranch-wallet-words-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /## 14\. 財布の打つ手と管理人の言葉/);
   assert.match(design, /第1段は本番に公開|第1段（実装済み）|第1段を実装/);
 });

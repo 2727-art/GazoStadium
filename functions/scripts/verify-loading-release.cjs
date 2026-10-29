@@ -16,7 +16,8 @@ function add(raw){
  if(assets.has(url.pathname))return;
  const file=url.pathname.slice(1);const body=source(file);assets.set(url.pathname,{url:url.pathname+url.search,hash:hash(body)});
  if(/\.m?js$/.test(file)){
-  for(const node of acorn.parse(body,{ecmaVersion:'latest',sourceType:'module'}).body)if(node.source?.value)add(node.source.value);
+  const walk=node=>{if(!node||typeof node!=='object')return;if(['ImportDeclaration','ImportExpression','ExportNamedDeclaration','ExportAllDeclaration'].includes(node.type)&&node.source?.value)add(node.source.value);for(const value of Object.values(node)){if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}};
+  walk(acorn.parse(body,{ecmaVersion:'latest',sourceType:'module'}));
  }
 }
 for(const m of html.matchAll(/(?:src|href|data-src)="([^"]+\.(?:m?js|css)\?v=[^"]+)"/g))add(m[1]);

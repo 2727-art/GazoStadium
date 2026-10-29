@@ -1148,7 +1148,7 @@ body.tribute-shot-mode .site-footer { display: none; }
 .tribute-achievement-copy strong { overflow-wrap: anywhere; }
 .tribute-achievement-copy em { font-style: normal; font-size: 0.74rem; color: var(--tr-mist); }
 
-/* お貢ぎ牧場の実績バッジ（ランキングや推しカードにも出るので、画面の外でも効くよう全体に置く）。 */
+/* お貢ぎ牧場の実績バッジ（ランキングや管理人カードにも出るので、画面の外でも効くよう全体に置く）。 */
 .achievement-badge.achievement-scope-tribute {
   border-color: rgba(232, 194, 122, 0.45);
   background:

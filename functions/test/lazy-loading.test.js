@@ -22,7 +22,8 @@ test('initial document excludes game and retired requests, and every lazy import
   const old=seen.get(url.pathname);assert.ok(!old||old===url.href,`duplicate module ${url.pathname}: ${old} vs ${url.href}`);seen.set(url.pathname,url.href);
   if(visited.has(url.href))return;visited.add(url.href);
   const ast=acorn.parse(read(url.pathname.slice(1)),{ecmaVersion:'latest',sourceType:'module'});
-  for(const node of ast.body)if(node.source?.value)walk(node.source.value);
+  const imports=node=>{if(!node||typeof node!=='object')return;if(['ImportDeclaration','ImportExpression','ExportNamedDeclaration','ExportAllDeclaration'].includes(node.type)&&node.source?.value)walk(node.source.value);for(const value of Object.values(node)){if(Array.isArray(value))value.forEach(imports);else if(value&&typeof value==='object')imports(value);}};
+  imports(ast);
  }
  for(const entry of Object.values(manifest))if(entry.module)walk(entry.module);
  assert.ok(!seen.has('/market.js'));assert.ok(!seen.has('/market-transfer.mjs'));
@@ -34,7 +35,7 @@ test('initial document excludes game and retired requests, and every lazy import
 });
 
 test('generated landing and record assets stay synchronized with their source renderers', () => {
- for(const script of ['build-landing.cjs','build-market-records.cjs']) execFileSync(process.execPath,[`scripts/${script}`,'--check'],{cwd:root,stdio:'pipe'});
+ for(const script of ['build-landing.cjs','build-market-records.cjs','build-ranch-css.cjs']) execFileSync(process.execPath,[`scripts/${script}`,'--check'],{cwd:root,stdio:'pipe'});
 });
 
 test('parallel feature loads coalesce and await their dependencies/styles; a failed stylesheet can retry', async () => {

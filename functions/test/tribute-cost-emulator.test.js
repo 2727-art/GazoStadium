@@ -314,6 +314,31 @@ test("tribute cost guards preserve real Firestore transaction and lifecycle cont
     assert.equal(new Set([...first.receipts, ...second.receipts].map(receipt => receipt.receiptId)).size, 51);
   });
 
+  await t.test("all open contracts and tied ended-history cursors work with real Firestore queries", async () => {
+    const f = await fixture();
+    const raw = await f.read();
+    const batch = database.batch();
+    batch.delete(database.doc(`tributeContracts/${f.contractId}`));
+    for (let i = 0; i < 85; i++) {
+      const id = stableId(`${f.contractId}:many:${i}`);
+      batch.set(database.doc(`tributeContracts/${id}`), { ...raw, contractId: id,
+        participants: [f.managerUid, `${f.payerUid}-${i}`], payerUid: `${f.payerUid}-${i}`,
+        status: i < 50 ? "active" : "ended", updatedAt: START + (i < 50 ? 0 : 1000) });
+    }
+    await batch.commit();
+    const first = await f.act(f.managerUid, "state");
+    assert.equal(first.contracts.filter(c => c.status === "active").length, 50);
+    const ended = first.contracts.filter(c => c.status === "ended");
+    let cursor = first.endedCursor;
+    while (cursor) {
+      const page = await f.act(f.managerUid, "ended_contracts", { cursor });
+      ended.push(...page.contracts); cursor = page.nextCursor;
+    }
+    assert.equal(ended.length, 35);
+    assert.equal(new Set(ended.map(c => c.contractId)).size, 35);
+    assert.equal((await f.act(f.payerUid, "ended_contracts")).contracts.length, 0);
+  });
+
   await t.test("a stale backfill attempt cannot overwrite a concurrently completed backfill and increment", async () => {
     let enter;
     let release;

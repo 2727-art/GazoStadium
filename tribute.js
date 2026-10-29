@@ -5,10 +5,12 @@ import {
 import {
   collection,
   doc,
+  endBefore,
   limitToLast,
   onSnapshot,
   orderBy,
   query,
+  startAt,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 import {
   auth,
@@ -32,7 +34,6 @@ import {
   END_REASON_LABELS,
   ENTRY_FEE_OPTIONS,
   GROSS_RANKING,
-  KIND_LABELS,
   LIMITS,
   PER_DAY_OPTIONS,
   PER_TRIBUTE_OPTIONS,
@@ -150,16 +151,20 @@ import {
   wordRemainingLabel,
   workOrderNotesFor,
 } from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1-ranch-photo-v1";
-import {
-  SHARE_TEXT,
-  canvasToPngBlob,
-  renderExcerptImage,
-  renderOthelloImage,
-  renderReceiptImage,
-  renderRecruitImage,
-  renderRanchPhotoImage,
-  RANCH_PHOTO_TEXT,
-} from "./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1";
+// 写真・受付カード・レシートの描画器は、画像を作る時だけ読み込む。
+let shareRendererRequest;
+function loadShareRenderer() {
+  return shareRendererRequest ||= import("./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1")
+    .catch((error) => { shareRendererRequest = null; throw error; });
+}
+const SHARE_TEXT = "#貢ぎ報告 #お貢ぎ牧場";
+const RANCH_PHOTO_TEXT = "#お貢ぎ牧場 #わたしの牧場";
+const canvasToPngBlob = (...args) => loadShareRenderer().then((module) => module.canvasToPngBlob(...args));
+const renderExcerptImage = (...args) => loadShareRenderer().then((module) => module.renderExcerptImage(...args));
+const renderOthelloImage = (...args) => loadShareRenderer().then((module) => module.renderOthelloImage(...args));
+const renderReceiptImage = (...args) => loadShareRenderer().then((module) => module.renderReceiptImage(...args));
+const renderRecruitImage = (...args) => loadShareRenderer().then((module) => module.renderRecruitImage(...args));
+const renderRanchPhotoImage = (...args) => loadShareRenderer().then((module) => module.renderRanchPhotoImage(...args));
 import {
   CARD_FRAMES,
   FRAME_PALETTES,
@@ -173,7 +178,6 @@ import {
   normalizeDecorations,
   premiumAvatar,
   requiredDecorationProducts,
-  requiredVaultTier,
   sealSvg,
 } from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1";
 
@@ -232,6 +236,8 @@ function createState() {
     ageConfirmed: false,
     profile: null,
     contracts: [],
+    ended: { more: false, cursor: null, loading: false },
+    readRequests: new Map(),
     achievements: null,
     walletBalance: null,
     board: { status: "idle", managers: [], nekamaOnly: false, feeZeroOnly: false, style: "" },
@@ -323,6 +329,26 @@ async function call(action, payload = {}) {
   if (previewScreen || payload?.contractId === DEMO_CONTRACT_ID) return previewCall(action, payload);
   const response = await tributeActionCallable({ action, ...payload });
   return response.data || {};
+}
+
+// 完了した結果はキャッシュせず、同じ利用者の実行中の読み取りだけを共有する。
+function readOnce(action, payload = {}) {
+  const target = state;
+  const uid = target.uid;
+  const generation = lifecycleGeneration;
+  if (!previewScreen && auth.currentUser?.uid !== uid) return Promise.reject(new Error("アカウントを確認できませんでした。"));
+  const key = JSON.stringify([uid, action, payload]);
+  const pending = target.readRequests.get(key);
+  if (pending) return pending;
+  const request = call(action, payload).then((result) => {
+    if (!isCurrent(generation) || state !== target || target.readRequests.get(key) !== request
+      || (!previewScreen && auth.currentUser?.uid !== uid)) return null;
+    return result;
+  }).finally(() => {
+    if (target.readRequests.get(key) === request) target.readRequests.delete(key);
+  });
+  target.readRequests.set(key, request);
+  return request;
 }
 
 function formatDateTime(value) {
@@ -486,7 +512,7 @@ function renderContractRow(contract) {
 function renderHub() {
   const profile = state.profile || {};
   const open = state.contracts.filter((contract) => contract.status !== "ended");
-  const ended = state.contracts.filter((contract) => contract.status === "ended").slice(0, 10);
+  const ended = state.contracts.filter((contract) => contract.status === "ended");
   const hasContracts = state.contracts.length > 0;
   // 返金待ち: 管理口座の返金（残高上限で戻せなかった分）と、運営からの返金（請求の二重払いの不具合の分）。
   const escrowRefund = Number(profile.refundPending || 0);
@@ -499,7 +525,7 @@ function renderHub() {
   const lists = renderContractLists(open, profile);
   const me = renderMyPanel(profile, { boardNotice: !hasContracts });
   const firstSteps = isFirstTimeWallet(profile) ? renderStartGuide() : "";
-  const endedPanel = ended.length ? `<details class="tribute-panel tribute-ended"><summary>終わった契約（${ended.length}）</summary>${ended.map(renderContractRow).join("")}</details>` : "";
+  const endedPanel = ended.length ? `<details class="tribute-panel tribute-ended"${state.ended.open ? " open" : ""}><summary>終わった契約（${ended.length}${state.ended.more ? "件以上" : "件"}）</summary>${ended.map(renderContractRow).join("")}${state.ended.more ? `<button class="button button-ghost button-small" type="button" data-t="ended-more" ${state.ended.loading ? "disabled" : ""}>${state.ended.loading ? "読み込み中…" : "前の契約を読む"}</button>` : ""}</details>` : "";
   return frame(`<div class="tribute-hub">
     ${renderRanch(open, profile)}
     ${refund}
@@ -1773,10 +1799,10 @@ function renderCardAchievementPicker(card) {
 
 async function loadDecorations() {
   const generation = lifecycleGeneration;
-  state.decorations = { ...state.decorations, status: "loading" };
+  const target = state.decorations = { ...state.decorations, status: "loading" };
   try {
-    const payload = await call("decorations");
-    if (!isCurrent(generation)) return;
+    const payload = await readOnce("decorations");
+    if (!payload || !isCurrent(generation) || state.decorations !== target) return;
     state.decorations = {
       status: "ready",
       owned: Array.isArray(payload?.owned) ? payload.owned.map(String) : [],
@@ -1784,7 +1810,7 @@ async function loadDecorations() {
       vaultBestTier: Math.max(0, Math.min(VAULT_TIERS.length, Number(payload?.vaultBestTier) || 0)),
     };
   } catch (error) {
-    if (!isCurrent(generation)) return;
+    if (!isCurrent(generation) || state.decorations !== target) return;
     state.decorations = { ...state.decorations, status: "error" };
   }
   refreshDecorationSections();
@@ -2807,7 +2833,7 @@ async function refreshWorkProgress({ force = false } = {}) {
 
 function renderThreadHistory() {
   const thread = state.thread;
-  if (thread.demo || !(thread.events?.[0]?.seq > 1 || thread.historyError)) return "";
+  if (thread.demo || thread.historyExhausted && !thread.historyError || !(thread.events?.[0]?.seq > 1 || thread.historyError)) return "";
   return `<div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="history-more" ${thread.historyLoading ? "disabled" : ""}>${thread.historyLoading ? "読み込み中…" : thread.historyError ? "履歴を再読み込み" : "前の履歴を読む"}</button>${thread.view?.awaitingReceipt ? '<small>古い受け取り待ちも、履歴から受け取れます。</small>' : ""}</div>`;
 }
 
@@ -3934,6 +3960,7 @@ function applyState(payload) {
   if (Array.isArray(payload.contracts)) {
     state.contracts = payload.contracts;
     rememberRanchRegular();
+    state.ended = { more: payload.endedMore === true, cursor: payload.endedCursor || null, loading: false };
   }
   if (payload.achievements && typeof payload.achievements === "object") {
     state.achievements = {
@@ -3967,20 +3994,20 @@ function notifyAchievementUnlocks(value) {
 }
 
 // 同じ入場中・同じ利用者の進行中リクエストだけを共有する。完了後の再表示や手動更新は必ず再取得する。
-function requestState({ fresh = false } = {}) {
+function requestState({ fresh = false, summaryOnly = false } = {}) {
   const generation = lifecycleGeneration;
   const targetState = state;
   const uid = state.uid;
   if (!previewScreen && auth.currentUser?.uid !== uid) {
     return Promise.reject(Object.assign(new Error("アカウントを確認できませんでした。ページを読み直してください。"), { code: "unauthenticated" }));
   }
-  if (!fresh && stateRequest?.generation === generation && stateRequest?.targetState === targetState && stateRequest?.uid === uid) {
+  if (!fresh && stateRequest?.generation === generation && stateRequest?.targetState === targetState && stateRequest?.uid === uid && stateRequest?.summaryOnly === summaryOnly) {
     return stateRequest.promise;
   }
-  const request = { generation, targetState, uid, promise: null };
+  const request = { generation, targetState, uid, summaryOnly, promise: null };
   stateRequest = request;
   request.promise = (async () => {
-    const payload = await call("state");
+    const payload = await call("state", summaryOnly ? { summaryOnly: true } : {});
     if (!isCurrent(generation) || state !== targetState || state.uid !== uid || stateRequest !== request
       || (!previewScreen && auth.currentUser?.uid !== uid)) return null;
     applyState(payload);
@@ -4008,8 +4035,8 @@ async function loadBoard() {
   const target = state.board = { ...state.board, status: "loading" };
   render();
   try {
-    const payload = await call("board", { nekamaOnly: state.board.nekamaOnly });
-    if (!isCurrent(generation) || state.board !== target) return;
+    const payload = await readOnce("board", { nekamaOnly: state.board.nekamaOnly });
+    if (!payload || !isCurrent(generation) || state.board !== target) return;
     state.board = { ...state.board, status: "ready", managers: payload.managers || [] };
   } catch (error) {
     if (!isCurrent(generation) || state.board !== target) return;
@@ -4026,8 +4053,8 @@ async function openManager(publicManagerId, { invited = false } = {}) {
   const target = state.manager = { status: "loading", publicManagerId, data: null, invited };
   render();
   try {
-    const payload = await call("manager", { publicManagerId });
-    if (!isCurrent(generation) || state.manager !== target || state.screen !== "manager") return;
+    const payload = await readOnce("manager", { publicManagerId });
+    if (!payload || !isCurrent(generation) || state.manager !== target || state.screen !== "manager") return;
     state.manager = { status: "ready", publicManagerId, data: payload, invited };
   } catch (error) {
     if (!isCurrent(generation) || state.manager !== target || state.screen !== "manager") return;
@@ -4042,8 +4069,8 @@ async function loadList(key, action, mapper, payload = {}) {
   const target = state[key] = { ...state[key], status: "loading", loadingMore: false };
   render();
   try {
-    const result = await call(action, payload);
-    if (!isCurrent(generation) || state[key] !== target) return;
+    const result = await readOnce(action, payload);
+    if (!result || !isCurrent(generation) || state[key] !== target) return;
     state[key] = { ...state[key], status: "ready", ...mapper(result) };
   } catch (error) {
     if (!isCurrent(generation) || state[key] !== target) return;
@@ -4063,6 +4090,7 @@ function navigate(requested, { refresh = true } = {}) {
   const screen = SCREEN_ALIASES[requested] || requested;
   if (!SCREENS.has(screen)) return;
   if (screen !== "thread") stopThread();
+  closeSharePreview();
   state.sheet = null;
   state.screen = screen;
   if (screen === "vault" && !state.vault.pendingMove) state.vault.pendingMove = storedVaultMove();
@@ -4086,6 +4114,8 @@ function stopThread() {
   contractUnsubscribe?.();
   eventsUnsubscribe?.();
   limitsUnsubscribe?.();
+  for (const unsubscribe of state.thread?.historyUnsubscribes?.values() || []) unsubscribe();
+  state.thread?.historyUnsubscribes?.clear();
   contractUnsubscribe = null;
   eventsUnsubscribe = null;
   limitsUnsubscribe = null;
@@ -4095,6 +4125,7 @@ function stopThread() {
 
 function openThread(contractId) {
   stopThread();
+  closeSharePreview();
   state.sheet = null;
   state.screen = "thread";
   const known = state.contracts.find((contract) => contract.contractId === contractId);
@@ -4152,21 +4183,75 @@ function subscribeThreadEvents() {
   const uid = state.uid;
   const token = targetThread.eventsSubscription = {};
   const current = () => isCurrentThread(generation, currentThreadGeneration, targetThread, uid) && targetThread.eventsSubscription === token;
-  eventsUnsubscribe = onSnapshot(query(collection(firestore, "tributeContracts", targetThread.contractId, "events"), orderBy("seq"), limitToLast(targetThread.eventsLimit || EVENTS_LIMIT)), (snapshot) => {
+  eventsUnsubscribe = onSnapshot(query(collection(firestore, "tributeContracts", targetThread.contractId, "events"), orderBy("seq"), targetThread.liveFrom ? startAt(targetThread.liveFrom) : limitToLast(EVENTS_LIMIT)), (snapshot) => {
     if (!current()) return;
-    targetThread.preserveHistoryScroll = targetThread.historyLoading === true;
-    targetThread.historyLoading = false;
-    targetThread.historyError = false;
-    state.thread.events = snapshot.docs.map((entry) => entry.data());
+    targetThread.latestError = false;
+    targetThread.historyError = Boolean(targetThread.historyFailures?.size);
+    mergeEventPage(targetThread, "latest", snapshot);
     if (state.thread.view) updateThreadParts();
     scheduleMarkRead();
   }, (error) => {
     if (!current()) return;
-    targetThread.historyLoading = false;
+    targetThread.latestError = true;
     targetThread.historyError = true;
     showToast(friendlyError(error, "履歴を読み込めませんでした。"));
     if (state.thread.view) updateThreadParts();
   });
+}
+
+function mergeEventPage(thread, key, snapshot) {
+  thread.eventPages ||= new Map();
+  thread.eventPages.set(key, snapshot.docs.map((entry) => entry.data()));
+  const events = new Map();
+  for (const page of thread.eventPages.values()) for (const event of page) events.set(event.seq, event);
+  thread.events = [...events.values()].sort((a, b) => a.seq - b.seq);
+}
+
+// 古い履歴は重ならない100件ずつ。過去の受取印の変更も各ページの購読で反映する。
+function loadOlderThreadEvents() {
+  const thread = state.thread;
+  if (thread.historyLoading) return;
+  if (thread.latestError) {
+    thread.historyError = false;
+    subscribeThreadEvents();
+    return;
+  }
+  const before = Number(thread.historyFailures?.values().next().value ?? thread.events[0]?.seq);
+  if (!(before > 1)) return;
+  thread.historyLoading = true;
+  thread.historyError = false;
+  // 最初の追加時だけ最新ページの下端を固定し、新着で古い行が抜け落ちないようにする。
+  if (!thread.liveFrom) { thread.liveFrom = before; subscribeThreadEvents(); }
+  const generation = lifecycleGeneration;
+  const currentThreadGeneration = threadGeneration;
+  const uid = state.uid;
+  thread.historyTokens ||= new Map();
+  thread.historyFailures ||= new Set();
+  const token = {};
+  thread.historyTokens.set(before, token);
+  const current = () => isCurrentThread(generation, currentThreadGeneration, thread, uid) && thread.historyTokens.get(before) === token;
+  thread.historyUnsubscribes ||= new Map();
+  thread.historyUnsubscribes.get(before)?.();
+  const unsubscribe = onSnapshot(query(collection(firestore, "tributeContracts", thread.contractId, "events"), orderBy("seq"), endBefore(before), limitToLast(EVENTS_LIMIT)), (snapshot) => {
+    if (!current()) return;
+    thread.preserveHistoryScroll = thread.historyLoading;
+    thread.historyLoading = false;
+    thread.historyFailures.delete(before);
+    thread.historyError = thread.historyFailures.size > 0 || thread.latestError === true;
+    if (!snapshot.docs.length) thread.historyExhausted = true;
+    mergeEventPage(thread, before, snapshot);
+    if (thread.view) updateThreadParts();
+    scheduleMarkRead();
+  }, (error) => {
+    if (!current()) return;
+    thread.historyLoading = false;
+    thread.historyFailures.add(before);
+    thread.historyError = true;
+    showToast(friendlyError(error, "履歴を読み込めませんでした。"));
+    if (thread.view) updateThreadParts();
+  });
+  thread.historyUnsubscribes.set(before, unsubscribe);
+  updateThreadParts();
 }
 
 // 財布の限度額は private/limits にある（移す前の古い契約は、契約の記録に残っている）。財布の画面だけ足す。
@@ -4269,6 +4354,7 @@ async function mutate(action, payload, { success = "", after = null, form = null
     if (!isCurrent(generation) || state !== targetState || state.uid !== uid || (!previewScreen && auth.currentUser?.uid !== uid)) return null;
     // 書き込み前に開始した一覧取得は、成功後の画面遷移で再利用しない。
     if (stateRequest?.generation === generation && stateRequest?.targetState === targetState) stateRequest = null;
+    targetState.readRequests.clear();
     if (success) showToast(success);
     if (after) after(result);
     return result;
@@ -4382,6 +4468,7 @@ async function handleSubmit(form) {
       state.ageConfirmed = true;
       const payload = await requestState({ fresh: true }).catch(() => null);
       if (!isCurrent(generation) || state !== targetState) return;
+      subscribeWallet();
       if (pendingInvite) {
         const invite = pendingInvite;
         pendingInvite = "";
@@ -4838,11 +4925,10 @@ async function handleClick(target) {
       return;
     }
     case "history-more":
-      if (state.thread.historyLoading) return;
-      if (!state.thread.historyError) state.thread.eventsLimit = (state.thread.eventsLimit || EVENTS_LIMIT) + EVENTS_LIMIT;
-      state.thread.historyLoading = true;
-      subscribeThreadEvents();
-      updateThreadParts();
+      loadOlderThreadEvents();
+      return;
+    case "ended-more":
+      await loadMoreEndedContracts();
       return;
     case "home":
       requestHome();
@@ -5504,6 +5590,28 @@ async function loadMoreReceipts() {
   }
 }
 
+async function loadMoreEndedContracts() {
+  const target = state.ended;
+  if (!target.more || target.loading) return;
+  target.loading = true;
+  target.open = true;
+  render();
+  try {
+    const result = await readOnce("ended_contracts", { cursor: target.cursor });
+    if (!result || state.ended !== target) return;
+    const contracts = new Map(state.contracts.map((contract) => [contract.contractId, contract]));
+    for (const contract of result.contracts || []) contracts.set(contract.contractId, contract);
+    state.contracts = [...contracts.values()];
+    target.more = result.more === true;
+    target.cursor = result.nextCursor || null;
+  } catch (error) {
+    if (state.ended === target) showToast(friendlyError(error));
+  } finally {
+    target.loading = false;
+    if (active && state.ended === target && state.screen === "hub") render();
+  }
+}
+
 function bindRoot(root) {
   if (!root) return;
   root.addEventListener("click", (event) => {
@@ -5644,9 +5752,7 @@ function modeIsActiveElsewhere() {
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiRouletteTraining?.isActive?.()
-    || window.HariaiDanwakuNote?.isActive?.()
     || window.HariaiMarket?.isActive?.()
-    || window.HariaiFleaMarket?.isActive?.()
     || window.HariaiAccount?.isActive?.(),
   );
 }
@@ -5664,7 +5770,7 @@ function paintWallet() {
 function subscribeWallet() {
   walletUnsubscribe?.();
   walletUnsubscribe = null;
-  if (previewScreen || !state.uid) return;
+  if (previewScreen || !state.uid || !state.ageConfirmed) return;
   walletUnsubscribe = onSnapshot(doc(firestore, "wallets", state.uid), (snapshot) => {
     if (!active) return;
     const balance = Number(snapshot.data()?.balance);
@@ -5705,7 +5811,7 @@ async function start({ initialScreen = "", inviteManager = "" } = {}) {
       if (!isCurrent(generation)) return;
       state.uid = user.uid;
     }
-    const payload = await requestState();
+    const payload = await requestState({ summaryOnly: initialScreen === "ranking" || Boolean(pendingInvite) });
     if (!payload || !isCurrent(generation)) return;
     setChrome();
     subscribeWallet();
@@ -5758,6 +5864,7 @@ function requestHome() {
   walletUnsubscribe = null;
   window.clearInterval(tickTimer);
   tickTimer = null;
+  closeSharePreview();
   state.sheet = null;
   state.receipt = null;
   layer.innerHTML = "";
@@ -5780,6 +5887,7 @@ window.addEventListener("beforeunload", () => {
 
 window.addEventListener("hariai-player-safety-updated", () => {
   if (!active) return;
+  state.readRequests.clear();
   if (state.screen === "board") loadBoard();
   else if (state.screen === "hub") refreshState();
   else if (state.screen === "thread") navigate("hub");

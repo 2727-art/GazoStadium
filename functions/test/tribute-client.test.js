@@ -34,7 +34,7 @@ test("the landing replaces the market tile with お貢ぎ牧場 and keeps old ma
   assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
   assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-activity-optin-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=ranch-vault-v1-ranch-screenshot-v1(?:-[a-z0-9-]+)?"/);
+  assert.match(client, /import\("\.\/tribute-share\.mjs\?v=ranch-vault-v1-ranch-screenshot-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1-ranch-premium-icons-v1"/);
   assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
   assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
@@ -53,7 +53,7 @@ test("every mode refuses to open over お貢ぎ牧場 and お貢ぎ牧場 refuse
     assert.match(read(file), /window\.HariaiTribute\?\.isActive\?\.\(\)/, file);
   }
   const guard = sourceBlock(client, "function modeIsActiveElsewhere", "function subscribeWallet");
-  for (const name of ["HariaiOnline", "HariaiStrategy", "HariaiAiTextTraining", "HariaiRouletteTraining", "HariaiDanwakuNote", "HariaiMarket", "HariaiFleaMarket", "HariaiAccount"]) {
+  for (const name of ["HariaiOnline", "HariaiStrategy", "HariaiAiTextTraining", "HariaiRouletteTraining", "HariaiMarket", "HariaiAccount"]) {
     assert.match(guard, new RegExp(`window\\.${name}\\?\\.isActive`), name);
   }
   assert.match(client, /window\.HariaiTribute = Object\.freeze\(\{\s*start,\s*isActive,\s*requestHome,\s*openRequestedLink,\s*\}\);/);
@@ -617,7 +617,7 @@ test("a newcomer without an AnjuPay wallet sees 0 Pay and the daily-mission shor
   const nodes = { wallet: [{ textContent: "" }], guide: [{ innerHTML: "" }] };
   let listener = null;
   const context = vm.createContext({
-    state: { walletBalance: null, uid: "newcomer" },
+    state: { walletBalance: null, uid: "newcomer", ageConfirmed: true },
     active: true,
     previewScreen: "",
     walletUnsubscribe: null,

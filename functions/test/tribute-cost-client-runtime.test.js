@@ -71,7 +71,7 @@ async function harness(dispatch) {
       return { data };
     },
     doc: (_db, ...parts) => parts.join("/"), collection: (_db, ...parts) => parts.join("/"),
-    query: (reference) => reference, orderBy() {}, limitToLast() {},
+    query: (reference) => reference, orderBy() {}, limitToLast() {}, startAt() {}, endBefore() {},
     onSnapshot(reference, next, error) {
       const subscription = { reference, next, error, active: true };
       subscriptions.push(subscription);
@@ -88,8 +88,8 @@ async function harness(dispatch) {
     rememberRanchRegular() { calls.push({ ui: "regular" }); }, markRanchUrl(open) { calls.push({ ui: open ? "url-open" : "url-close" }); },
   });
   vm.runInContext([
-    "createState", "isCurrent", "ensureUser", "call", "applyState", "requestState", "refreshState", "navigate",
-    "stopThread", "openThread", "subscribeThreadEvents", "withThreadLimits", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "syncContractRow", "scheduleMarkRead", "refreshWorkProgress",
+    "createState", "isCurrent", "ensureUser", "call", "readOnce", "closeSharePreview", "applyState", "requestState", "refreshState", "navigate",
+    "stopThread", "openThread", "subscribeThreadEvents", "mergeEventPage", "loadOlderThreadEvents", "withThreadLimits", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "syncContractRow", "scheduleMarkRead", "refreshWorkProgress",
     "mutate", "handleSubmit", "start", "isActive", "requestHome",
   ].map(fn).join("\n"), context);
   return {
