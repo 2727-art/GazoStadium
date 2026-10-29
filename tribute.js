@@ -1,7 +1,7 @@
-import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import {
   httpsCallable,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+} from "./assets/firebase/firebase-functions-TFNFZUKR.js";
 import {
   collection,
   doc,
@@ -11,13 +11,13 @@ import {
   orderBy,
   query,
   startAt,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+} from "./assets/firebase/firebase-firestore-QNR56A4P.js";
 import {
   auth,
   firestore,
   functions,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1-mobile-loading-v1";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import {
   AVATAR_GROUPS,
   AVATARS,
@@ -154,7 +154,16 @@ import {
 // 写真・受付カード・レシートの描画器は、画像を作る時だけ読み込む。
 let shareRendererRequest;
 function loadShareRenderer() {
-  return shareRendererRequest ||= import("./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1")
+  if (shareRendererRequest) return shareRendererRequest;
+  const fonts = window.HariaiFeatures?.load("display-fonts");
+  const fontReady = fonts ? new Promise((resolve) => {
+    const timer = setTimeout(resolve, 1800);
+    fonts.then(() => { clearTimeout(timer); resolve(); }, () => { clearTimeout(timer); resolve(); });
+  }) : Promise.resolve();
+  return shareRendererRequest ||= Promise.all([
+    fontReady,
+    import("./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1"),
+  ]).then(([, module]) => module)
     .catch((error) => { shareRendererRequest = null; throw error; });
 }
 const SHARE_TEXT = "#貢ぎ報告 #お貢ぎ牧場";

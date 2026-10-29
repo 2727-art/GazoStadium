@@ -1,13 +1,13 @@
-import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1-mobile-loading-v1";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import {
   httpsCallable,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+} from "./assets/firebase/firebase-functions-TFNFZUKR.js";
 import {
   auth,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1-mobile-loading-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,

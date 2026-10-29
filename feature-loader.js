@@ -37,6 +37,8 @@
     const config = manifest[name];
     if (!config) return Promise.reject(new Error("未対応の画面です。"));
     const request = Promise.resolve().then(async () => {
+      // Decorative web fonts must never delay or prevent entry to a game/account.
+      for (const name of config.optionalStyles || []) style(name).catch(() => {});
       await Promise.all([...(config.depends || []).map(load), ...(config.styles || []).map(style), ...(config.classic || []).map(classic)]);
       if (config.module) await import(new URL(config.module, document.baseURI).href);
     }).catch(error => { features.delete(name); throw error; });

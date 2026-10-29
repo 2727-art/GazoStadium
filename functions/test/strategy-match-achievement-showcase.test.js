@@ -17,7 +17,7 @@ function section(start, end) {
 }
 
 test("strategy freezes at activation, then materializes one immutable snapshot after reveal", () => {
-  assert.match(strategySource, /httpsCallable,[\s\S]*?firebase-functions\.js/);
+  assert.match(strategySource, /httpsCallable,[\s\S]*?assets\/firebase\/firebase-functions-[A-Z0-9]+\.js/);
   assert.match(strategySource, /const matchAchievementShowcaseCallable = httpsCallable\(functions, "matchAchievementShowcase"\);/);
 
   const materialize = section(

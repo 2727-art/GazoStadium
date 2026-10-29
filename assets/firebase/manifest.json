@@ -1,0 +1,156 @@
+{
+  "version": "12.16.0",
+  "esbuild": "0.28.2",
+  "exports": {
+    "app": [
+      "getApp",
+      "getApps",
+      "initializeApp"
+    ],
+    "app-check": [
+      "CustomProvider",
+      "ReCaptchaEnterpriseProvider",
+      "initializeAppCheck"
+    ],
+    "auth": [
+      "GoogleAuthProvider",
+      "browserLocalPersistence",
+      "browserPopupRedirectResolver",
+      "browserSessionPersistence",
+      "connectAuthEmulator",
+      "inMemoryPersistence",
+      "indexedDBLocalPersistence",
+      "initializeAuth",
+      "linkWithPopup",
+      "onAuthStateChanged",
+      "onIdTokenChanged",
+      "setPersistence",
+      "signInAnonymously",
+      "signInWithCredential",
+      "signInWithCustomToken",
+      "signInWithPopup",
+      "updateCurrentUser"
+    ],
+    "database": [
+      "connectDatabaseEmulator",
+      "equalTo",
+      "get",
+      "getDatabase",
+      "limitToFirst",
+      "limitToLast",
+      "onChildAdded",
+      "onChildChanged",
+      "onChildRemoved",
+      "onDisconnect",
+      "onValue",
+      "orderByChild",
+      "orderByKey",
+      "push",
+      "query",
+      "ref",
+      "remove",
+      "runTransaction",
+      "serverTimestamp",
+      "set",
+      "startAt",
+      "update"
+    ],
+    "firestore": [
+      "collection",
+      "connectFirestoreEmulator",
+      "doc",
+      "endBefore",
+      "getFirestore",
+      "limitToLast",
+      "onSnapshot",
+      "orderBy",
+      "query",
+      "startAt"
+    ],
+    "functions": [
+      "connectFunctionsEmulator",
+      "getFunctions",
+      "httpsCallable"
+    ]
+  },
+  "entries": {
+    "app": "assets/firebase/firebase-app-JUANUHIC.js",
+    "app-check": "assets/firebase/firebase-app-check-GJ5H5HVI.js",
+    "auth": "assets/firebase/firebase-auth-BU4OMZEH.js",
+    "database": "assets/firebase/firebase-database-W4EXZUO6.js",
+    "firestore": "assets/firebase/firebase-firestore-QNR56A4P.js",
+    "functions": "assets/firebase/firebase-functions-TFNFZUKR.js"
+  },
+  "files": [
+    {
+      "file": "assets/firebase/firebase-app-JUANUHIC.js.LEGAL.txt",
+      "bytes": 707,
+      "sha256": "059822e87d3c058c8fcfcda11c6a690cb413405d00ec4934f84408a621f8a4c0"
+    },
+    {
+      "file": "assets/firebase/firebase-app-JUANUHIC.js",
+      "bytes": 158,
+      "sha256": "059a45090e538a407124c709702860c21b67424df940d996cd68d1c9afc565e1"
+    },
+    {
+      "file": "assets/firebase/firebase-app-check-GJ5H5HVI.js.LEGAL.txt",
+      "bytes": 1520,
+      "sha256": "d744bbe6319329cf1adf97b7c789e8ed49d15caec77aba515158b6fac8990240"
+    },
+    {
+      "file": "assets/firebase/firebase-app-check-GJ5H5HVI.js",
+      "bytes": 14516,
+      "sha256": "9fb5beb2a369eecb8b4c93263c5ffdbf65b22cfd268c2dd37bd5a36040fdd3c8"
+    },
+    {
+      "file": "assets/firebase/firebase-auth-BU4OMZEH.js.LEGAL.txt",
+      "bytes": 15732,
+      "sha256": "878a56587d9a1a4568999cff58881f79b633f25a1c599fdeb58d806c4c7ebf45"
+    },
+    {
+      "file": "assets/firebase/firebase-auth-BU4OMZEH.js",
+      "bytes": 87177,
+      "sha256": "1563ffb1c4fb0d7bb33d0c02f243cec4367854a2369759ae99725bfd20cb0662"
+    },
+    {
+      "file": "assets/firebase/firebase-database-W4EXZUO6.js.LEGAL.txt",
+      "bytes": 8583,
+      "sha256": "f631ac5bd5820df6235e11cc7444d1a7fb43fa3126faae40d9b2b3498ad33b30"
+    },
+    {
+      "file": "assets/firebase/firebase-database-W4EXZUO6.js",
+      "bytes": 139789,
+      "sha256": "72388c66116b7ce489cc982e743c3be84a0aba62bf796f73b35223fe8485b00f"
+    },
+    {
+      "file": "assets/firebase/firebase-firestore-QNR56A4P.js.LEGAL.txt",
+      "bytes": 45808,
+      "sha256": "f1e32e361dbd1b32924f4142342cafe2132cf85a84b386370b5630f958e71f06"
+    },
+    {
+      "file": "assets/firebase/firebase-firestore-QNR56A4P.js",
+      "bytes": 443783,
+      "sha256": "185cb7962830952fca446ab70081e7c360244900b033049b9b724c60795ae3f9"
+    },
+    {
+      "file": "assets/firebase/firebase-functions-TFNFZUKR.js.LEGAL.txt",
+      "bytes": 2665,
+      "sha256": "03774181303ec0aeb72f7eb60d1f5cd49054c933fd1a6e456295fa2328c3da09"
+    },
+    {
+      "file": "assets/firebase/firebase-functions-TFNFZUKR.js",
+      "bytes": 8256,
+      "sha256": "61ae4659ae6581c36f15b6444b46c5dcf814299320d85302f0c757c147c0f4c9"
+    },
+    {
+      "file": "assets/firebase/chunk-R5HGHTGR.js.LEGAL.txt",
+      "bytes": 10698,
+      "sha256": "91c99b42422d55d2dc05c04b606a22d3d4146dcd43f2a97b1a3093bdafb0ed21"
+    },
+    {
+      "file": "assets/firebase/chunk-R5HGHTGR.js",
+      "bytes": 32466,
+      "sha256": "145b024c8499156502b868b6f26d108720d3f895e1f554f4358286f7b20c0855"
+    }
+  ]
+}

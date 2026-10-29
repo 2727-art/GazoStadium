@@ -1,10 +1,10 @@
-import { getApps, initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+import { getApps, initializeApp } from "./assets/firebase/firebase-app-JUANUHIC.js";
 import {
   browserLocalPersistence, browserPopupRedirectResolver, connectAuthEmulator,
   inMemoryPersistence, initializeAuth, setPersistence, signInWithPopup, updateCurrentUser,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
-import { auth } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
-import { runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
+} from "./assets/firebase/firebase-auth-BU4OMZEH.js";
+import { auth } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1-mobile-loading-v1";
+import { runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 
 // Separate SDK-managed sessions: OAuth selection never changes the active game,
 // and the previous session survives reloads on this browser/origin. No game data
@@ -12,7 +12,7 @@ import { runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1-
 function separateAuth(name, persistence) {
   const app = getApps().find(candidate => candidate.name === name)
     || initializeApp(auth.app.options, name);
-  const instance = initializeAuth(app, { persistence, popupRedirectResolver: browserPopupRedirectResolver });
+  const instance = initializeAuth(app, { persistence });
   if (auth.emulatorConfig && !instance.emulatorConfig) {
     const { protocol, host, port } = auth.emulatorConfig;
     connectAuthEmulator(instance, `${protocol}://${host}:${port}`, { disableWarnings: true });
@@ -33,7 +33,7 @@ export async function getPreviousAccount() {
 export function selectGoogleAccount(provider) {
   selectionAuth ||= separateAuth("hariai-account-selection-v1", inMemoryPersistence);
   // Called synchronously from the button click to retain popup user activation.
-  return signInWithPopup(selectionAuth, provider);
+  return signInWithPopup(selectionAuth, provider, browserPopupRedirectResolver);
 }
 
 export function useSelectedAccount(user) {

@@ -1,7 +1,7 @@
 // Protected one-shot lobby counts, shared by the landing and the lazy game UI.
 // Do not import firebase-services: counts need neither Auth, Firestore nor Functions.
-import { get, ref } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
-import { database } from "./firebase-database-client.mjs?v=lazy-loading-v1";
+import { get, ref } from "./assets/firebase/firebase-database-W4EXZUO6.js";
+import { database } from "./firebase-database-client.mjs?v=lazy-loading-v1-mobile-loading-v1";
 import { summarizeBattlePresence } from "./battle-presence-stats.mjs?v=presence-check-v1";
 
 const params = new URLSearchParams(location.search);

@@ -1,0 +1,52 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><title>SDK session compatibility — emulator only</title>
+<h1>Firebase SDK 互換性検証（ローカルエミュレーター専用）</h1>
+<p>旧版の保存済み認証を新しい配信コードで復元し、保護付き通信と購読を確認します。</p>
+<button id="save-local">旧版で localStorage に保存</button>
+<button id="save-idb">旧版で IndexedDB に保存</button>
+<button id="save-session">旧版で sessionStorage に保存</button>
+<a href="/sdk-session-check.html?phase=after&firebaseEmulators=1">軽量版で復元を確認</a>
+<pre id="result" role="status">準備中</pre>
+<script type="module">
+const result=document.querySelector('#result');
+const report=text=>{result.textContent=text;};
+if(location.hostname!=='127.0.0.1')throw Error('Loopback only');
+const after=new URLSearchParams(location.search).get('phase')==='after';
+const timeout=promise=>Promise.race([promise,new Promise((_,reject)=>setTimeout(()=>reject(Error('Timed out')),20000))]);
+try {
+  if(!after){
+    const appSdk=await import('https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js');
+    const authSdk=await import('https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js');
+    const app=appSdk.initializeApp({apiKey:'demo-api-key',authDomain:'demo-gazostadium.firebaseapp.com',projectId:'demo-gazostadium',appId:'1:000000000000:web:0000000000000000000000'});
+    const auth=authSdk.getAuth(app);authSdk.connectAuthEmulator(auth,'http://127.0.0.1:9099',{disableWarnings:true});
+    for(const [key,persistence] of Object.entries({local:authSdk.browserLocalPersistence,idb:authSdk.indexedDBLocalPersistence,session:authSdk.browserSessionPersistence})){
+      document.querySelector('#save-'+key).onclick=async()=>{
+        try{await auth.authStateReady();await authSdk.setPersistence(auth,persistence);const {user}=await authSdk.signInAnonymously(auth);sessionStorage.setItem('sdk-fixture-uid',user.uid);sessionStorage.setItem('sdk-fixture-storage',key);report('SAVED '+key+' / emulator user');}catch(error){report('FAIL '+error.message);}
+      };
+    }
+    report('旧版の保存方式を選んでください');
+  } else {
+    for(const button of document.querySelectorAll('button'))button.disabled=true;
+    const manifest=await (await fetch('/assets/firebase/manifest.json')).json();
+    const services=await import('/firebase-services.js?fixture=mobile-loading');
+    const authSession=await import('/auth-session.js?fixture=mobile-loading');
+    const firestoreSdk=await import('/'+manifest.entries.firestore);
+    const databaseSdk=await import('/'+manifest.entries.database);
+    const functionSdk=await import('/'+manifest.entries.functions);
+    await services.auth.authStateReady();
+    const user=await authSession.ensureHariaiUser();
+    if(user.uid!==sessionStorage.getItem('sdk-fixture-uid'))throw Error('UID changed');
+    const seed=await (await fetch('/fixture-seed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:user.uid})})).json();
+    const wallet=await timeout(new Promise((resolve,reject)=>{const stop=firestoreSdk.onSnapshot(firestoreSdk.doc(services.firestore,'wallets',user.uid),snapshot=>{stop();resolve(snapshot.data());},reject);}));
+    if(wallet?.balance!==321)throw Error('Wallet history fixture lost');
+    const events=await timeout(new Promise((resolve,reject)=>{const stop=firestoreSdk.onSnapshot(firestoreSdk.query(firestoreSdk.collection(services.firestore,'tributeContracts',seed.contractId,'events'),firestoreSdk.orderBy('seq'),firestoreSdk.limitToLast(100)),snapshot=>{stop();resolve(snapshot.docs.map(doc=>doc.data()));},reject);}));
+    if(events.length!==1||events[0].seq!==1)throw Error('Contract events missing');
+    const denied=await timeout(new Promise(resolve=>{const stop=firestoreSdk.onSnapshot(firestoreSdk.doc(services.firestore,'wallets','another-user'),()=>{stop();resolve(false);},error=>resolve(error.code==='permission-denied'));}));
+    if(!denied)throw Error('Cross-account access was not denied');
+    const safety=await databaseSdk.get(databaseSdk.ref(services.database,'online/playerSafetyEvents/'+user.uid));
+    if(safety.val()!==null)throw Error('Unexpected safety fixture');
+    const response=await functionSdk.httpsCallable(services.functions,'sdkTransportProbe')({action:'verify'});
+    if(!response.data.appCheck||!response.data.auth)throw Error('Protection tokens missing');
+    report('PASS '+sessionStorage.getItem('sdk-fixture-storage')+'\nSame UID restored; wallet 321; contract event read; cross-user access denied; safety read; Auth + App Check headers attached.');
+  }
+}catch(error){report('FAIL '+error.message);}
+</script></html>

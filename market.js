@@ -1,12 +1,12 @@
-import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1";
-import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1";
+import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1-mobile-loading-v1";
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import {
   doc,
   onSnapshot,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+} from "./assets/firebase/firebase-firestore-QNR56A4P.js";
 import {
   httpsCallable,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+} from "./assets/firebase/firebase-functions-TFNFZUKR.js";
 import {
   limitToLast,
   onChildAdded,
@@ -17,14 +17,14 @@ import {
   remove,
   serverTimestamp,
   set,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
+} from "./assets/firebase/firebase-database-W4EXZUO6.js";
 import {
   auth,
   database,
   firestore,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1-lazy-loading-v1-mobile-loading-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,

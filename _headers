@@ -9,3 +9,28 @@
 # Only the content-fingerprinted homepage sample is immutable.
 /assets/landing/hero-example.d9a004076802.png
   Cache-Control: public, max-age=31536000, immutable
+
+# Content-fingerprinted SDK chunks and the landing font subset.
+/assets/firebase/firebase-app-JUANUHIC.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/firebase/firebase-app-check-GJ5H5HVI.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/firebase/firebase-auth-BU4OMZEH.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/firebase/firebase-database-W4EXZUO6.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/firebase/firebase-firestore-QNR56A4P.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/firebase/firebase-functions-TFNFZUKR.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/firebase/chunk-R5HGHTGR.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/fonts/dela-landing.34071422ca2b.woff2
+  Cache-Control: public, max-age=31536000, immutable

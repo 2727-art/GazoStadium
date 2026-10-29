@@ -2,9 +2,9 @@ import {
   getApp,
   getApps,
   initializeApp,
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+} from "./assets/firebase/firebase-app-JUANUHIC.js";
 import { firebaseConfig } from "./firebase-config.js?v=app-check-v3";
-import { initializeHariaiAppCheck } from "./firebase-app-check.js?v=app-check-v3-ai-text-training-v1-roulette-training-v1";
+import { initializeHariaiAppCheck } from "./firebase-app-check.js?v=app-check-v3-ai-text-training-v1-roulette-training-v1-mobile-loading-v1";
 
 const isLocalhost = ["127.0.0.1", "localhost"].includes(location.hostname);
 const useFirebaseEmulators = isLocalhost

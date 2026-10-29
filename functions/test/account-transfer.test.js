@@ -81,7 +81,7 @@ test("account protection wiring preserves UID and never copies wallet data", () 
   const client = read("account.js");
   const server = read("functions/index.js");
   const rules = read("firestore.rules");
-  assert.match(client, /linkWithPopup\(user, googleProvider\)/);
+  assert.match(client, /linkWithPopup\(user, googleProvider, browserPopupRedirectResolver\)/);
   assert.doesNotMatch(client, /signInWithPopup/);
   assert.match(client, /signInWithCredential\(auth, state\.pendingGoogleCredential\)/);
   assert.match(client, /signInWithCustomToken\(auth, token\)/);

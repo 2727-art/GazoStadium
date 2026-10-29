@@ -8,6 +8,10 @@ const root = path.resolve(__dirname, "..", "..");
 const imagePath = "assets/landing/hero-example.d9a004076802.png";
 const imageSha256 = "d9a00407680297c6b33868c9b12b42165dd94437b54ff9fe66b70bfbdfe414a0";
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
+const immutableRules = () => [imagePath,
+  ...JSON.parse(read("assets/firebase/manifest.json")).files.filter(file => file.file.endsWith(".js")).map(file => file.file),
+  "assets/fonts/" + JSON.parse(read("assets/fonts/landing-subset.json")).file,
+].map(file => ({ source: `/${file}`, value: "public, max-age=31536000, immutable" }));
 const heroExample = () => {
   const app = read("app.js");
   const start = app.indexOf('<div class="vl-hero-thread"');
@@ -40,17 +44,14 @@ test("the fingerprinted hero asset preserves the supplied PNG bytes and dimensio
   assert.ok(imagePath.includes(imageSha256.slice(0, 12)), "the filename changes when its content changes");
 });
 
-test("immutable Hosting caching is limited to the fingerprinted hero image", () => {
+test("immutable Hosting caching is limited to exact fingerprinted asset paths", () => {
   const hosting = JSON.parse(read("firebase.json")).hosting;
   const cacheRules = (hosting.headers || []).flatMap((rule) =>
     (rule.headers || [])
       .filter((header) => header.key.toLowerCase() === "cache-control")
       .map((header) => ({ source: rule.source, value: header.value })),
   );
-  assert.deepEqual(cacheRules, [{
-    source: `/${imagePath}`,
-    value: "public, max-age=31536000, immutable",
-  }], "HTML, scripts, styles, and other image paths must not inherit the hero's immutable cache rule");
+  assert.deepEqual(cacheRules, immutableRules(), "HTML and mutable assets must not inherit immutable caching");
 });
 
 test("the homepage loads the updated hero markup and image styling cache versions", () => {
@@ -59,13 +60,13 @@ test("the homepage loads the updated hero markup and image styling cache version
   assert.match(html, /velvet\.css\?v=[^"]*hero-image-v1/);
 });
 
-test("Cloudflare sets the same image-only cache policy and Firebase does not serve its configuration", () => {
+test("Cloudflare sets the same fingerprint-only cache policy and Firebase does not serve its configuration", () => {
   const rules = [];
   let source;
   for (const line of read("_headers").split(/\r?\n/)) {
     if (line.startsWith("/")) source = line;
     if (/^\s+Cache-Control:/i.test(line)) rules.push({ source, value: line.trim().slice("Cache-Control:".length).trim() });
   }
-  assert.deepEqual(rules, [{ source: `/${imagePath}`, value: "public, max-age=31536000, immutable" }]);
+  assert.deepEqual(rules, immutableRules());
   assert.ok(JSON.parse(read("firebase.json")).hosting.ignore.includes("_headers"));
 });

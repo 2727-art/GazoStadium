@@ -1342,7 +1342,7 @@ test("all Firebase clients share one cache generation", () => {
     return match[1];
   });
   assert.equal(new Set(urls).size, 1);
-  assert.match(urls[0], /roulette-training-v1(?:-lazy-loading-v1)?$/);
+  assert.match(urls[0], /roulette-training-v1-lazy-loading-v1-mobile-loading-v1$/);
   assert.match(read("firebase-services.js"), /searchParams\.has\("rouletteTrainingPreview"\)/);
   assert.match(read("firebase-app-check.js"), /searchParams\.has\("rouletteTrainingPreview"\)/);
 });

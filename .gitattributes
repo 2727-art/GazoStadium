@@ -1,0 +1,5 @@
+# Generated SDK fingerprints are computed from exact LF bytes on every host.
+assets/firebase/* text eol=lf
+assets/fonts/*.json text eol=lf
+assets/fonts/*.txt text eol=lf
+assets/fonts/*.woff2 -text
