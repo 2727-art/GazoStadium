@@ -90,7 +90,7 @@ async function harness(dispatch) {
   vm.runInContext([
     "createState", "isCurrent", "ensureUser", "call", "readOnce", "closeSharePreview", "applyState", "requestState", "refreshState", "navigate",
     "stopThread", "openThread", "subscribeThreadEvents", "mergeEventPage", "loadOlderThreadEvents", "withThreadLimits", "isCurrentThread", "visibleReadSequence", "applyReadAcknowledgement", "syncContractRow", "scheduleMarkRead", "refreshWorkProgress",
-    "mutate", "handleSubmit", "start", "isActive", "requestHome",
+    "needsPageReload", "mutate", "handleSubmit", "start", "isActive", "requestHome",
   ].map(fn).join("\n"), context);
   return {
     context, calls, subscriptions,
@@ -129,6 +129,16 @@ test("ranch entry fetches state once; later hub navigation still fetches fresh s
   h.context.navigate("hub");
   await flush();
   assert.equal(h.requests("state").length, 2);
+});
+
+test("entry rejection selects full-page recovery without retrying protected calls or altering the user", async () => {
+  const h = await harness(() => { throw Object.assign(new Error("Unauthenticated"), { code: "functions/unauthenticated" }); });
+  await h.start();
+  assert.equal(h.context.state.screen, "error");
+  assert.equal(h.context.state.fatalReloadRequired, true);
+  assert.equal(h.context.auth.currentUser.uid, "player");
+  assert.equal(h.requests("state").length, 1);
+  assert.equal(h.calls.some((entry) => entry.action && entry.action !== "state"), false);
 });
 
 test("overlapping state requests share one RPC and apply achievement notifications only once", async () => {

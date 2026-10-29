@@ -46,7 +46,7 @@ async function harness({ dispatch = async () => ({ ok: true }), escrowBalance = 
     showToast: (message) => toasts.push(message),
   });
   vm.runInContext([
-    "friendlyError", "readAmount", "setFormError", "contractPayload", "mutate", "handleSubmit", "bindRoot",
+    "needsPageReload", "friendlyError", "readAmount", "setFormError", "contractPayload", "mutate", "handleSubmit", "bindRoot",
   ].map(fn).join("\n"), context);
   context.bindRoot({ addEventListener: (name, listener) => listeners.set(name, listener) });
   return {
