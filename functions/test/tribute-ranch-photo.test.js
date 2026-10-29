@@ -253,7 +253,7 @@ test("cache keys and the design record", () => {
   const index = read("index.html");
   for (const name of ["tribute.css", "tribute.js"]) assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-photo-v1(?:-[a-z0-9-]+)?"`), name);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-photo-v1(?:-[a-z0-9-]+)?"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=[^"]*-ranch-photo-v1(?:-[a-z0-9-]+)?"/);
+  assert.match(client, /import\("\.\/tribute-share\.mjs\?v=[^"]*-ranch-photo-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /### 16\.15 記念写真・飼育記録・牧場の名前/);
   assert.match(design, /`set_ranch_name`/);
   assert.match(design, /`fondnessAt`/);

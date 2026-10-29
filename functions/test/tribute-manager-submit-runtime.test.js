@@ -34,7 +34,7 @@ async function harness({ dispatch = async () => ({ ok: true }), escrowBalance = 
   const toasts = [];
   const listeners = new Map();
   const error = { textContent: "", isConnected: true };
-  const state = { uid: "manager", busy: "", thread: { view, contractId }, sheet: { clientRequestId: "request_manager_01" } };
+  const state = { uid: "manager", busy: "", readRequests: new Map(), thread: { view, contractId }, sheet: { clientRequestId: "request_manager_01" } };
   let closed = false;
   const context = vm.createContext({
     ...module, state, active: true, lifecycleGeneration: 1, stateRequest: null, previewScreen: "",

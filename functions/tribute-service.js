@@ -101,6 +101,7 @@ const {
 } = require("./achievements");
 
 const TRIBUTE_ACTIONS = Object.freeze([
+  "ended_contracts",
   "state",
   "age_confirm",
   "save_profile",
@@ -1719,7 +1720,43 @@ function createTributeService(deps) {
     return result;
   }
 
-  async function stateAction(uid) {
+  // 進行中を終了履歴の件数制限に巻き込まない。上限は契約作成時に検証する。
+  const openContractsQuery = (uid) => firestore.collection("tributeContracts")
+    .where("participants", "array-contains", uid)
+    .where("status", "in", OPEN_STATUSES)
+    .orderBy("updatedAt", "desc");
+
+  async function endedContractPage(uid, cursor) {
+    let query = firestore.collection("tributeContracts")
+      .where("participants", "array-contains", uid)
+      .where("status", "==", "ended")
+      .orderBy("updatedAt", "desc").orderBy("__name__", "desc");
+    if (cursor) {
+      if (!Number.isSafeInteger(cursor.updatedAt) || cursor.updatedAt < 1 || !CONTRACT_ID_PATTERN.test(String(cursor.contractId || ""))) {
+        fail("invalid-argument", "契約履歴の続きを確認できません。一覧を開き直してください。");
+      }
+      query = query.startAfter(cursor.updatedAt, cursor.contractId);
+    }
+    const snapshot = await query.limit(11).get();
+    const docs = snapshot.docs.slice(0, 10);
+    const last = docs.at(-1);
+    const more = snapshot.docs.length > 10;
+    return { docs, more, nextCursor: more && last ? { updatedAt: last.get("updatedAt"), contractId: last.id } : null };
+  }
+
+  async function endedContractsAction(uid, data) {
+    const profile = await readOwnProfile(uid);
+    requireAge(profile);
+    const page = await endedContractPage(uid, data?.cursor);
+    const contracts = page.docs.map((document) => {
+      const contract = object(document.data());
+      const view = viewContract(contract, uid, currentTime());
+      return contract.managerUid === uid ? { ...view, nickname: profile.payerNicknames[contract.payerUid] || "" } : view;
+    });
+    return { ok: true, contracts, more: page.more, nextCursor: page.nextCursor };
+  }
+
+  async function stateAction(uid, data) {
     const now = currentTime();
     const monthKey = jstMonthKey(now);
     let profile = await readOwnProfile(uid);
@@ -1731,11 +1768,9 @@ function createTributeService(deps) {
       ageConfirmed,
     };
     if (!ageConfirmed) return base;
-    let snapshot = await firestore.collection("tributeContracts")
-      .where("participants", "array-contains", uid)
-      .orderBy("updatedAt", "desc")
-      .limit(40)
-      .get();
+    // 番付・招待先の詳細には契約一覧や実績集計を送らない。
+    if (data?.summaryOnly === true) return { ...base, profile: ownProfileView(profile, monthKey, now) };
+    let snapshot = await openContractsQuery(uid).get();
     const overdue = snapshot.docs
       .map((document) => object(document.data()))
       .filter((contract) => OPEN_STATUSES.includes(contract.status) && Number(contract.expiresAt || 0) <= now)
@@ -1748,15 +1783,13 @@ function createTributeService(deps) {
           console.error("tribute lazy expiry failed", error);
         }
       }
-      snapshot = await firestore.collection("tributeContracts")
-        .where("participants", "array-contains", uid)
-        .orderBy("updatedAt", "desc")
-        .limit(40)
-        .get();
+      snapshot = await openContractsQuery(uid).get();
       profile = await readOwnProfile(uid);
     }
+    const ended = await endedContractPage(uid);
     // 財布として持つ契約だけ、財布だけが読める限度額を足して返す。
-    const raw = snapshot.docs.map((document) => object(document.data()));
+    const raw = [...new Map([...snapshot.docs, ...ended.docs].map((document) => [document.id, document])).values()]
+      .map((document) => object(document.data()));
     const limits = await Promise.all(raw.map((contract) => (
       contract.payerUid === uid && OPEN_STATUSES.includes(contract.status) && CONTRACT_ID_PATTERN.test(String(contract.contractId || ""))
         ? limitsRef(contract.contractId).get()
@@ -1783,6 +1816,8 @@ function createTributeService(deps) {
       achievements,
       profile: ownProfileView(profile, monthKey, now),
       contracts,
+      endedMore: ended.more,
+      endedCursor: ended.nextCursor,
     };
   }
 
@@ -3878,7 +3913,10 @@ function createTributeService(deps) {
 
   // 掲示板と管理人の詳細の札。毎回数えると重いので、10分まで前の順位を使う（番付を開くと数え直す）。
   // 数えられない時（インデックスの作成中など）は札を出さず、掲示板は止めない。
+  const rankBadgeRequests = new Map();
   async function rankBadges(monthKey, now) {
+    if (rankBadgeRequests.has(monthKey)) return rankBadgeRequests.get(monthKey);
+    const request = (async () => {
     try {
       const cached = object((await rankCacheRef(monthKey).get()).data());
       if (cached.monthKey === monthKey && now - integer(cached.computedAt, 0, Number.MAX_SAFE_INTEGER, 0) < LIMITS.rankBadgeCacheMs) {
@@ -3891,6 +3929,10 @@ function createTributeService(deps) {
       console.error("tribute rank badges failed", error);
       return new Map();
     }
+    })();
+    rankBadgeRequests.set(monthKey, request);
+    try { return await request; }
+    finally { if (rankBadgeRequests.get(monthKey) === request) rankBadgeRequests.delete(monthKey); }
   }
 
   async function grossRankingsAction(uid, monthKey, now) {
@@ -4364,7 +4406,8 @@ function createTributeService(deps) {
     }
     if (!TRIBUTE_ACTIONS.includes(action)) fail("invalid-argument", "操作を確認できません。");
     switch (action) {
-      case "state": return stateAction(uid);
+      case "state": return stateAction(uid, data);
+      case "ended_contracts": return endedContractsAction(uid, data);
       case "age_confirm": return ageConfirmAction(uid, data);
       case "save_profile": return saveProfileAction(uid, data);
       case "decorations": return decorationsAction(uid);

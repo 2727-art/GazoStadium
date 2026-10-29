@@ -117,14 +117,16 @@ test("RANCH-02: expanded live history rejects old callbacks and provides retry a
   c.open(); c.snapshot(); c.events([101, 102]);
   const old = c.subscriptions.find(subscription => subscription.reference.endsWith("/events"));
   await c.context.handleClick({ dataset: { t: "history-more" } });
-  assert.deepEqual(limits, [100, 200]);
+  assert.deepEqual(limits, [100, 100]);
   c.events([999], { subscription: old });
   assert.equal(c.context.state.thread.events[0].seq, 101);
   const latest = c.subscriptions.filter(subscription => subscription.reference.endsWith("/events")).at(-1);
   latest.error(new Error("offline"));
   assert.equal(c.context.state.thread.historyError, true);
   await c.context.handleClick({ dataset: { t: "history-more" } });
-  assert.deepEqual(limits, [100, 200, 200], "retry does not expand again");
+  assert.deepEqual(limits, [100, 100, 100], "retry requests only the earlier page");
+  c.events([999], { subscription: latest });
+  assert.equal(c.context.state.thread.events[0].seq, 101, "a superseded page cannot overwrite the retry");
   c.events([1, 2, 101, 102]);
   assert.equal(c.context.state.thread.events[0].seq, 1);
   assert.equal(c.context.state.thread.historyLoading, false);

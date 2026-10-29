@@ -41,5 +41,5 @@ test("the image and the post keep their words, including the hashtag the scene s
 test("cache keys", () => {
   assert.match(index, /"module": "tribute\.js\?v=[^"]*-ranch-reception-card-v1(?:-[a-z0-9-]+)?"/);
   assert.match(index, /"module": "online\.js\?v=[^"]*-ranch-reception-card-v1(?:-[a-z0-9-]+)?"/);
-  assert.match(client, /from "\.\/tribute-share\.mjs\?v=[^"]*-ranch-reception-card-v1(?:-[a-z0-9-]+)?"/);
+  assert.match(client, /import\("\.\/tribute-share\.mjs\?v=[^"]*-ranch-reception-card-v1(?:-[a-z0-9-]+)?"/);
 });
