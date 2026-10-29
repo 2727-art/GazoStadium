@@ -242,6 +242,7 @@ function createState() {
     screen: "loading",
     uid: "",
     fatalError: "",
+    fatalReloadRequired: false,
     ageConfirmed: false,
     profile: null,
     contracts: [],
@@ -293,11 +294,19 @@ function showToast(message) {
   else window.alert(message);
 }
 
+function needsPageReload(error) {
+  const code = String(error?.code || "").toLowerCase();
+  return code.includes("unauthenticated") || code.includes("app-check") || code.startsWith("appcheck/")
+    || code.includes("permission-denied") && /App Check/i.test(String(error?.message));
+}
+
 function friendlyError(error, fallback = "お貢ぎ牧場の処理を完了できませんでした。") {
   const code = String(error?.code || "").toLowerCase();
-  if (code.includes("unauthenticated")) return "アカウントを確認できませんでした。ページを読み直してください。";
-  if (code.includes("app-check") || code.includes("permission-denied") && /App Check/i.test(String(error?.message))) {
-    return "通信保護を確認できませんでした。ページを再読み込みしてください。";
+  if (needsPageReload(error)) {
+    const reason = code.includes("unauthenticated")
+      ? "ログイン状態または通信保護を確認できませんでした。"
+      : "通信保護を確認できませんでした。";
+    return `${reason}サイトデータやCookieを削除せず、ページ全体を再読み込みしてください。繰り返す場合は、利用URLと発生時刻を添えてお問い合わせください。`;
   }
   const message = String(error?.message || "").replace(/^Firebase:\s*/u, "").slice(0, 200);
   if (message && !/^internal$/iu.test(message)) return message;
@@ -462,7 +471,7 @@ function renderLoading() {
 
 function renderError() {
   return frame(`<div class="tribute-panel tribute-error" role="alert"><h2>開けませんでした</h2><p>${escapeHtml(state.fatalError || "通信状態を確かめて、もう一度お試しください。")}</p>
-    <div class="tribute-row"><button class="button button-primary" type="button" data-t="retry">もう一度読み込む</button></div></div>`);
+    <div class="tribute-row"><button class="button button-primary" type="button" data-t="${state.fatalReloadRequired ? "reload-page" : "retry"}">${state.fatalReloadRequired ? "ページ全体を再読み込み" : "もう一度読み込む"}</button></div></div>`);
 }
 
 function renderAge() {
@@ -4950,6 +4959,9 @@ async function handleClick(target) {
       active = false;
       start();
       return;
+    case "reload-page":
+      if (state.screen === "error" && state.fatalReloadRequired) window.location.reload();
+      return;
     case "reload-board":
       loadBoard();
       return;
@@ -5851,6 +5863,7 @@ async function start({ initialScreen = "", inviteManager = "" } = {}) {
   } catch (error) {
     if (!isCurrent(generation)) return;
     state.screen = "error";
+    state.fatalReloadRequired = needsPageReload(error);
     state.fatalError = friendlyError(error, "お貢ぎ牧場へ接続できませんでした。");
     setChrome("OMITSUGI RANCH / ERROR");
     render();

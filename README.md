@@ -749,6 +749,8 @@ GitHub Pagesにはフロントエンドの静的ファイルだけを配置で�
 
 トップには `landing-base.css` と入口のコードだけを読み込みます。各画面は `index.html` の `featureManifest` と `feature-loader.js` で、必要なCSS・共通処理・モジュールを一度だけ読み込みます。戦略型は総合ランキングと対戦結果確定に必要な通常型の共通APIを先に用意します。ロード失敗後の再操作と読み込み中止に対応しています。
 
+牧場だけは `parallelModule: true` により、CSS・実績カタログとESモジュールの取得を同時に始めます。牧場モジュールは評価時に実績カタログへ依存しません。画面を起動するのは全依存が揃った後です。依存のグローバル変数を評価時に使う他モードへ無条件に適用しないでください。LighthouseのLCPが `loading-card` を指す場合は牧場の準備完了時間ではありません。前後比較では同じテストデータ・スロットリング方式で、牧場hubの描画完了も別に計測します。
+
 人数表示は `landing-presence.mjs` でページ初回表示時に一度だけ取得し、同じページ内では再取得しません。未取得・失敗時は `--` のまま表示します。App Check は維持し、共有の `firebase-database-client.mjs` でエミュレーター接続も一度だけ初期化します。
 
 `npm --prefix functions run build:client` はトップのHTML・初期CSSと旧市場の記録専用JS/CSSを再生成します。`npm --prefix functions run check` は生成物の一致、全モードの共有モジュールURL、遅延ロードの同時実行・中止・失敗後再試行、記録閲覧の重複取得を検証します。`node functions/test/run-loading-emulator.js` は隔離したdemoプロジェクトで対戦結果・購入履歴・ランキング・実績の回帰検証を行います（Java 21以上が必要です）。
@@ -762,6 +764,8 @@ GitHub Pagesにはフロントエンドの静的ファイルだけを配置で�
 ブラウザ用SDKは従来と同じ12.16.0です。`functions` の開発依存 `firebase-web` を固定し、`scripts/build-firebase-sdk.cjs` が実際に使う名前付きexportだけをesbuildでまとめ、`assets/firebase/` に内容指紋付きESMを生成します。共通chunkを共有するため、Auth・App Check・Firestore・Realtime Database・Functionsのアプリ登録は一つです。`npm --prefix functions ci` の後、`npm --prefix functions run build:client` と `npm --prefix functions run check` を実行してください。生成物とソースのSDK参照、ライセンス、manifestもコミットします。SDKの更新は軽量化と別に検証します。
 
 Authは `getAuth()` と同じ保存領域の探索順序で `initializeAuth()` します。ログインUIDと既存セッションは引き継ぎ、Google連携・選択時だけ `browserPopupRedirectResolver` を渡します。App Checkは全サービスより先に初期化し、Enterprise provider・自動更新・サーバーの強制設定を維持します。
+
+牧場の接続失敗でSDKの `appCheck/*` またはCallableの未認証が返った場合は、データを消さずにページ全体を再読み込みするボタンを表示します。画面内だけの再起動ではSDKの拒否後の待機状態が残るためです。未認証だけではApp Checkが原因と断定せず「ログイン状態または通信保護」と案内します。通常のネットワーク失敗は画面内の再試行を維持し、送金等を自動再送しません。再読み込みしても検証に通る保証はなく、繰り返す場合は利用URL・時刻で本番ログを照合します。ログのブラウザ形式だけでは実利用者と自動計測を確実に区別できず、拒否件数を人数・誤判定率として扱いません。
 
 長期キャッシュは `_headers` と `firebase.json` に列挙した内容指紋付きファイルだけに限定します。SDKの生成ファイル名が変わったら両方のキャッシュ対象を合わせて更新してください（全体テストで不一致を検出します）。HTML、通常のJS/CSS、manifestには長期キャッシュを設定しません。通常のソース変更では従来どおり参照元の `?v=` も更新します。
 
