@@ -146,7 +146,7 @@ const PRODUCT_ROWS = [
   ["ranch_ink_sumi", "ranchSealInk", 1000],
   ["ranch_ink_sakura", "ranchSealInk", 2000],
   ["ranch_ink_kin", "ranchSealInk", 3000],
-  // 管理人の有料アイコン（四角・金の縁）。番号は tribute-rules.js の PREMIUM_AVATAR_IDS と揃える。
+  // 管理人の有料アイコン（四角・ホログラム）。番号は tribute-rules.js の PREMIUM_AVATAR_IDS と揃える。
   ["ranch_avatar_36", "ranchAvatar", 500],
   ["ranch_avatar_37", "ranchAvatar", 500],
   ["ranch_avatar_38", "ranchAvatar", 500],

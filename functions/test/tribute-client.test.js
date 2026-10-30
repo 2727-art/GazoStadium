@@ -227,8 +227,8 @@ test("manager icons are 48 prepared WebP files (24 drawings, 11 photos, 13 paid 
   assert.match(styles, /\.tribute-sigil\.has-avatar img \{/);
   assert.match(styles, /\.tribute-avatar-grid \{ display: grid; grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
   assert.match(design, /管理人の印は、用意した48種のアイコン/);
-  // 有料アイコンは四角に金の縁。画面とシェア画像の両方で丸く切らない。
-  assert.match(styles, /\.tribute-sigil\.has-avatar\.is-premium,\r?\n\.tribute-avatar-choice\.is-premium \{\r?\n  border-radius: 6px;/);
+  // 有料アイコンは四角に印の色の縁とホログラム。画面とシェア画像の両方で丸く切らない。
+  assert.match(styles, /\.tribute-sigil\.has-avatar\.is-premium,\r?\n\.tribute-avatar-choice\.is-premium \{[^}]*border-radius: 6px;[^}]*background: var\(--sigil, #ff4fa3\);/);
   assert.match(read("tribute-share.mjs"), /if \(image && manager\?\.premiumAvatar\) \{\s*paintPremiumAvatar\(/);
 });
 

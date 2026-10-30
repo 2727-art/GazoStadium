@@ -386,17 +386,34 @@ function paintFooter(ctx) {
   spacing(ctx, 0);
 }
 
-// 有料アイコンは画面と同じく、四角に金の縁で描く（印の色の輪は使わない）。
-function paintPremiumAvatar(ctx, { image, x, y, radius, ringWidth }) {
+// 有料アイコンのホログラムの箔（tribute.css と同じ虹の色）。中央を透かして、四隅と縁に寄せる。
+const HOLO_FOIL = Object.freeze(["#ff6fae", "#ffd36e", "#78ffc0", "#67c6ff", "#b58cff"]);
+function holoFoil(size) {
+  const foil = document.createElement("canvas");
+  foil.width = size;
+  foil.height = size;
+  const fx = foil.getContext("2d");
+  const rainbow = fx.createLinearGradient(0, 0, size, size * 0.47);
+  for (let index = 0; index <= 15; index += 1) rainbow.addColorStop(index / 15, HOLO_FOIL[index % HOLO_FOIL.length]);
+  fx.fillStyle = rainbow;
+  fx.fillRect(0, 0, size, size);
+  fx.globalCompositeOperation = "destination-in";
+  const mask = fx.createRadialGradient(size / 2, size * 0.46, size * 0.26, size / 2, size * 0.46, size * 0.74);
+  mask.addColorStop(0, "rgba(0, 0, 0, 0)");
+  mask.addColorStop(1, "rgba(0, 0, 0, 1)");
+  fx.fillStyle = mask;
+  fx.fillRect(0, 0, size, size);
+  return foil;
+}
+
+// 有料アイコンは画面と同じく四角に、縁は印の色で描き、ホログラムの箔と、画面で流れる光の一瞬（左上）を重ねる。
+function paintPremiumAvatar(ctx, { image, x, y, radius, ring, ringWidth }) {
   const outer = radius + ringWidth;
-  const gold = ctx.createLinearGradient(x - outer, y - outer, x + outer, y + outer);
-  [[0, "#fff6d6"], [0.22, "#e8c27a"], [0.46, "#a8762e"], [0.68, "#f6dc9a"], [0.86, "#be8c38"], [1, "#fff0c8"]]
-    .forEach(([stop, color]) => gold.addColorStop(stop, color));
   ctx.save();
-  ctx.shadowColor = "rgba(232, 194, 122, 0.45)";
+  ctx.shadowColor = ring;
   ctx.shadowBlur = ringWidth * 3;
   roundRectPath(ctx, x - outer, y - outer, outer * 2, outer * 2, outer * 0.12);
-  ctx.fillStyle = gold;
+  ctx.fillStyle = ring;
   ctx.fill();
   ctx.restore();
   ctx.save();
@@ -404,12 +421,27 @@ function paintPremiumAvatar(ctx, { image, x, y, radius, ringWidth }) {
   ctx.clip();
   ctx.drawImage(image, x - radius, y - radius, radius * 2, radius * 2);
   ctx.restore();
+  ctx.save();
+  roundRectPath(ctx, x - outer, y - outer, outer * 2, outer * 2, outer * 0.12);
+  ctx.clip();
+  ctx.globalCompositeOperation = "color-dodge";
+  ctx.globalAlpha = 0.38;
+  ctx.drawImage(holoFoil(Math.ceil(outer * 2)), x - outer, y - outer, outer * 2, outer * 2);
+  const glint = ctx.createLinearGradient(x - outer, y - outer, x + outer, y - outer * 0.46);
+  glint.addColorStop(0.16, "rgba(255, 255, 255, 0)");
+  glint.addColorStop(0.26, "rgba(255, 255, 255, 0.6)");
+  glint.addColorStop(0.36, "rgba(255, 255, 255, 0)");
+  ctx.globalCompositeOperation = "overlay";
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = glint;
+  ctx.fillRect(x - outer, y - outer, outer * 2, outer * 2);
+  ctx.restore();
 }
 
 // 管理人の印（アイコン）。許可がない時はシルエット。
 function paintAvatar(ctx, { image, manager, x, y, radius, ring = PINK, ringWidth = 6 }) {
   if (image && manager?.premiumAvatar) {
-    paintPremiumAvatar(ctx, { image, x, y, radius, ringWidth });
+    paintPremiumAvatar(ctx, { image, x, y, radius, ring, ringWidth });
     return;
   }
   ctx.save();

@@ -250,7 +250,7 @@ test("the recruit image is drawn on the manager's device with the disclosure, th
 
 test("the AnjuPay store sells the ranch shelf with a confirmation, without a fund share, and the design doc records the rules", () => {
   assert.match(online, /import \{ RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, premiumAvatarUrl as ranchPremiumAvatarUrl, sealSvg as ranchSealSvg \} from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1-ranch-premium-icons-v1(?:-[a-z0-9-]+)?";/);
-  assert.match(online, /<h3 class="shop-ranch-sub">管理人の有料アイコン（四角・金縁）<\/h3><div class="shop-grid">\$\{ranchShelf\("ranchAvatar"\)\}<\/div>/);
+  assert.match(online, /<h3 class="shop-ranch-sub">管理人の有料アイコン（四角・ホログラム）<\/h3><div class="shop-grid">\$\{ranchShelf\("ranchAvatar"\)\}<\/div>/);
   assert.match(online, /<span class="tribute-deco-swatch"\$\{ranchFrameAttr\(product\.deco\)\}><\/span>/, "store swatches get their color variables");
   assert.match(online, /枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。/);
   assert.match(read("shop-products.mjs"), /\.\.\.CHAT_COSMETIC_PRODUCTS,\r?\n  \.\.\.RANCH_DECORATION_PRODUCTS,\r?\n\];/);

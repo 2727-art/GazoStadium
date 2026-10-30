@@ -201,15 +201,61 @@
   user-select: none;
 }
 
-/* 有料アイコンの印。丸く切らず、四角に金の縁で出す（印の色は縁に使わない）。ストアの見本でも使うので、色は直に書く。 */
+/* 有料アイコンの印（ホログラム）。丸く切らずに四角で出し、縁は無料と同じ印の色。
+   四隅と縁に寄せた虹の箔（中央は透かして顔の上は絵のまま）と、ときどき斜めに流れる光を重ねる（ユーザー決定、2026-10-30）。
+   ストアの見本は印の色を持たないので、既定の桃色の縁になる。 */
 .tribute-sigil.has-avatar.is-premium,
 .tribute-avatar-choice.is-premium {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   border-radius: 6px;
-  background: linear-gradient(135deg, #fff6d6 0%, #e8c27a 22%, #a8762e 46%, #f6dc9a 68%, #be8c38 86%, #fff0c8 100%);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 14px rgba(232, 194, 122, 0.42);
+  background: var(--sigil, #ff4fa3);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 14px color-mix(in srgb, var(--sigil, #ff4fa3) 50%, transparent);
 }
 .tribute-sigil.has-avatar.is-premium.is-large { border-radius: 8px; }
 .tribute-sigil.has-avatar.is-premium img { border-radius: 4px; }
+.tribute-sigil.has-avatar.is-premium::before,
+.tribute-sigil.has-avatar.is-premium::after,
+.tribute-avatar-choice.is-premium::before,
+.tribute-avatar-choice.is-premium::after { content: ""; position: absolute; pointer-events: none; }
+/* 虹の箔と細かいラメ。箔の位置だけをゆっくり動かし、透かす場所（中央）は動かさない。 */
+.tribute-sigil.has-avatar.is-premium::before,
+.tribute-avatar-choice.is-premium::before {
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.8) 0 1px, transparent 2px) 0 0 / 11px 13px,
+    radial-gradient(circle at 70% 60%, rgba(255, 255, 255, 0.6) 0 1px, transparent 2px) 0 0 / 17px 15px,
+    repeating-linear-gradient(115deg, #ff6fae 0%, #ffd36e 7%, #78ffc0 14%, #67c6ff 21%, #b58cff 28%, #ff6fae 35%) 0 0 / 300% 300%;
+  mix-blend-mode: color-dodge;
+  opacity: 0.38;
+  -webkit-mask-image: radial-gradient(circle at 50% 46%, transparent 0 36%, #000 76%);
+  mask-image: radial-gradient(circle at 50% 46%, transparent 0 36%, #000 76%);
+  animation: tribute-holo-foil 16s ease-in-out infinite alternate;
+}
+/* 斜めに流れる光。12秒に1回、1.5秒ほどで横切る。 */
+.tribute-sigil.has-avatar.is-premium::after,
+.tribute-avatar-choice.is-premium::after {
+  inset: -30% -120%;
+  background: linear-gradient(105deg, transparent 44%, rgba(255, 255, 255, 0.6) 50%, transparent 56%);
+  mix-blend-mode: overlay;
+  transform: translateX(-40%);
+  animation: tribute-holo-glint 12s ease-in-out infinite;
+}
+@keyframes tribute-holo-foil {
+  from { background-position: 0 0, 0 0, 0% 0%; }
+  to { background-position: 0 0, 0 0, 100% 100%; }
+}
+@keyframes tribute-holo-glint {
+  0%, 87% { transform: translateX(-40%); }
+  100% { transform: translateX(40%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tribute-sigil.has-avatar.is-premium::before,
+  .tribute-avatar-choice.is-premium::before { animation: none; }
+  .tribute-sigil.has-avatar.is-premium::after,
+  .tribute-avatar-choice.is-premium::after { display: none; }
+}
 
 .tribute-tag {
   display: inline-block;
@@ -550,12 +596,10 @@ button.tribute-card-face:hover { border-color: color-mix(in srgb, var(--sigil) 6
   transform: scale(1.04);
 }
 .tribute-avatar-picker input:checked + .tribute-avatar-choice img { opacity: 1; }
-/* 有料アイコンの選択欄。金の縁の内側に絵を置き、下に値段か「持っている」「試着中」を出す。 */
+/* 有料アイコンの選択欄。印の色の縁とホログラムの内側に絵を置き、下に値段か「持っている」「試着中」を出す。
+   選んだ時は、無料と同じ印の色の輪で囲む。 */
 .tribute-avatar-choice.is-premium { padding: 2px; border-radius: 8px; }
 .tribute-avatar-choice.is-premium img { border-radius: 6px; }
-.tribute-avatar-picker input:checked + .tribute-avatar-choice.is-premium {
-  box-shadow: 0 0 0 2px var(--tr-panel), 0 0 0 4px var(--tr-gold), 0 0 18px rgba(232, 194, 122, 0.6);
-}
 .tribute-avatar-picker label.is-premium { gap: 4px; }
 .tribute-avatar-picker label.is-premium small { color: var(--tr-gold); font-size: 0.62rem; font-weight: 800; line-height: 1; white-space: nowrap; }
 .tribute-avatar-picker label.is-premium.is-owned small { color: var(--tr-mist); }

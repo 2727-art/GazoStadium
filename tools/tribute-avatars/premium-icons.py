@@ -5,9 +5,10 @@
   python tools/tribute-avatars/premium-icons.py 43 <43の元画像> <44> <45> <46> <47> <48>
 
 最初の番号から順に、渡した枚数だけ作り直す（ほかの番号の絵と記録はそのまま残す）。
-絵は描き直さない。顔に少し寄せて切り抜き、色を整え、四隅を絵の色で沈め、左上に光と髪の上のきらめきを重ねる。
-金の縁は画面（tribute.css）とシェア画像（tribute-share.mjs）が描くので、絵には入れない。
-50〜76px で並べても顔ときらめきが読めるように、白っぽい絵ほど少し濃くする。暗い絵は、光を弱めて暗さを残す。
+絵は描き直さない。顔に少し寄せて切り抜き、色を整え、四隅を絵の色で沈め、左上に淡い光を重ねる。
+白いきらめきは描き込まない（2026-10-30 にユーザーの依頼で外した）。有料の印のホログラム（虹の箔と流れる光）と
+印の色の縁は、画面（tribute.css）とシェア画像（tribute-share.mjs）が描く。
+50〜76px で並べても顔が読めるように、白っぽい絵ほど少し濃くする。暗い絵は、光を弱めて暗さを残す。
 書き出すのは 256×256 の WebP（20KB 未満）と、記録の JSON・見本の PNG（全部の有料アイコン）。
 """
 
@@ -19,7 +20,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[2]
 WORK = 1024
@@ -29,7 +30,7 @@ BUDGET = 20_000
 RECORD = ROOT / "functions/docs/TRIBUTE_PREMIUM_ICONS_ASSETS.json"
 PREVIEW = ROOT / "functions/docs/tribute-premium-icons-preview.png"
 
-# 切り抜きの中心（1024×1024 の元画像での顔の中心）と、四隅を沈める色・きらめきの色。
+# 切り抜きの中心（1024×1024 の元画像での顔の中心）と、四隅を沈める色。
 # sheen は左上の光の強さ（1 が 36〜42 と同じ）。暗い絵は弱めて、夜や影の色を残す。
 ICONS = [
     {"id": 36, "center": (520, 560), "key": (255, 140, 180)},  # 桜色
@@ -47,8 +48,6 @@ ICONS = [
     {"id": 48, "center": (512, 460), "key": (255, 70, 140), "sheen": 0.35},  # ルージュ
 ]
 BY_ID = {icon["id"]: icon for icon in ICONS}
-# きらめきの位置（0〜1）と大きさ。顔にかからない髪と背景の上に置く。
-SPARKLES = [(0.15, 0.15, 1.0), (0.86, 0.11, 0.55), (0.9, 0.8, 0.75), (0.09, 0.87, 0.45), (0.76, 0.28, 0.35)]
 
 
 def to_array(image):
@@ -80,29 +79,6 @@ def grade(a, key, sheen_scale):
     return screen(a, sheen[..., None])
 
 
-def star(draw, cx, cy, r):
-    t = r * 0.11
-    draw.polygon([(cx, cy - r), (cx + t, cy - t), (cx + r, cy), (cx + t, cy + t), (cx, cy + r), (cx - t, cy + t), (cx - r, cy), (cx - t, cy - t)], fill=255)
-    s, t2 = r * 0.42, r * 0.06
-    draw.polygon([(cx - s, cy - s), (cx + t2, cy - t2), (cx + s, cy + s), (cx - t2, cy + t2)], fill=255)
-    draw.polygon([(cx + s, cy - s), (cx + t2, cy + t2), (cx - s, cy + s), (cx - t2, cy - t2)], fill=255)
-
-
-def sparkle(a, key):
-    halo = Image.new("L", (WORK, WORK), 0)
-    core = Image.new("L", (WORK, WORK), 0)
-    halo_draw, core_draw = ImageDraw.Draw(halo), ImageDraw.Draw(core)
-    for x, y, scale in SPARKLES:
-        cx, cy, r = x * WORK, y * WORK, 70 * scale
-        halo_draw.ellipse((cx - r * 0.55, cy - r * 0.55, cx + r * 0.55, cy + r * 0.55), fill=255)
-        star(core_draw, cx, cy, r)
-    layer = lambda image, blur: np.asarray(image.filter(ImageFilter.GaussianBlur(blur))).astype(np.float32)[..., None] / 255
-    tint = np.array(key, np.float32) / 255.0
-    a = screen(a, layer(halo, 22) * 0.55 * (0.55 + 0.45 * tint))
-    a = screen(a, layer(core, 5) * 0.8 * (0.6 + 0.4 * tint))
-    return screen(a, layer(core, 1.2))
-
-
 def crop_box(center):
     half = CROP // 2
     left = max(0, min(center[0] - half, WORK - CROP))
@@ -126,7 +102,7 @@ def make(icon, source):
         raise SystemExit(f"{source.name} は {WORK}×{WORK} ではありません。")
     box = crop_box(icon["center"])
     a = to_array(image.crop(box).resize((WORK, WORK), Image.LANCZOS))
-    a = sparkle(grade(a, icon["key"], icon.get("sheen", 1.0)), icon["key"])
+    a = grade(a, icon["key"], icon.get("sheen", 1.0))
     out = to_image(a).resize((SIZE, SIZE), Image.LANCZOS).filter(ImageFilter.UnsharpMask(radius=0.8, percent=60, threshold=1))
     data, quality = encode(out)
     file = f"assets/tribute-avatars/avatar-{icon['id']}.webp"
@@ -172,7 +148,7 @@ def main():
     records = sorted([entry for entry in previous["icons"] if entry["id"] not in ids] + made, key=lambda entry: entry["id"])
     preview_sheet(records)
     record = {
-        "method": "Crop, colour grade, edge tint, sheen and sparkle overlay, resize, WebP encoding. No generative redraw. The gold frame is drawn by CSS and canvas, not baked in.",
+        "method": "Crop, colour grade, edge tint and sheen, resize, WebP encoding. No sparkles and no generative redraw. The sigil-coloured border and the holographic foil and glint are drawn by CSS and canvas, not baked in.",
         "icons": records,
     }
     RECORD.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

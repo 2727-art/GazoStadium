@@ -1,5 +1,5 @@
 {
-  "method": "Crop, colour grade, edge tint, sheen and sparkle overlay, resize, WebP encoding. No generative redraw. The gold frame is drawn by CSS and canvas, not baked in.",
+  "method": "Crop, colour grade, edge tint and sheen, resize, WebP encoding. No sparkles and no generative redraw. The sigil-coloured border and the holographic foil and glint are drawn by CSS and canvas, not baked in.",
   "icons": [
     {
       "id": 36,
@@ -15,8 +15,8 @@
       "width": 256,
       "height": 256,
       "quality": 90,
-      "bytes": 19026,
-      "sha256": "de14c518686ac1f09808966ce52b493c8ea8cf807ebe93bebfbbc51448895418"
+      "bytes": 18676,
+      "sha256": "36e22d5f906738c60f41389dcc7b403bbbaa62527146dbc6fa08fa8613d11359"
     },
     {
       "id": 37,
@@ -32,8 +32,8 @@
       "width": 256,
       "height": 256,
       "quality": 86,
-      "bytes": 18616,
-      "sha256": "44a442f65bf3aec337325588f155d988b59da2c1b549844026fa852891bdbae8"
+      "bytes": 18516,
+      "sha256": "c4d0a788106661df00aadc9518622cb35d0745ce2ee99aad2dfda015e9686c2a"
     },
     {
       "id": 38,
@@ -49,8 +49,8 @@
       "width": 256,
       "height": 256,
       "quality": 84,
-      "bytes": 18678,
-      "sha256": "10bfb7ffb5d09b604dc444db06a516aa0991f1e9e11683eded35e3ccdb3c64b0"
+      "bytes": 18378,
+      "sha256": "2d4f60e874aad58ac4eb25b31ccb5ec89a52916c785ea0333886d1e4574d3fe2"
     },
     {
       "id": 39,
@@ -66,8 +66,8 @@
       "width": 256,
       "height": 256,
       "quality": 86,
-      "bytes": 19124,
-      "sha256": "da9e598e81f8506b0abfb664c66d94f2f2f947c4fbfbf0b127975512deff616c"
+      "bytes": 18796,
+      "sha256": "edeb74bc76b6dcc4c84698dc9b904561be1f155c29d14c07a2bc607f33af957d"
     },
     {
       "id": 40,
@@ -83,8 +83,8 @@
       "width": 256,
       "height": 256,
       "quality": 90,
-      "bytes": 12114,
-      "sha256": "46d9e1ee6f5d874cddbfe3039612e968b828f5861e5b1100e211ac9db2083422"
+      "bytes": 12002,
+      "sha256": "77d564f792097e4b99693abae865dde8c1717f8cd4bb04e02d578d6218e21007"
     },
     {
       "id": 41,
@@ -100,8 +100,8 @@
       "width": 256,
       "height": 256,
       "quality": 86,
-      "bytes": 19808,
-      "sha256": "04d1f50de32e5cccebcc03ea6c8165519f58363d1a86b672cb2ec6409362c3e0"
+      "bytes": 19684,
+      "sha256": "f730e43f0ecdc22ac840b5755f66b6cddcd44ace330858b6898752c61260ff01"
     },
     {
       "id": 42,
@@ -117,8 +117,8 @@
       "width": 256,
       "height": 256,
       "quality": 90,
-      "bytes": 19728,
-      "sha256": "83810ff660c3c84bf8c307efa4e29d7545e8676e1152fa8c36dd91f4c9e51e8c"
+      "bytes": 19570,
+      "sha256": "7989214944094f5183c36437beda2f311c188f062ae8a474beb01e2451086e87"
     },
     {
       "id": 43,
@@ -134,8 +134,8 @@
       "width": 256,
       "height": 256,
       "quality": 84,
-      "bytes": 19656,
-      "sha256": "3618f42136a6722fb4eda3bc4c6d6f7bff60c3d6ac622363ff8036f804d2b4dd"
+      "bytes": 19536,
+      "sha256": "79230d9a0600299abab656d2340f3434d5c7c74cb295acc7403a5b07e8a1ed3b"
     },
     {
       "id": 44,
@@ -151,8 +151,8 @@
       "width": 256,
       "height": 256,
       "quality": 80,
-      "bytes": 19930,
-      "sha256": "85142053303ff293c7bd88a90cd0793cf93bba9455b188f46c5864022ac18126"
+      "bytes": 19638,
+      "sha256": "6184c2ff54e7e943925e015117cb4653f6371add7dc86aaff3de33b62ceb411f"
     },
     {
       "id": 45,
@@ -168,8 +168,8 @@
       "width": 256,
       "height": 256,
       "quality": 84,
-      "bytes": 19014,
-      "sha256": "cb49912e3f7eb58446ef61166cad1a7c3117b49bfefbad6fcf4669d60b180c07",
+      "bytes": 18484,
+      "sha256": "0d246b95e71a936c3015330cb3470037eb29fd57782d8c694237dddcd659c15d",
       "sheen": 0.45
     },
     {
@@ -186,8 +186,8 @@
       "width": 256,
       "height": 256,
       "quality": 90,
-      "bytes": 12494,
-      "sha256": "ec008bd1a692d6cb5b5e522abe35b0389f770c2ee87922cec919511679412fcf",
+      "bytes": 11478,
+      "sha256": "32fda2cca28db0dd5798c854e14f254c68e60013b92f5fc51c5ea293dff4e46a",
       "sheen": 0.2
     },
     {
@@ -204,8 +204,8 @@
       "width": 256,
       "height": 256,
       "quality": 90,
-      "bytes": 11992,
-      "sha256": "60b667a498196b85b5e95fea1e17d8bb7ecd8bbe46bc4cda350a492ba1571dd4",
+      "bytes": 10562,
+      "sha256": "54b1cd91033aa554ddae35347224ad6d5a02db4a281891059a9b20209176c3cb",
       "sheen": 0.35
     },
     {
@@ -222,8 +222,8 @@
       "width": 256,
       "height": 256,
       "quality": 90,
-      "bytes": 9206,
-      "sha256": "126849ef175c7cf208f768780fcd756494c57a3358969eaebba9f10f8df2fc38",
+      "bytes": 8474,
+      "sha256": "8d8eae7e713719f1d88c40040bba186982d1ba0ffb4e16432ec948f6b3778978",
       "sheen": 0.35
     }
   ]

@@ -389,7 +389,7 @@ function sigilColor(card) {
 }
 
 // 管理人の印。アイコンを選んでいればその絵を印の色の縁で囲み、選んでいなければペルソナ名の1文字を出す。
-// 有料アイコンは丸く切らず、四角に金の縁で出す。
+// 有料アイコンは丸く切らずに四角で出し、印の色の縁にホログラム（tribute.css）を重ねる。
 function sigil(card, size = "") {
   const name = String(card?.personaName || "管").trim();
   const avatar = avatarId(card?.avatar);
@@ -1997,7 +1997,7 @@ function renderCardEditor() {
       <div data-avatar-trial>${renderAvatarTrial({ avatar: card.avatar })}</div>
       <small>用意した${AVATARS.length}種から選びます（画像のアップロードはできません）。イラストは、ゆるめと大人びた絵を用意しています。有料の四角いアイコンは試着でき、買うと保存できます（1枚 ${escapeHtml(formatPay(PREMIUM_AVATARS[0]?.price))} の買い切り）。</small></fieldset>
     <fieldset><legend>印の色</legend><div class="tribute-swatches">${SIGIL_COLORS.map((color, index) => `<label style="--sigil:${color}"><input type="radio" name="sigil" value="${index}" ${Number(card.sigil || 0) === index ? "checked" : ""} /><span aria-label="色${index + 1}"></span></label>`).join("")}</div>
-      <small>アイコンの縁（有料アイコンは金の縁）と、掲示板のカードの色になります。</small></fieldset>
+      <small>アイコンの縁と、掲示板のカードの色になります。</small></fieldset>
     ${renderSealSettings(card)}
     <div data-deco-section>${renderDecorationSettings(card)}</div>
     <div data-achievement-section>${renderCardAchievementPicker(card)}</div>

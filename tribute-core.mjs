@@ -505,7 +505,7 @@ export const SIGIL_COLORS = Object.freeze(["#ff4fa3", "#b48cff", "#5fd4ff", "#ff
 // 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある48種から選ぶ。
 // 1〜6 はゆるめの絵、7〜12 は同じ6人の大人びた絵。13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（無料）。
 // 24〜29 はパステル調のミニイラスト、30〜35 は同じ6人の等身イラスト。既存の番号は変えない。
-// 36〜48 は有料（1枚 500 Pay の買い切り。四角に金の縁で出す）。商品は tribute-deco.mjs の PREMIUM_AVATARS。
+// 36〜48 は有料（1枚 500 Pay の買い切り。四角に印の色の縁とホログラムで出す）。商品は tribute-deco.mjs の PREMIUM_AVATARS。
 export const AVATAR_GROUPS = Object.freeze([
   Object.freeze({ id: "premium", label: "有料・四角（各500 Pay）" }),
   Object.freeze({ id: "illust", label: "イラスト" }),

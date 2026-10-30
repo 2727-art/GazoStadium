@@ -1,10 +1,11 @@
 "use strict";
 
 // Read-only public delivery check for the second batch of paid ranch icons (ranch-premium-icons-v2): avatar 43-48,
-// 500 Pay each, square with the gold frame. On the public routes tribute.js, online.js and account.js changed (cache
-// keys only for the last two), with tribute-core.mjs, tribute-deco.mjs, tribute-share.mjs and shop-products.mjs.
-// All 48 manager icons and all 549 ranch images must match the files committed at HEAD. No sign-in, game APIs,
-// production data access, or filesystem writes.
+// 500 Pay each. The same release replaces the gold frame with the owner's sigil border and an edge hologram drawn by
+// tribute.css and tribute-share.mjs, and remakes all 13 paid icons (36-48) without the baked-in sparkles. On the public
+// routes tribute.js, tribute.css, online.js and account.js changed (account.js only for a cache key), with
+// tribute-core.mjs, tribute-deco.mjs, tribute-share.mjs and shop-products.mjs. All 48 manager icons and all 549 ranch
+// images must match the files committed at HEAD. No sign-in, game APIs, production data access, or filesystem writes.
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
@@ -16,8 +17,8 @@ const RANCH_ASSET_KEY = "ranch-growth-v1";
 const AVATAR_COUNT = 48;
 const NEW_AVATARS = Object.freeze([43, 44, 45, 46, 47, 48]);
 // キャッシュキーが今回の印で終わるファイルと、前回のまま中身も同じであるべきファイル。
-const CHANGED_FILES = Object.freeze(["tribute.js", "online.js", "account.js"]);
-const UNCHANGED_FILES = Object.freeze(["tribute.css", "app.js", "achievements.js"]);
+const CHANGED_FILES = Object.freeze(["tribute.js", "tribute.css", "online.js", "account.js"]);
+const UNCHANGED_FILES = Object.freeze(["app.js", "achievements.js"]);
 // tribute.js が読むモジュールは、どれもキャッシュキーが今回の印で終わる。
 const CHANGED_MODULES = Object.freeze(["tribute-core.mjs", "tribute-share.mjs", "tribute-deco.mjs"]);
 const PREVIOUS_MARKERS = Object.freeze(["ranch-achievements-v1", "ranch-photo-v1", "ranch-pat-v1", "ranch-peek-v1", "ranch-growth-v1", "ranch-pasture-v1", "ranch-reception-card-v1", "ranch-contest-v1", "ranch-othello-v1", "ranch-served-days-v1", "ranch-style-words-v1", "ranch-styles-v1", "ranch-safari-regex-v1", "ranch-report-marks-v1", "ranch-recite-v1", "ranch-premium-icons-v1", "ranch-hold-v1", "ranch-wallet-words-v1", "ranch-cheers-v1", "ranch-activity-optin-v1", "ranch-first-steps-v1", "ranch-work-orders-v1", "ranch-double-pay-refund-v1", "ranch-request-fix-v1", "ranch-thread-ux-v1", "ranch-screenshot-v1", "ranch-free-talk-v1", "ranch-nav-v1", "ranch-vault-v1", "my-stadium-v1"]);

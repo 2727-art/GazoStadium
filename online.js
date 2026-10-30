@@ -5019,9 +5019,9 @@ function renderPointShop() {
         <p class="shop-oshi-market-shared"><strong>通常の商品棚と同じ商品です。</strong> 商品ID・購入状態・装備状態は共通のため、どちらの棚から購入しても二重購入にはなりません。</p>
         <div class="shop-oshi-market-groups">${oshiMarketCollectionGroups}</div>
       </section>
-      <section class="shop-category shop-ranch-category" id="shopRanchCategory" aria-labelledby="shopRanchTitle"><div class="shop-category-head shop-ranch-head"><div><span>OMITSUGI RANCH / ${RANCH_DECORATION_PRODUCTS.length} ITEMS</span><h2 id="shopRanchTitle">お貢ぎ牧場の飾り</h2></div><p>管理人カードの枠と、財布に押す受取印を飾ります。掲示板・招待・受付カードと、財布が保存する貢ぎ報告の画像に出ます。四角い金縁の有料アイコンもここで買えます。買ったあとは、お貢ぎ牧場の管理人カードの編集で選べます（試着もそこでできます）。枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。</p>
+      <section class="shop-category shop-ranch-category" id="shopRanchCategory" aria-labelledby="shopRanchTitle"><div class="shop-category-head shop-ranch-head"><div><span>OMITSUGI RANCH / ${RANCH_DECORATION_PRODUCTS.length} ITEMS</span><h2 id="shopRanchTitle">お貢ぎ牧場の飾り</h2></div><p>管理人カードの枠と、財布に押す受取印を飾ります。掲示板・招待・受付カードと、財布が保存する貢ぎ報告の画像に出ます。四角いホログラムの有料アイコンもここで買えます。買ったあとは、お貢ぎ牧場の管理人カードの編集で選べます（試着もそこでできます）。枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。</p>
         <p class="shop-ranch-fund">飾りは見た目だけで、掲示板の並び順・手数料・番付には影響しません。</p></div>
-        <h3 class="shop-ranch-sub">管理人の有料アイコン（四角・金縁）</h3><div class="shop-grid">${ranchShelf("ranchAvatar")}</div>
+        <h3 class="shop-ranch-sub">管理人の有料アイコン（四角・ホログラム）</h3><div class="shop-grid">${ranchShelf("ranchAvatar")}</div>
         <h3 class="shop-ranch-sub">カードの枠</h3><div class="shop-grid">${ranchShelf("ranchFrame")}</div>
         <h3 class="shop-ranch-sub">受取印の形</h3><div class="shop-grid">${ranchShelf("ranchSealShape")}</div>
         <h3 class="shop-ranch-sub">朱肉の色</h3><div class="shop-grid">${ranchShelf("ranchSealInk")}</div></section>

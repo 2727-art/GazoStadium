@@ -1,6 +1,7 @@
 "use strict";
 
-// お貢ぎ牧場の有料アイコンの2回目（43〜48、2026-10-30）。1枚 500 Pay、四角に金の縁。
+// お貢ぎ牧場の有料アイコンの2回目（43〜48、2026-10-30）。1枚 500 Pay。
+// 同じ日に、有料の印を金の縁から「印の色の縁＋縁寄せのホログラム」に変え、絵の白いきらめきを外した（ユーザー決定）。
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -48,7 +49,8 @@ test("six more paid icons: the same number, product, price and square gold look 
 test("the icons are processed from the user's images without a redraw, recorded with hashes, and stay small", () => {
   const record = JSON.parse(read("functions/docs/TRIBUTE_PREMIUM_ICONS_ASSETS.json"));
   assert.deepEqual(record.icons.map((icon) => icon.id), [36, 37, 38, 39, 40, 41, 42, ...NEW_IDS]);
-  assert.match(record.method, /No generative redraw/);
+  assert.match(record.method, /No sparkles and no generative redraw/);
+  assert.equal(record.icons.filter((icon) => /^[0-9a-f]{64}$/.test(icon.sourceSha256)).length, 13, "all 13 remade from their originals");
   for (const icon of record.icons) {
     const file = fs.readFileSync(path.join(root, icon.file));
     assert.equal(crypto.createHash("sha256").update(file).digest("hex"), icon.sha256, icon.file);
@@ -61,6 +63,7 @@ test("the icons are processed from the user's images without a redraw, recorded 
   const script = read("tools/tribute-avatars/premium-icons.py");
   for (const id of NEW_IDS) assert.match(script, new RegExp(`"id": ${id}, "center"`), `crop and colour for ${id}`);
   assert.match(script, /if id not in BY_ID/, "only the requested numbers are remade");
+  assert.doesNotMatch(script, /def sparkle|SPARKLES|ImageDraw/, "no sparkles are drawn into the icons");
   // 作成スクリプト・記録・見本は公開しない（tools/ と functions/ は Hosting にも workers.dev にも出ない）。
   const hostingIgnore = JSON.parse(read("firebase.json")).hosting.ignore;
   assert.ok(hostingIgnore.includes("tools/**") && hostingIgnore.includes("functions/**"));
@@ -68,11 +71,45 @@ test("the icons are processed from the user's images without a redraw, recorded 
   assert.match(read(".assetsignore"), /^functions\/$/m);
 });
 
+test("paid icons are square with the owner's sigil border and a thin edge hologram; the glint is rare and stops for reduced motion", async () => {
+  const styles = read("tribute.css");
+  const rule = (selector) => {
+    const start = styles.indexOf(`${selector} {`);
+    assert.notEqual(start, -1, selector);
+    return styles.slice(start, styles.indexOf("}", start));
+  };
+  const box = rule(".tribute-sigil.has-avatar.is-premium,\n.tribute-avatar-choice.is-premium".replace(/\n/g, styles.includes("\r\n") ? "\r\n" : "\n"));
+  assert.match(box, /border-radius: 6px;/);
+  assert.match(box, /background: var\(--sigil, #ff4fa3\);/, "the border is the owner's sigil colour");
+  assert.doesNotMatch(box, /#a8762e|#e8c27a/, "no gold frame");
+  const foil = rule(".tribute-sigil.has-avatar.is-premium::before,\n.tribute-avatar-choice.is-premium::before".replace(/\n/g, styles.includes("\r\n") ? "\r\n" : "\n"));
+  assert.match(foil, /mix-blend-mode: color-dodge;/);
+  assert.match(foil, /opacity: 0\.38;/, "thin");
+  assert.match(foil, /mask-image: radial-gradient\(circle at 50% 46%, transparent 0 36%, #000 76%\);/, "the face stays clear");
+  assert.match(foil, /animation: tribute-holo-foil 16s ease-in-out infinite alternate;/);
+  const glint = rule(".tribute-sigil.has-avatar.is-premium::after,\n.tribute-avatar-choice.is-premium::after".replace(/\n/g, styles.includes("\r\n") ? "\r\n" : "\n"));
+  assert.match(glint, /animation: tribute-holo-glint 12s ease-in-out infinite;/, "rare");
+  assert.match(styles, /@keyframes tribute-holo-glint \{\s*0%, 87% \{ transform: translateX\(-40%\); \}\s*100% \{ transform: translateX\(40%\); \}/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{\s*\.tribute-sigil\.has-avatar\.is-premium::before,\s*\.tribute-avatar-choice\.is-premium::before \{ animation: none; \}\s*\.tribute-sigil\.has-avatar\.is-premium::after,\s*\.tribute-avatar-choice\.is-premium::after \{ display: none; \}/);
+  assert.doesNotMatch(styles, /input:checked \+ \.tribute-avatar-choice\.is-premium/, "the chosen ring is the sigil colour, as for free icons");
+  // シェア画像も、印の色の縁と同じ箔、止めた光で描く。
+  const share = read("tribute-share.mjs");
+  assert.match(share, /paintPremiumAvatar\(ctx, \{ image, x, y, radius, ring, ringWidth \}\);/);
+  assert.match(share, /ctx\.fillStyle = ring;/);
+  assert.match(share, /ctx\.globalCompositeOperation = "color-dodge";\s*ctx\.globalAlpha = 0\.38;\s*ctx\.drawImage\(holoFoil\(/);
+  assert.doesNotMatch(share, /#a8762e/);
+  const deco = await loadDeco();
+  for (const product of deco.PREMIUM_AVATARS) assert.match(deco.RANCH_DECORATION_PRODUCTS.find((entry) => entry.id === product.productId).description, /四角いホログラムの印。$/);
+  assert.match(read("online.js"), /管理人の有料アイコン（四角・ホログラム）/);
+  assert.match(read("TRIBUTE_DESIGN.md"), /金の縁はやめた（絵柄を邪魔し、各自の印の色が出ないため）/);
+});
+
 test("cache keys: the ranch, the store and the account page load the new product list as one module", () => {
   const html = read("index.html");
   for (const name of ["tribute.js", "online.js", "account.js"]) {
     assert.ok(new RegExp(`"module": "${name.replace(".", "\\.")}\\?v=[^"]*${MARKER}"`).test(html), name);
   }
+  assert.ok(new RegExp(`data-src="tribute\\.css\\?v=[^"]*${MARKER}"`).test(html), "tribute.css");
   const specifier = (source, name) => source.match(new RegExp(`(?:from |import\\()"\\./${name.replace(".", "\\.")}\\?v=([^"]+)"`))?.[1] || "";
   const client = read("tribute.js");
   const online = read("online.js");
