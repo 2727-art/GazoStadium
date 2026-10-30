@@ -65,8 +65,9 @@ async function fetchText(url) {
   return { status: response.status, contentType: response.headers.get("content-type") || "", body: await response.text() };
 }
 
+// 静的な import（from "./x.mjs?v=…"）と、あとで読む import("./x.mjs?v=…") の両方を見る。
 function moduleVersion(source, name) {
-  return source.match(new RegExp(`from "\\./${name.replace(".", "\\.")}\\?v=([^"]+)"`))?.[1] || "";
+  return source.match(new RegExp(`(?:from |import\\()"\\./${name.replace(".", "\\.")}\\?v=([^"]+)"`))?.[1] || "";
 }
 
 const hashBytes = (buffer) => crypto.createHash("sha256").update(buffer).digest("hex");
