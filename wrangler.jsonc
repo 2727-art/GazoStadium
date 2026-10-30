@@ -1,0 +1,13 @@
+// workers.dev / hariaistadium.com の Worker（Cloudflare の自動ビルドが main の push ごとに `npx wrangler deploy` で使う）。
+// 中身は wrangler 4.155.0 までの自動設定が毎回作っていたものと同じ。4.156.0 から、`functions/` のあるリポジトリでは
+// 自動設定が止まる（Pages Functions とみなす）ので、ここに書いておく。公開しないファイルは `.assetsignore`。
+{
+  "name": "gazostadium",
+  "compatibility_date": "2026-10-23",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "."
+  }
+}

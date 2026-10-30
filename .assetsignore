@@ -13,6 +13,7 @@ functions/
 .assetsignore
 .firebase/
 .wrangler/
+wrangler.jsonc
 README.md
 ANJU_PAY_FLEA_DESIGN.md
 AI_TEXT_TRAINING_DESIGN.md
