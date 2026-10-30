@@ -1,0 +1,110 @@
+{
+  "checkedAt": "2026-10-30T04:09:07.510Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "33ccb76",
+  "implementationCommits": [
+    "0ef1995 (paid icons 43-48)",
+    "33ccb76 (sigil border and edge hologram; all 13 paid icons remade without sparkles)"
+  ],
+  "baseCommit": "82ff37d",
+  "decisions": {
+    "request": "お貢ぎ牧場専用の有料アイコンです(500PAY)。それぞれプレミアム加工をしてください。 (eight images)",
+    "excluded": "image 4 (blazer, sailor collar and tie school uniform) and image 6 (tie uniform, twin tails, child-coded expression): minor-looking art is not sold as a manager face in this adult mode (no age or school framing); the user can supply clearly adult versions",
+    "hologram": "C 縁寄せホログラムにして、強さは薄め、頻度は少なめでお願いします。またすでに加工済みの白いキラキラのエフェクトを外してください。",
+    "decidedBy": "user, 2026-10-30 JST"
+  },
+  "scope": {
+    "functions": ["economyAction", "tributeAction"],
+    "realtimeDatabaseRules": "ranch_avatar_(36|37|38|39|40|41|42|43|44|45|46|47|48)",
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": ["index.html", "tribute.js", "tribute.css", "online.js", "account.js", "tribute-core.mjs", "tribute-deco.mjs", "tribute-share.mjs", "shop-products.mjs"],
+    "icons": {
+      "new": [43, 44, 45, 46, 47, 48],
+      "remadeWithoutSparkles": [36, 37, 38, 39, 40, 41, 42],
+      "names": { "43": "ミルクティー", "44": "瑠璃", "45": "琥珀", "46": "ネオン", "47": "深紅", "48": "ルージュ" },
+      "price": 500,
+      "maxBytes": 19684,
+      "cacheKey": "none (Firebase max-age 3600, workers.dev must-revalidate)"
+    },
+    "hologram": {
+      "border": "the owner's sigil colour (store and share images without a colour: default pink)",
+      "foil": "rainbow and glitter, color-dodge, opacity 0.38, masked to the corners and edges (face clear), 16 s slow drift",
+      "glint": "every 12 s, about 1.5 s across",
+      "reducedMotion": "foil still, no glint",
+      "shareImages": "sigil border, the same foil, glint frozen at the top left"
+    },
+    "decorationProducts": { "count": 27, "firestoreInLimit": 30 },
+    "cacheKey": "ranch-premium-icons-v2",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2407,
+    "passed": 2373,
+    "failed": 0,
+    "skipped": 34,
+    "newFiles": ["functions/test/tribute-premium-icons-2.test.js"]
+  },
+  "preview": {
+    "checked": [
+      "card editor at 375 px: 13 paid squares, try-on, buy button, sigil border and foil",
+      "store shelf: 13 icons at 500 Pay",
+      "recruit card image: sigil border, foil and frozen glint, face clear"
+    ],
+    "consoleErrors": 0,
+    "horizontalOverflow": false
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": ["index.html", "tribute.js", "tribute.css", "online.js", "account.js", "tribute-core.mjs", "tribute-share.mjs", "tribute-deco.mjs", "shop-products.mjs", "avatar-36..42 (remade)", "avatar-43..48 (new, 404)"],
+    "unchangedMatched": ["avatar-01..35", "app.js", "achievements.js", "549 ranch images"],
+    "functionsList": { "economyAction": "43db9e7942603e269d1be8163ec564c00961c80e", "tributeAction": "43db9e7942603e269d1be8163ec564c00961c80e" }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 33ccb76 and origin/main contained)",
+    "order": ["functions:economyAction,functions:tributeAction", "database", "git push origin HEAD:main (82ff37d..33ccb76)", "hosting"],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": {
+        "economyAction": { "before": "43db9e7942603e269d1be8163ec564c00961c80e", "after": "50ff973176ef85d3bf8c3106450a0cbb4b9b0651" },
+        "tributeAction": { "before": "43db9e7942603e269d1be8163ec564c00961c80e", "after": "50ff973176ef85d3bf8c3106450a0cbb4b9b0651" }
+      },
+      "unchanged": "31 functions on 43db9e7, 4 secret-bound functions on their previous hashes"
+    },
+    "realtimeDatabaseRules": { "readBack": "database:get /.settings/rules", "matchesCommit": true },
+    "workersBuild": { "commit": "33ccb76", "conclusion": "success", "completedAt": "2026-10-30T04:06:47Z" },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-premium-icons-2-release.cjs",
+      "checkedAt": "2026-10-30T04:09:07.510Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "avatarsPerRoute": 48,
+      "ranchImagesPerRoute": 549,
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-premium-icons-v2 on tribute.js, tribute.css, online.js and account.js",
+      "cssChecks": "holo foil keyframes, 12 s glint, sigil border, no gold gradient on the paid sigil",
+      "decoChecks": { "premiumAvatars": 13, "last": "ranch_avatar_48", "descriptions": "四角いホログラムの印。" },
+      "coreChecks": { "AVATAR_MAX": 48, "48": "有料・ルージュ" },
+      "avatar48": "200 image/webp",
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "real AnjuPay purchases and saving a card with the new icons can only be checked by a signed-in manager; covered by tests and previews",
+    "the two excluded images can be added once remade as clearly adult art (three product slots left before the Firestore in limit of 30)"
+  ]
+}
