@@ -109,10 +109,24 @@
   - `tributeAction` は `3cb1108997da4b0d5d800fdab79fb74c12b9117f` → `43db9e7942603e269d1be8163ec564c00961c80e`。
   - 秘密の値を持たない33関数は、同じ `43db9e7…` になった。
   - 秘密の値を持つ4関数（`getP2pIceServers`・`redeemAchievementCode`・`reportP2pConnectivity`・`reportMarketP2pConnectivity`）は、その分だけ違う値になる。
-- workers.dev の自動ビルド（`41a4a7b`）: 02:37:30Z に失敗した。
-  - 始まってすぐに終わっていて、なでるの公開（`04a0937`）で起きた一時的な失敗と同じ形。その時は、次の push で成功した。
+- workers.dev の自動ビルド（`41a4a7b`）: 02:37:30Z に失敗した。この記録の push（`299e386`）も 02:54:15Z に失敗した。
+  - 一時的な失敗ではなかった。原因は wrangler 4.156.0（2026-10-29 18:42Z に公開）。
+    - 自動ビルドは、main の push ごとに `npx wrangler deploy`（最新の wrangler）を、設定ファイルなしで動かしている。
+    - 4.156.0 から、ルートに `functions/` と公開ファイルがあるリポジトリでは、自動設定が「Pages Functions のプロジェクト」とみなして止まる。
+    - 手元で、公開した中身に `npx wrangler deploy --dry-run` をかけて確かめた。4.155.0 は自動設定を通り、4.156.0 はこのエラーで止まった。
+    - 最後に成功したビルドは `6a8667e`（10-29 09:06Z、4.156.0 の前）。それ以降の main の push は、どのセッションのものでも失敗する状態だった。
   - ビルドの記録は Cloudflare のダッシュボードにあり、私はログインできないので見ていない。
-  - workers.dev・hariaistadium.com の前の版（記念写真の公開）は、新しい Functions とも合う。
+  - 直し（`acc5fc6`、ユーザーの「pushして」で push）:
+    - リポジトリのルートに `wrangler.jsonc` を置いた。中身は、4.155.0 までの自動設定が毎回作っていたものと同じ。
+      - 名前 `gazostadium`
+      - `compatibility_date` 2026-10-23
+      - `observability` オン
+      - 公開ファイルはルート（`assets.directory: "."`）
+    - 設定ファイルがあると、wrangler は自動設定を使わない。
+    - `wrangler.jsonc` は `.assetsignore` と `firebase.json` の Hosting の除外に足した。
+    - 公開前に、この中身で 4.156.0 の `npx wrangler deploy --dry-run` が通ること、全テスト（2,403件中2,369件成功・失敗0）を確かめた。
+  - `acc5fc6` のビルドは 03:01:13Z に成功した。
+  - 直るまでの間、workers.dev・hariaistadium.com は前の版（`6a8667e`）のままだった。前の版は、新しい Functions とも合う。
     - 前の画面は、知らない実績の ID を一覧で引けないので、知らせずに飛ばす。
     - 知らせていない実績は「未表示」のまま残り、新しい画面で開いた時に知らせる。
 - `node functions/scripts/verify-tribute-ranch-achievements-release.cjs`（読み取りのみ、02:49:53Z）:
@@ -132,8 +146,13 @@
     - 段階の割り当て: 5段階は1〜5、4段階は2〜5
   - コンソールのエラーは0件。ブラウザにログインの記録は残っていない。
 
+- 直したあとの `verify-tribute-ranch-achievements-release.cjs`（読み取りのみ、03:02:18Z）:
+  - 4経路すべてで、コミット `acc5fc6` と一致した（公開するファイルは `41a4a7b` と同じ）。
+  - 4経路すべてで、絵549枚がバイトのまま一致し、前回までの公開の印が残り、非公開のファイルは404。
+  - 4経路すべてで、`wrangler.jsonc`・`.assetsignore`・`firebase.json` は404。
+  - hariaistadium.com・workers.dev で、`_headers` の見出し（CSP・X-Frame-Options など）と `_redirects` の Google の確認ファイル（200）は、前と同じに効いている。ないページは404のまま。
+
 ## 残っていること
 
-- workers.dev・hariaistadium.com は、この記録の push で、もう一度ビルドが走る。そのあと4経路をもう一度確かめる。
 - 本物の契約での数え方と解除は、ログインした管理人と財布でしか確かめられない。確認はテストと見本で行った。
 - 公開前の分は、確かめられる6つだけを数え直した。請求・抵抗・既読無視・願い出・復唱・出稼ぎ・言葉などは、公開した時から数える。

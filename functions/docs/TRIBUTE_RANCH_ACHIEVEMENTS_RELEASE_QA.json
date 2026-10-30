@@ -1,6 +1,6 @@
 {
   "checkedAt": "2026-10-30T02:49:53.961Z",
-  "status": "verified on Firebase routes; Workers routes wait for the rebuild",
+  "status": "verified",
   "project": "gazostadium",
   "sourceCommit": "41a4a7b",
   "implementationCommits": [
@@ -126,7 +126,12 @@
       "commit": "41a4a7b",
       "conclusion": "failure",
       "completedAt": "2026-10-30T02:37:30Z",
-      "note": "failed as soon as it started, like the transient failure of 04a0937 (cleared on the next push); logs are in the Cloudflare dashboard, which I cannot sign in to; the release record push starts a new build"
+      "alsoFailed": {
+        "commit": "299e386",
+        "completedAt": "2026-10-30T02:54:15Z"
+      },
+      "cause": "wrangler 4.156.0 (published 2026-10-29T18:42Z) stops autoconfig when the repository root has a functions directory next to static files (it assumes Pages Functions); the Workers build runs npx wrangler deploy (latest) without a config file. Reproduced locally with npx wrangler deploy --dry-run on the pushed tree: 4.155.0 passes autoconfig, 4.156.0 stops with that error. The last successful build was 6a8667e (2026-10-29T09:06Z), before 4.156.0, so every main push after it would have failed.",
+      "logs": "the Cloudflare dashboard, which I cannot sign in to; the cause was found by reproduction"
     },
     "deliveryCheck": {
       "script": "functions/scripts/verify-tribute-ranch-achievements-release.cjs",
@@ -153,15 +158,57 @@
       "coreChecks": {
         "RANCH_ACHIEVEMENT_FAMILIES": 22,
         "RANCH_ACHIEVEMENT_SECRETS": 7,
-        "ranchAchievementTier(1..5, 5)": [1, 2, 3, 4, 5],
-        "ranchAchievementTier(1..4, 4)": [2, 3, 4, 5]
+        "ranchAchievementTier(1..5, 5)": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "ranchAchievementTier(1..4, 4)": [
+          2,
+          3,
+          4,
+          5
+        ]
       },
       "consoleErrors": [],
       "signedInUsers": 0
+    },
+    "workersFix": {
+      "commit": "acc5fc6",
+      "pushedBy": "Claude after the user said pushして (299e386..acc5fc6)",
+      "change": "wrangler.jsonc at the repository root with what autoconfig used to generate: name gazostadium, compatibility_date 2026-10-23, observability enabled, assets.directory \".\"; wrangler.jsonc added to .assetsignore and firebase.json hosting.ignore",
+      "preChecks": "npx wrangler@4.156.0 deploy --dry-run on the committed tree passed; full suite 2403 tests, 2369 passed, 0 failed, 34 skipped",
+      "build": {
+        "conclusion": "success",
+        "completedAt": "2026-10-30T03:01:13Z"
+      }
+    },
+    "deliveryRecheck": {
+      "script": "functions/scripts/verify-tribute-ranch-achievements-release.cjs",
+      "checkedAt": "2026-10-30T03:02:18.085Z",
+      "commit": "acc5fc6",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "imagesPerRoute": 549,
+      "imagesByteIdentical": true,
+      "previousMarkers": true,
+      "privateFiles404": true,
+      "configFiles404": [
+        "wrangler.jsonc",
+        ".assetsignore",
+        "firebase.json"
+      ],
+      "workersBehaviorUnchanged": "_headers (CSP, X-Frame-Options, nosniff, referrer policy) and the _redirects Google verification file (200) still apply on hariaistadium.com and workers.dev; unknown paths still 404"
     }
   },
   "remaining": [
-    "workers.dev and hariaistadium.com rebuild on the release record push; recheck all four routes afterwards",
     "counting and unlocks on real contracts can only be checked by signed-in managers and wallets; covered by tests and previews",
     "only six counts are rebuilt from earlier records; requests, resists, ignores, pleas, recitations, work orders and words count from the release"
   ]
