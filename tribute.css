@@ -1972,4 +1972,60 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
   /* 動きを減らす時も、のぞく画面の1頭と、なでた印は止めて出す。 */
   .tribute-ranch-peek .tribute-ranch-bubble { opacity: 1; }
   .tribute-ranch-heart { animation: none; opacity: 1; }
+  .tribute-ach-frame .spark { animation: none; opacity: 1; }
 }
+/* ───────────── 牧場の実績の枠（設計書17） ─────────────
+   1 木の札 → 2 銅（鋲） → 3 銀（鋲・リボン） → 4 金（月桂樹・リボン） → 5 宝冠（王冠・宝石・きらめき）。シークレットは封蝋。
+   管理人（貢がせ側）は薔薇色、財布（貢ぐ側）は琥珀色の地。 */
+.tribute-ach-frame { display: block; width: 100%; height: 100%; overflow: visible; }
+.tribute-ach-frame.is-manager { --disc: #4b1739; --glyph: #ffd5ea; --ribbon: #ff4fa3; --ribbon-edge: #9c1f5f; }
+.tribute-ach-frame.is-wallet { --disc: #3f2a12; --glyph: #ffe7b8; --ribbon: #f0a93a; --ribbon-edge: #8f5a12; }
+.tribute-ach-frame.is-tier-1 { --ring: #8a5b30; --ring-rim: #4e3017; --ring-edge: #3d2511; --shine: rgba(255, 226, 180, 0.22); }
+.tribute-ach-frame.is-tier-2 { --ring: #d98a4c; --ring-rim: #7a421c; --ring-edge: #5a3016; --shine: #ffe0c0; --rivet: #ffd3a3; --rivet-edge: #7a421c; }
+.tribute-ach-frame.is-tier-3 { --ring: #cfd8e3; --ring-rim: #6f7d8f; --ring-edge: #5b6878; --shine: #ffffff; --rivet: #f4f8fc; --rivet-edge: #6f7d8f; }
+.tribute-ach-frame.is-tier-4 { --ring: #f3c54f; --ring-rim: #9a6a17; --ring-edge: #7d5410; --shine: #fff6c4; --leaf: #e9c45a; --leaf-edge: #9a6a17; }
+.tribute-ach-frame.is-tier-5 { --ring: #ffd45e; --ring-rim: #8a5a10; --ring-edge: #74490b; --shine: #fffbe0; --leaf: #ffd96a; --leaf-edge: #8a5a10; filter: drop-shadow(0 0 5px rgba(255, 212, 94, 0.55)); }
+.tribute-ach-frame .ring { fill: none; stroke: var(--ring); stroke-width: 6; }
+.tribute-ach-frame .ring-rim { fill: none; stroke: var(--ring-rim); stroke-width: 1; }
+.tribute-ach-frame .ring-edge { fill: none; stroke: var(--ring-edge); stroke-width: 1; }
+.tribute-ach-frame .ring-outer { fill: none; stroke: #fff1a8; stroke-width: 1.4; }
+.tribute-ach-frame .disc { fill: var(--disc); }
+.tribute-ach-frame .shine { fill: none; stroke: var(--shine); stroke-width: 1.8; stroke-linecap: round; }
+.tribute-ach-frame .grain { fill: none; stroke: #3d2511; stroke-width: 1.3; stroke-linecap: round; }
+.tribute-ach-frame .rivet { fill: var(--rivet); stroke: var(--rivet-edge); stroke-width: 0.6; }
+.tribute-ach-frame .ribbon { fill: var(--ribbon); stroke: var(--ribbon-edge); stroke-width: 0.7; stroke-linejoin: round; }
+.tribute-ach-frame .stem { fill: none; stroke: var(--leaf-edge); stroke-width: 0.8; }
+.tribute-ach-frame .leaf { fill: var(--leaf); stroke: var(--leaf-edge); stroke-width: 0.5; }
+.tribute-ach-frame .gem { stroke: #fff; stroke-width: 0.5; }
+.tribute-ach-frame .gem-a { fill: #ff5fa8; }
+.tribute-ach-frame .gem-b { fill: #6fe3ff; }
+.tribute-ach-frame .crown { fill: #ffd45e; stroke: #8a5a10; stroke-width: 0.8; stroke-linejoin: round; }
+.tribute-ach-frame .crown-band { fill: #e7b23c; stroke: #8a5a10; stroke-width: 0.6; }
+.tribute-ach-frame .jewel { fill: #ff5fa8; stroke: #fff; stroke-width: 0.5; }
+.tribute-ach-frame .jewel.is-center { fill: #6fe3ff; }
+.tribute-ach-frame .spark { fill: #fffbe0; transform-box: fill-box; transform-origin: center; animation: ranch-ach-twinkle 2.6s ease-in-out infinite; }
+.tribute-ach-frame .spark:nth-of-type(2n) { animation-delay: -1.3s; }
+.tribute-ach-frame .glyph { fill: var(--glyph); font: 900 15px var(--tr-font, sans-serif); }
+.tribute-ach-frame.is-secret .wax { fill: #a8123d; stroke: #6d0a26; stroke-width: 0.8; }
+.tribute-ach-frame.is-secret .wax-ring { fill: none; stroke: rgba(255, 143, 179, 0.7); stroke-width: 1; stroke-dasharray: 2 1.6; }
+.tribute-ach-frame.is-secret .glyph { fill: #ffe0ea; }
+.tribute-ach-frame.is-locked { filter: grayscale(1); opacity: 0.42; }
+@keyframes ranch-ach-twinkle {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+/* 牧場の実績の欄とカードの実績での大きさ。 */
+.tribute-achievement .tribute-achievement-icon.is-ranch-frame { width: 48px; height: 48px; background: none; border: 0; border-radius: 0; box-shadow: none; padding: 0; }
+.tribute-card-achievements i.is-ranch-frame { width: 22px; height: 22px; background: none; border-radius: 0; margin: -3px 0; }
+/* 枠の見本（?tributePreview=achievement-frames）。 */
+.tribute-ach-gallery h2 small { color: var(--tr-mist); font-size: 0.72rem; margin-left: 6px; }
+.tribute-ach-gallery-side { display: grid; gap: 10px; }
+.tribute-ach-gallery-side h3 { margin: 6px 0 0; font-size: 0.95rem; }
+.tribute-ach-gallery-row h4 { display: flex; align-items: baseline; gap: 6px; margin: 0 0 4px; font-size: 0.82rem; }
+.tribute-ach-gallery-row h4 small { color: var(--tr-mist); font-size: 0.68rem; font-weight: 400; }
+.tribute-ach-gallery-levels { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.tribute-ach-gallery-levels.is-legend { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.tribute-ach-gallery-cell { display: grid; justify-items: center; gap: 2px; margin: 0; text-align: center; }
+.tribute-ach-gallery-cell svg { width: 56px; height: 56px; }
+.tribute-ach-gallery-cell figcaption { display: grid; color: var(--tr-text); font-size: 0.6rem; line-height: 1.3; }
+.tribute-ach-gallery-cell figcaption b { color: var(--tr-mist); font-size: 0.56rem; }

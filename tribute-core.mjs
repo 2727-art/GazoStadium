@@ -58,6 +58,54 @@ export const RANCH_MOO = Object.freeze({ length: 20, lines: 3 });
 // 牧場の名前（設計書16.15。サーバーの RANCH_NAME と同じ）。「○○牧場」の○○の部分を10文字まで。
 export const RANCH_NAME = Object.freeze({ length: 10 });
 
+// ───────────── 牧場の実績（設計書17） ─────────────
+// 遊び方の型の実績と、シークレット。名前はユーザーが決めた（2026-10-30）。額では解除しない。連続日数は作らない。
+// side: manager（貢がせ側）／wallet（貢ぐ側）。thresholds は回数（同じ相手とは日本時間の1日1回まで数える）。
+export const RANCH_ACHIEVEMENT_FAMILIES = Object.freeze([
+  ["tribute_mgr_request", "manager", "請", "請求", "払われた請求", [1, 3, 10, 30, 100], ["はじめての請求", "払わせ上手", "請求すれば財布が鳴る", "請求書の束", "請求台帳の主"]],
+  ["tribute_mgr_break", "manager", "折", "抵抗を折る", "抵抗されたあとに払われた請求", [1, 3, 10, 30, 100], ["抵抗を折った", "渋っても無駄", "抵抗は想定内", "折れる音を知る人", "抵抗折りの名人"]],
+  ["tribute_mgr_ignore", "manager", "既", "既読無視", "既読のまま返さなかった回数", [1, 3, 10, 30, 100], ["既読無視デビュー", "返事は気が向いたら", "沈黙で躾ける", "既読の支配者", "無視されたい財布の飼い主"]],
+  ["tribute_mgr_grant", "manager", "許", "許す", "願い出を許した", [1, 3, 10, 30, 100], ["許可を出す人", "甘い飼い主", "待たせて許す", "許しの主", "慈悲深い牧場主"]],
+  ["tribute_mgr_deny", "manager", "退", "退ける", "願い出を退けた", [1, 3, 10, 30, 100], ["退けた", "突き放す飼い主", "まだ早い", "却下の常連", "冷たい牧場主"]],
+  ["tribute_mgr_recite", "manager", "唱", "復唱", "復唱を確かめた", [1, 3, 10, 30, 100], ["言わせた", "一字一句", "復唱の教官", "言葉で躾ける人", "復唱を聞き飽きた主"]],
+  ["tribute_mgr_work", "manager", "稼", "出稼ぎ", "出稼ぎの完走を確かめた", [1, 3, 10, 30, 100], ["出稼ぎに出した", "働かせ上手", "出稼ぎの采配", "財布を稼がせる人", "出稼ぎ牧場の主"]],
+  ["tribute_mgr_othello", "manager", "盤", "盤上", "貢ぎオセロで勝った", [1, 3, 10, 30, 100], ["盤上の初勝利", "石で黙らせる", "盤を支配する", "オセロの飼い主", "盤上に君臨する"]],
+  ["tribute_mgr_collar", "manager", "輪", "首輪", "迎えた財布の数", [1, 3, 10, 30, 100], ["最初の首輪", "首輪を配る人", "首輪の引き出し", "三十の首輪", "百の首輪を知る人"]],
+  ["tribute_mgr_ranch", "manager", "牧", "牧場", "牧場レベル", [5, 10, 20, 30], ["柵の中の小さな牧場", "金の牛の像が立つ", "サイロのある牧場", "お城の塔の主"]],
+  ["tribute_mgr_pat", "manager", "撫", "なでる", "なでた日", [1, 10, 30, 100, 365], ["はじめてなでた", "なでる手", "なで慣れた飼い主", "百回なでた", "一年なでた手"]],
+  ["tribute_wal_silent", "wallet", "自", "自分から", "請求なしで献上した日", [1, 3, 10, 30, 100], ["はじめての自発", "言われる前に差し出す", "自分から鳴る財布", "勝手に貢ぐ癖", "呼ばれる前に開く財布"]],
+  ["tribute_wal_request", "wallet", "応", "請求に応える", "請求を払った", [1, 3, 10, 30, 100], ["請求に応えた", "請求には逆らえない", "請求されると弱い", "請求が来ると嬉しい", "請求待ちの財布"]],
+  ["tribute_wal_resist", "wallet", "抗", "抵抗", "抵抗してから払った", [1, 3, 10, 30, 100], ["一応渋った", "渋るだけは渋る", "三回渋って結局払う", "抵抗は様式美", "抵抗の達人（でも払う）"]],
+  ["tribute_wal_granted", "wallet", "願", "許された", "願い出を許された", [1, 3, 10, 30, 100], ["許された", "待てができる財布", "許しを乞うのが上手", "お預け上手", "許しの常連"]],
+  ["tribute_wal_denied", "wallet", "却", "退けられた", "願い出を退けられた", [1, 3, 10, 30, 100], ["退けられた", "それでも願い出る", "却下され慣れた", "突き放されて喜ぶ財布", "不屈の願い出"]],
+  ["tribute_wal_words", "wallet", "言", "言葉", "言葉の献上", [1, 3, 10, 30, 100], ["言葉を差し出した", "Payより言葉", "言葉で仕える財布", "手紙の多い財布", "言葉の献上の主"]],
+  ["tribute_wal_recite", "wallet", "復", "復唱", "復唱した", [1, 3, 10, 30, 100], ["言わされた", "一字一句の財布", "復唱がうまくなった", "言わされ慣れた財布", "復唱の生き字引"]],
+  ["tribute_wal_work", "wallet", "働", "出稼ぎ", "出稼ぎを完走した", [1, 3, 10, 30, 100], ["出稼ぎ帰り", "稼いでくる財布", "働く財布", "出稼ぎの常連", "牧場一の働き者"]],
+  ["tribute_wal_othello", "wallet", "石", "盤上", "オセロに負けて罰金を差し出した", [1, 3, 10, 30, 100], ["盤上で負けた", "負けても盤に向かう", "石ごと差し出す", "負けの常連", "盤上の養分"]],
+  ["tribute_wal_fondness", "wallet", "鈴", "なつき", "仕えた日", [7, 30, 100, 365], ["鈴の鳴る財布", "リボンの財布", "花かんむりの財布", "金の王冠の財布"]],
+  ["tribute_wal_patted", "wallet", "掌", "なでられた", "なでてもらった日", [1, 10, 30, 100, 365], ["なでられた", "なでられ慣れた", "なでられ待ちの財布", "百回なでられた", "一年なでられた財布"]],
+].map(([family, side, icon, label, unit, thresholds, names]) => Object.freeze({
+  family, side, icon, label, unit, thresholds: Object.freeze(thresholds), names: Object.freeze(names),
+})));
+
+// シークレット（条件は隠し、1回で解除）。
+export const RANCH_ACHIEVEMENT_SECRETS = Object.freeze([
+  ["tribute_secret_resist3", "wallet", "三", "三回渋って、払う", "3回抵抗した請求を払った"],
+  ["tribute_secret_both", "wallet", "両", "Payも言葉も", "同じ日に、献上と言葉の献上をした"],
+  ["tribute_secret_second_plea", "wallet", "再", "二度目の願い出", "退けられたあと、同じお預けで許された"],
+  ["tribute_secret_moo", "wallet", "鳴", "鳴いた財布", "鳴き声を書いた"],
+  ["tribute_secret_mood", "manager", "気", "気分次第", "同じ日に、許すと退けるを両方した"],
+  ["tribute_secret_ignored_paid", "manager", "黙", "無視しても払われる", "既読無視の間に、請求が払われた"],
+  ["tribute_secret_named", "manager", "名", "名付け親", "牧場に名前を付けた"],
+].map(([id, side, icon, name, condition]) => Object.freeze({ id, side, icon, name, condition })));
+
+// 枠の豪華さ（1〜5）。どの系統も最後の段階が5（いちばん豪華）になるよう、段階の数に合わせて割り当てる。
+export function ranchAchievementTier(level, maxLevel) {
+  const top = Math.max(1, Math.floor(Number(maxLevel) || 1));
+  const value = Math.min(top, Math.max(1, Math.floor(Number(level) || 1)));
+  return Math.max(1, Math.min(5, Math.ceil((value * 5) / top)));
+}
+
 // 「○○牧場」。名前がなければ「牧場」。
 export function ranchTitle(name) {
   const text = String(name ?? "").trim();

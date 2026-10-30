@@ -47,6 +47,8 @@ import {
   PURPOSES,
   RECEIVABLE_KINDS,
   RECITE_TARGETS,
+  RANCH_ACHIEVEMENT_FAMILIES,
+  RANCH_ACHIEVEMENT_SECRETS,
   RANCH_ANIMALS,
   RANCH_ANIMAL_LABELS,
   RANCH_FACILITIES,
@@ -119,6 +121,7 @@ import {
   purposeLabel,
   ranchAnimalMood,
   ranchDiary,
+  ranchAchievementTier,
   ranchFondness,
   ranchLevelFor,
   ranchProgress,
@@ -546,6 +549,7 @@ function renderHub() {
   const endedPanel = ended.length ? `<details class="tribute-panel tribute-ended"${state.ended.open ? " open" : ""}><summary>終わった契約（${ended.length}${state.ended.more ? "件以上" : "件"}）</summary>${ended.map(renderContractRow).join("")}${state.ended.more ? `<button class="button button-ghost button-small" type="button" data-t="ended-more" ${state.ended.loading ? "disabled" : ""}>${state.ended.loading ? "読み込み中…" : "前の契約を読む"}</button>` : ""}</details>` : "";
   return frame(`<div class="tribute-hub">
     ${renderRanch(open, profile)}
+    ${previewScreen === "achievement-frames" ? renderAchievementFrameGallery() : ""}
     ${refund}
     ${firstSteps}
     ${hasContracts ? `${renderTodo(open, profile)}${lists}${me}` : `${me}${lists}`}
@@ -1227,6 +1231,102 @@ const ACHIEVEMENT_SIDES = Object.freeze([
   Object.freeze({ family: "tribute_wallet", side: "財布の側", statKey: "walletPairDays", unit: "差し出した献上" }),
 ]);
 
+// ───────────── 牧場の実績の枠（設計書17） ─────────────
+// 段階が上がるほど豪華になる。1 木の札 → 2 銅（鋲） → 3 銀（鋲・リボン） → 4 金（月桂樹・リボン） → 5 宝冠（王冠・宝石・きらめき）。
+// シークレットは封蝋。色は class で CSS が決める（管理人は薔薇色、財布は琥珀色）。絵の形は決まった数から作る（毎回同じ）。
+const RANCH_FRAME_CENTER = Object.freeze([32, 35]);
+
+function ranchFramePoint(angle, radius) {
+  const rad = (angle * Math.PI) / 180;
+  return [RANCH_FRAME_CENTER[0] + radius * Math.cos(rad), RANCH_FRAME_CENTER[1] - radius * Math.sin(rad)].map((value) => Number(value.toFixed(2)));
+}
+
+function ranchFrameSparkle(x, y, size) {
+  const d = size * 0.28;
+  return `<path class="spark" d="M${x} ${y - size}L${x + d} ${y - d}L${x + size} ${y}L${x + d} ${y + d}L${x} ${y + size}L${x - d} ${y + d}L${x - size} ${y}L${x - d} ${y - d}Z"/>`;
+}
+
+const RANCH_FRAME_PARTS = (() => {
+  const rivets = [30, 90, 150, 210, 270, 330].map((angle) => {
+    const [x, y] = ranchFramePoint(angle, 20.5);
+    return `<circle class="rivet" cx="${x}" cy="${y}" r="1.5"/>`;
+  }).join("");
+  const branch = (angles, sweep) => {
+    const [x1, y1] = ranchFramePoint(angles[0], 26.4);
+    const [x2, y2] = ranchFramePoint(angles.at(-1), 26.4);
+    const leaves = angles.map((angle, index) => {
+      const [x, y] = ranchFramePoint(angle, 26.4 + (index % 2 ? 1.5 : -1.5));
+      const turn = -(angle + 90) + (index % 2 ? 24 : -24) + (sweep ? 180 : 0);
+      return `<ellipse class="leaf" cx="${x}" cy="${y}" rx="3.5" ry="1.55" transform="rotate(${turn.toFixed(1)} ${x} ${y})"/>`;
+    }).join("");
+    return `<path class="stem" d="M${x1} ${y1}A26.4 26.4 0 0 ${sweep} ${x2} ${y2}"/>${leaves}`;
+  };
+  const laurel = branch([148, 164, 180, 196, 212, 228, 244], 0) + branch([32, 16, 0, -16, -32, -48, -64], 1);
+  const ribbons = '<path class="ribbon" d="M25.5 50 20.5 62.5 25 60 27.4 63.6 30.6 52Z"/><path class="ribbon" d="M38.5 50 43.5 62.5 39 60 36.6 63.6 33.4 52Z"/>';
+  const gems = [[0, "gem-a"], [180, "gem-a"], [270, "gem-b"], [45, "gem-b"], [135, "gem-b"]].map(([angle, kind]) => {
+    const [x, y] = ranchFramePoint(angle, 20.5);
+    return `<path class="gem ${kind}" d="M${x} ${y - 2.6}L${x + 2.2} ${y}L${x} ${y + 2.6}L${x - 2.2} ${y}Z"/>`;
+  }).join("");
+  const crown = '<path class="crown" d="M21.6 13.6 19.6 3.6 26.3 8.6 32 1.2 37.7 8.6 44.4 3.6 42.4 13.6Z"/><path class="crown-band" d="M21.6 12.4H42.4V15.2H21.6Z"/><circle class="jewel" cx="19.6" cy="3.6" r="1.4"/><circle class="jewel is-center" cx="32" cy="1.6" r="1.7"/><circle class="jewel" cx="44.4" cy="3.6" r="1.4"/>';
+  const sparkles = ranchFrameSparkle(7.5, 14, 3.6) + ranchFrameSparkle(57, 20, 2.8) + ranchFrameSparkle(56, 54, 2.2) + ranchFrameSparkle(8, 52, 2);
+  // 封蝋の縁（決まった数で波打たせる）
+  const wax = Array.from({ length: 40 }, (_, index) => {
+    const angle = (index / 40) * 360;
+    const [x, y] = ranchFramePoint(angle, 21 + 1.3 * Math.sin(index * 2.1) + 0.7 * Math.cos(index * 3.3));
+    return `${index ? "L" : "M"}${x} ${y}`;
+  }).join("") + "Z";
+  // 木の札の継ぎ目（板をはめた輪に見せる）
+  const planks = [45, 135, 225, 315].map((angle) => {
+    const [x1, y1] = ranchFramePoint(angle, 17.6);
+    const [x2, y2] = ranchFramePoint(angle, 23.4);
+    return `<path class="grain" d="M${x1} ${y1}L${x2} ${y2}"/>`;
+  }).join("");
+  return { rivets, laurel, ribbons, gems, crown, sparkles, wax, planks };
+})();
+
+function ranchAchievementFrame({ icon = "", tier = 1, side = "manager", secret = false, locked = false } = {}) {
+  const [cx, cy] = RANCH_FRAME_CENTER;
+  const glyph = `<text class="glyph" x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central">${escapeHtml(locked ? "?" : icon)}</text>`;
+  const classes = `tribute-ach-frame is-${side === "wallet" ? "wallet" : "manager"}${secret ? " is-secret" : ` is-tier-${tier}`}${locked ? " is-locked" : ""}`;
+  if (secret) {
+    return `<svg class="${classes}" viewBox="0 0 64 64" aria-hidden="true"><path class="wax" d="${RANCH_FRAME_PARTS.wax}"/><circle class="wax-ring" cx="${cx}" cy="${cy}" r="15"/>${glyph}</svg>`;
+  }
+  const parts = [
+    tier >= 3 ? RANCH_FRAME_PARTS.ribbons : "",
+    tier >= 4 ? RANCH_FRAME_PARTS.laurel : "",
+    tier === 5 ? `<circle class="ring-outer" cx="${cx}" cy="${cy}" r="24.6"/>` : "",
+    `<circle class="ring" cx="${cx}" cy="${cy}" r="20.5"/><circle class="ring-rim" cx="${cx}" cy="${cy}" r="23.5"/><circle class="disc" cx="${cx}" cy="${cy}" r="17"/><circle class="ring-edge" cx="${cx}" cy="${cy}" r="17.3"/>`,
+    `<path class="shine" d="M11.6 27.5A21.8 21.8 0 0 1 22.8 15.2"/>`,
+    tier === 2 || tier === 3 ? RANCH_FRAME_PARTS.rivets : "",
+    tier === 1 ? RANCH_FRAME_PARTS.planks : "",
+    tier === 5 ? RANCH_FRAME_PARTS.gems + RANCH_FRAME_PARTS.crown + RANCH_FRAME_PARTS.sparkles : "",
+  ].join("");
+  return `<svg class="${classes}" viewBox="0 0 64 64" aria-hidden="true">${parts}${glyph}</svg>`;
+}
+
+// 枠の見本（?tributePreview=achievement-frames）。系統ごとに、すべての段階の枠と名前を並べる。
+function renderAchievementFrameGallery() {
+  const catalog = window.HariaiAchievements?.catalog || [];
+  const existing = ["tribute_manager", "tribute_wallet"].map((family) => {
+    const levels = catalog.filter((definition) => definition.family === family).sort((a, b) => a.level - b.level);
+    return levels.length ? { family, side: family === "tribute_manager" ? "manager" : "wallet", icon: levels[0].icon, label: levels[0].familyLabel, names: levels.map((definition) => definition.name), thresholds: levels.map((definition) => definition.target) } : null;
+  }).filter(Boolean);
+  const families = [...existing, ...RANCH_ACHIEVEMENT_FAMILIES];
+  const row = (entry) => `<div class="tribute-ach-gallery-row"><h4>${escapeHtml(entry.label)}<small>${escapeHtml(entry.icon)}・${entry.names.length}段階</small></h4><div class="tribute-ach-gallery-levels">${entry.names.map((name, index) => {
+    const tier = ranchAchievementTier(index + 1, entry.names.length);
+    return `<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ icon: entry.icon, tier, side: entry.side })}<figcaption><b>Lv.${index + 1}</b>${escapeHtml(name)}</figcaption></figure>`;
+  }).join("")}</div></div>`;
+  const side = (key, title) => `<div class="tribute-ach-gallery-side"><h3>${title}</h3>${families.filter((entry) => entry.side === key).map(row).join("")}
+    <div class="tribute-ach-gallery-row"><h4>シークレット<small>封蝋</small></h4><div class="tribute-ach-gallery-levels">${RANCH_ACHIEVEMENT_SECRETS.filter((entry) => entry.side === key).map((entry) => `<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ icon: entry.icon, side: entry.side, secret: true })}<figcaption><b>SECRET</b>${escapeHtml(entry.name)}</figcaption></figure>`).join("")}</div></div></div>`;
+  const tiers = ["木の札", "銅の札", "銀の札", "金の札", "宝冠の札"];
+  return `<section class="tribute-panel tribute-ach-gallery" aria-label="牧場の実績の枠">
+    <h2>牧場の実績の枠 <small>見本</small></h2>
+    <div class="tribute-ach-gallery-levels is-legend">${tiers.map((label, index) => `<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ icon: "牧", tier: index + 1, side: "manager" })}<figcaption><b>枠${index + 1}</b>${label}</figcaption></figure>`).join("")}<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ icon: "牧", tier: 1, side: "manager", locked: true })}<figcaption><b>未解除</b>灰色</figcaption></figure></div>
+    ${side("manager", "管理人（貢がせ側）")}
+    ${side("wallet", "財布（貢ぐ側）")}
+  </section>`;
+}
+
 function renderAchievementPanel() {
   const catalog = window.HariaiAchievements?.catalog;
   if (!state.achievements || !Array.isArray(catalog)) return "";
@@ -1238,7 +1338,7 @@ function renderAchievementPanel() {
     const counted = Math.max(0, Math.floor(Number(state.achievements.stats?.[entry.statKey]) || 0));
     const maximum = levels.at(-1).level;
     return `<div class="tribute-achievement ${current ? "is-unlocked" : "is-locked"}${current?.level === maximum ? " is-final" : ""}">
-      <span class="tribute-achievement-icon" aria-hidden="true">${escapeHtml(current ? current.icon : "?")}</span>
+      <span class="tribute-achievement-icon is-ranch-frame" aria-hidden="true">${ranchAchievementFrame({ icon: levels[0].icon, tier: current ? ranchAchievementTier(current.level, maximum) : 1, side: entry.family === "tribute_manager" ? "manager" : "wallet", locked: !current })}</span>
       <span class="tribute-achievement-copy">
         <small>${escapeHtml(entry.side)}・${escapeHtml(levels[0].familyLabel)}</small>
         <strong>${escapeHtml(current ? current.name : "未解除")}</strong>
@@ -1265,7 +1365,16 @@ function achievementEntry(id) {
 function cardAchievementsMarkup(ids, extra = "") {
   const entries = (Array.isArray(ids) ? ids : []).map(achievementEntry).filter(Boolean).slice(0, CARD_ACHIEVEMENT_LIMIT);
   if (!entries.length) return "";
-  return `<span class="tribute-card-achievements${extra}" aria-label="実績">${entries.map((entry) => `<span title="${escapeHtml(entry.description || entry.name)}"><i aria-hidden="true">${escapeHtml(entry.icon)}</i>${escapeHtml(entry.name)}</span>`).join("")}</span>`;
+  return `<span class="tribute-card-achievements${extra}" aria-label="実績">${entries.map((entry) => `<span title="${escapeHtml(entry.description || entry.name)}">${cardAchievementIcon(entry)}${escapeHtml(entry.name)}</span>`).join("")}</span>`;
+}
+
+// 牧場の実績は、段階に合った枠で出す（ほかのモードの実績は、これまでどおりの丸い札）。
+function cardAchievementIcon(entry) {
+  if (entry.scope !== "tribute") return `<i aria-hidden="true">${escapeHtml(entry.icon)}</i>`;
+  const catalog = window.HariaiAchievements?.catalog || [];
+  const maximum = Math.max(1, ...catalog.filter((definition) => definition.family === entry.family).map((definition) => definition.level));
+  const side = /wallet|_wal_/.test(entry.family) ? "wallet" : "manager";
+  return `<i class="is-ranch-frame" aria-hidden="true">${ranchAchievementFrame({ icon: entry.icon, tier: entry.secret ? 1 : ranchAchievementTier(entry.level, maximum), side, secret: entry.secret === true })}</i>`;
 }
 
 // preview: カード編集の見本（押しても開かない）。
@@ -7032,6 +7141,7 @@ function startPreview(screen) {
     ledger: () => navigate("ledger"),
     ranking: () => navigate("ranking"),
     ranch: () => navigate("hub"),
+    "achievement-frames": () => navigate("hub"),
     "ranch-photo": () => {
       navigate("hub");
       openRanchPhoto();
