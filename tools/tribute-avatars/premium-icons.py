@@ -1,9 +1,9 @@
-"""お貢ぎ牧場の有料アイコン（36〜42・43〜48・49）を、ユーザーの元画像から作る。
+"""お貢ぎ牧場の有料アイコン（36〜42・43〜48・49〜51）を、ユーザーの元画像（正方形）から作る。
 
 使い方（リポジトリのルートで）:
   python tools/tribute-avatars/premium-icons.py 36 <36の元画像> <37> <38> <39> <40> <41> <42>
   python tools/tribute-avatars/premium-icons.py 43 <43の元画像> <44> <45> <46> <47> <48>
-  python tools/tribute-avatars/premium-icons.py 49 <49の元画像>
+  python tools/tribute-avatars/premium-icons.py 49 <49の元画像> <50> <51>
 
 最初の番号から順に、渡した枚数だけ作り直す（ほかの番号の絵と記録はそのまま残す）。
 絵は描き直さない。顔に少し寄せて切り抜き、色を整え、四隅を絵の色で沈め、左上に淡い光を重ねる。
@@ -48,6 +48,8 @@ ICONS = [
     {"id": 47, "center": (520, 470), "key": (230, 50, 70), "sheen": 0.35},  # 深紅
     {"id": 48, "center": (512, 460), "key": (255, 70, 140), "sheen": 0.35},  # ルージュ
     {"id": 49, "center": (512, 480), "key": (230, 165, 110)},  # キャラメル
+    {"id": 50, "center": (520, 420), "key": (200, 170, 150)},  # 漆黒
+    {"id": 51, "center": (530, 450), "key": (245, 210, 160)},  # バニラ
 ]
 BY_ID = {icon["id"]: icon for icon in ICONS}
 
@@ -100,8 +102,12 @@ def encode(image):
 def make(icon, source):
     raw = source.read_bytes()
     image = Image.open(io.BytesIO(raw)).convert("RGB")
+    source_size = image.size
+    if image.width != image.height:
+        raise SystemExit(f"{source.name} は正方形ではありません。")
+    # 1024 以外の正方形（niji の 1254 など）は、先に 1024 に縮めてから同じ座標で切り抜く。
     if image.size != (WORK, WORK):
-        raise SystemExit(f"{source.name} は {WORK}×{WORK} ではありません。")
+        image = image.resize((WORK, WORK), Image.LANCZOS)
     box = crop_box(icon["center"])
     a = to_array(image.crop(box).resize((WORK, WORK), Image.LANCZOS))
     a = grade(a, icon["key"], icon.get("sheen", 1.0))
@@ -121,6 +127,8 @@ def make(icon, source):
         "bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
     }
+    if source_size != (WORK, WORK):
+        record["sourceSize"] = list(source_size)
     if "sheen" in icon:
         record["sheen"] = icon["sheen"]
     return record

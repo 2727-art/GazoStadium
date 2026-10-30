@@ -32,6 +32,8 @@ export const RANCH_DECORATION_PRODUCTS = Object.freeze([
   Object.freeze({ id: "ranch_avatar_47", type: "ranchAvatar", avatar: 47, name: "アイコン・深紅", price: 500, description: "黒髪に赤い唇、黒い手袋の指を口元に。四角いホログラムの印。" }),
   Object.freeze({ id: "ranch_avatar_48", type: "ranchAvatar", avatar: 48, name: "アイコン・ルージュ", price: 500, description: "濃い桃色の唇と爪で、静かにと合図する。四角いホログラムの印。" }),
   Object.freeze({ id: "ranch_avatar_49", type: "ranchAvatar", avatar: 49, name: "アイコン・キャラメル", price: 500, description: "キャラメル色の長い髪と、ハートの浮かぶ蜂蜜色の瞳。四角いホログラムの印。" }),
+  Object.freeze({ id: "ranch_avatar_50", type: "ranchAvatar", avatar: 50, name: "アイコン・漆黒", price: 500, description: "長い黒髪に頬杖、「働きたくない」のTシャツ。四角いホログラムの印。" }),
+  Object.freeze({ id: "ranch_avatar_51", type: "ranchAvatar", avatar: 51, name: "アイコン・バニラ", price: 500, description: "桃色のメッシュが入った金の髪に、生成りのケーブルニット。四角いホログラムの印。" }),
 ]);
 
 // 金庫の段階で手に入る非売品の飾り（ストアでは売らない）。サーバーの VAULT_DECORATIONS と同じ。

@@ -121,6 +121,6 @@ test("cache keys: the ranch, the store and the account page load the new product
   const decoKeys = new Set([client, online, read("tribute-share.mjs"), read("shop-products.mjs")].map((source) => specifier(source, "tribute-deco.mjs")));
   assert.equal(decoKeys.size, 1, "one tribute-deco.mjs module in the browser");
   const design = read("TRIBUTE_DESIGN.md");
-  assert.match(design, /有料アイコン（`avatar` 36〜4[89]/);
+  assert.match(design, /有料アイコン（`avatar` 36〜\d+、/);
   assert.ok(fs.existsSync(path.join(root, "functions/scripts/verify-tribute-premium-icons-2-release.cjs")));
 });

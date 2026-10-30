@@ -63,12 +63,14 @@ test("the decoration catalog is the same in the browser, the store prices and th
     ranch_avatar_47: 500,
     ranch_avatar_48: 500,
     ranch_avatar_49: 500,
+    ranch_avatar_50: 500,
+    ranch_avatar_51: 500,
   }, "the prices agreed for the ranch shelf");
   // 持っている飾りは Firestore の in（30個まで）で読む。
   assert.ok(rules.DECORATION_PRODUCT_IDS.length <= 30, `${rules.DECORATION_PRODUCT_IDS.length} decoration products`);
   // 有料アイコンは画面・ストア・サーバーで同じ番号と商品ID。
   assert.deepEqual(deco.PREMIUM_AVATARS.map((entry) => entry.id), [...rules.PREMIUM_AVATAR_IDS]);
-  for (const avatar of [0, 35, 36, 42, 43, 48, 49, 50, "40", null]) {
+  for (const avatar of [0, 35, 36, 42, 43, 48, 49, 51, 52, "40", null]) {
     const card = { ...rules.normalizeDecorations({ frame: "bara" }), avatar: rules.normalizeAvatar(avatar) };
     assert.deepEqual(deco.requiredDecorationProducts({ frame: "bara", avatar }), rules.requiredDecorationProducts(card), String(avatar));
     assert.equal(deco.isPremiumAvatar(avatar), rules.premiumAvatarProductId(avatar) !== "", String(avatar));

@@ -1,9 +1,9 @@
 "use strict";
 
-// Read-only public delivery check for the third batch of paid ranch icons (ranch-premium-icons-v3): avatar 49
-// (キャラメル), 500 Pay, square with the owner's sigil border and the edge hologram. On the public routes tribute.js,
+// Read-only public delivery check for the third batch of paid ranch icons (ranch-premium-icons-v3): avatar 49-51
+// (キャラメル・漆黒・バニラ), 500 Pay each, square with the owner's sigil border and the edge hologram. On the public routes tribute.js,
 // online.js and account.js changed (cache keys and the product list), with tribute-core.mjs, tribute-deco.mjs,
-// tribute-share.mjs and shop-products.mjs. tribute.css is unchanged. All 49 manager icons and all 549 ranch images must
+// tribute-share.mjs and shop-products.mjs. tribute.css is unchanged. All 51 manager icons and all 549 ranch images must
 // match the files committed at HEAD. No sign-in, game APIs, production data access, or filesystem writes.
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -13,8 +13,8 @@ const { ORIGINS, sha256LF, assetReference } = require("./verify-player-safety-re
 const ROOT = path.resolve(__dirname, "../..");
 const MARKER = "ranch-premium-icons-v3";
 const RANCH_ASSET_KEY = "ranch-growth-v1";
-const AVATAR_COUNT = 49;
-const NEW_AVATARS = Object.freeze([49]);
+const AVATAR_COUNT = 51;
+const NEW_AVATARS = Object.freeze([49, 50, 51]);
 // キャッシュキーが今回の印で終わるファイルと、前回のまま中身も同じであるべきファイル。
 const CHANGED_FILES = Object.freeze(["tribute.js", "online.js", "account.js"]);
 const UNCHANGED_FILES = Object.freeze(["tribute.css", "app.js", "achievements.js"]);

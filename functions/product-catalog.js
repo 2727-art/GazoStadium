@@ -161,6 +161,8 @@ const PRODUCT_ROWS = [
   ["ranch_avatar_47", "ranchAvatar", 500],
   ["ranch_avatar_48", "ranchAvatar", 500],
   ["ranch_avatar_49", "ranchAvatar", 500],
+  ["ranch_avatar_50", "ranchAvatar", 500],
+  ["ranch_avatar_51", "ranchAvatar", 500],
 ];
 
 module.exports = Object.freeze(Object.fromEntries(

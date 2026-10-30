@@ -204,12 +204,12 @@ const DISCLOSURES = Object.freeze(["nekama", "as_is", "undisclosed"]);
 const MANAGER_STYLES = Object.freeze(["insight", "manage", "tease", "pamper", "aloof"]);
 const MAX_MANAGER_STYLES = 2;
 const SIGIL_COLORS = Object.freeze([0, 1, 2, 3, 4, 5]);
-// 管理人の印のアイコン。0 はペルソナ名の1文字、1〜49 は用意したアイコン（画像のアップロードはない）。
+// 管理人の印のアイコン。0 はペルソナ名の1文字、1〜51 は用意したアイコン（画像のアップロードはない）。
 // 1〜12・24〜35 はイラスト、13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（ここまで無料）。
-// 36〜49 は有料の四角いアイコン（1枚 500 Pay の買い切り）。商品IDは ranch_avatar_<番号>。
-const AVATAR_MAX = 49;
+// 36〜51 は有料の四角いアイコン（1枚 500 Pay の買い切り）。商品IDは ranch_avatar_<番号>。
+const AVATAR_MAX = 51;
 const AVATAR_IDS = Object.freeze(Array.from({ length: AVATAR_MAX + 1 }, (_, id) => id));
-const PREMIUM_AVATAR_IDS = Object.freeze([36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]);
+const PREMIUM_AVATAR_IDS = Object.freeze([36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]);
 const PREMIUM_AVATAR_TYPE = "ranchAvatar";
 const PREMIUM_AVATAR_PREFIX = "ranch_avatar_";
 
@@ -301,7 +301,7 @@ const FRAME_COLORS = Object.freeze({
   kinjo: Object.freeze(["gold", "pink", "blackgold", "shu", "violet"]),
 });
 // 有料アイコンも牧場の飾りと同じに扱う（買っても対戦の装備にはせず、カード編集で選ぶ）。
-// 持っている飾りは Firestore の in で読むので、全部で30個までにする。
+// 持っている飾りは Firestore の in で読むので、全部で30個までにする（51 で30個ちょうど。増やす時は読み方を分ける）。
 const DECORATION_PRODUCT_TYPES = Object.freeze([...Object.values(DECORATION_SLOTS).map((slot) => slot.type), PREMIUM_AVATAR_TYPE]);
 const DECORATION_PRODUCT_IDS = Object.freeze([
   ...Object.values(DECORATION_SLOTS).flatMap((slot) => (

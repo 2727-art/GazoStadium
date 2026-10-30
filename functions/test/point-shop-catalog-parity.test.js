@@ -83,7 +83,7 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
     .map(({ id, type, price }) => [id, type, price])
     .sort(([firstId], [secondId]) => firstId.localeCompare(secondId));
   assert.deepEqual(browserRows, serverRows);
-  assert.equal(browserRows.length, 157);
+  assert.equal(browserRows.length, 159);
 
   const rules = JSON.parse(read("database.rules.json")).rules;
   const economyRules = rules.online.economy["$uid"];
