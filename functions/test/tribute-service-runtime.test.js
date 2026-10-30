@@ -811,7 +811,8 @@ test("only managers paid by 3 wallets with 1,000 Pay can open a vault; Pay moves
   // 外に見せるのは段階だけ。額は本人の state だけに出る。
   const detail = await harness.act("p1", "manager", { publicManagerId });
   assert.deepEqual(detail.card.vault, { level: 1, id: "box", label: "木箱" });
-  assert.doesNotMatch(JSON.stringify(detail), /4000|vaultAmount/);
+  // 4000 は数として出ていないこと（ID や時刻の数字の並びに偶然 4000 が入ることはある）。
+  assert.doesNotMatch(JSON.stringify(detail), /[:,[]4000[,}\]]|vaultAmount/);
   assert.deepEqual((await harness.act("viewer", "board")).managers[0].vault, { level: 1, id: "box", label: "木箱" });
   assert.deepEqual((await harness.act("manager", "state")).profile.vault, { qualified: true, amount: 4_000, tier: 1, bestTier: 3 });
 
@@ -820,7 +821,7 @@ test("only managers paid by 3 wallets with 1,000 Pay can open a vault; Pay moves
   harness.firestore.write("tributeProfiles/other", { ...harness.firestore.read("tributeProfiles/other"), vaultQualifiedAt: 1, vaultAmount: 30_000, vaultTier: 4, vaultTierAt: harness.now(), vaultBestTier: 4 });
   const ranking = (await harness.act("viewer", "vault")).ranking;
   assert.deepEqual(ranking.map((row) => [row.publicManagerId, row.vault.label]), [[otherId, "宝物庫"], [publicManagerId, "木箱"]]);
-  assert.doesNotMatch(JSON.stringify(ranking), /30000|4000|amount/);
+  assert.doesNotMatch(JSON.stringify(ranking), /[:,[](?:30000|4000)[,}\]]|amount/);
 
   // 金庫の飾りは、届いた段階まで使える（ストアでは買えない）。
   harness.advance(2_100);

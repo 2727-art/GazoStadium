@@ -1232,76 +1232,413 @@ const ACHIEVEMENT_SIDES = Object.freeze([
 ]);
 
 // ───────────── 牧場の実績の枠（設計書17） ─────────────
-// 段階が上がるほど豪華になる。1 木の札 → 2 銅（鋲） → 3 銀（鋲・リボン） → 4 金（月桂樹・リボン） → 5 宝冠（王冠・宝石・きらめき）。
-// シークレットは封蝋。色は class で CSS が決める（管理人は薔薇色、財布は琥珀色）。絵の形は決まった数から作る（毎回同じ）。
-const RANCH_FRAME_CENTER = Object.freeze([32, 35]);
+// 枠は実績の系統ごとに形と飾りが違う（ユーザー決定 2026-10-30「系統に応じた枠」「豪華＝冠ではない」）。
+// 段階（1〜5）が上がるほど、その系統の飾り（柵・帳簿・鎖・吹き出し・門・音・車輪・盤・首輪・景色・ハート、
+// 財布側は硬貨・贈り物・印・縄・錠・茨・手紙・巻物・籠・石・鈴・足あと）が増え、縁の素材が 木・革 → 銅 → 銀 → 金 → 金と光 になる。
+// 冠は「金の王冠の財布」（なつきの飾りそのもの）にだけ使う。シークレットは、それぞれ色の違う封蝋。
+// 色は class で CSS が決める（管理人の地は薔薇色、財布の地は琥珀色）。形は決まった数から作る（毎回同じ）。
+const RF = Object.freeze({ x: 32, y: 35 });
 
-function ranchFramePoint(angle, radius) {
+function rfPoint(angle, radius, center = RF) {
   const rad = (angle * Math.PI) / 180;
-  return [RANCH_FRAME_CENTER[0] + radius * Math.cos(rad), RANCH_FRAME_CENTER[1] - radius * Math.sin(rad)].map((value) => Number(value.toFixed(2)));
+  return [Number((center.x + radius * Math.cos(rad)).toFixed(2)), Number((center.y - radius * Math.sin(rad)).toFixed(2))];
 }
 
-function ranchFrameSparkle(x, y, size) {
+function rfSpark(x, y, size) {
   const d = size * 0.28;
   return `<path class="spark" d="M${x} ${y - size}L${x + d} ${y - d}L${x + size} ${y}L${x + d} ${y + d}L${x} ${y + size}L${x - d} ${y + d}L${x - size} ${y}L${x - d} ${y - d}Z"/>`;
 }
 
-const RANCH_FRAME_PARTS = (() => {
-  const rivets = [30, 90, 150, 210, 270, 330].map((angle) => {
-    const [x, y] = ranchFramePoint(angle, 20.5);
-    return `<circle class="rivet" cx="${x}" cy="${y}" r="1.5"/>`;
+function rfSparks(points) {
+  return points.map(([x, y, size]) => rfSpark(x, y, size)).join("");
+}
+
+function rfHeart(x, y, size, cls) {
+  const scale = size / 32;
+  return `<path class="${cls}" d="${RANK_HEART_PATH}" transform="translate(${(x - 16 * scale).toFixed(2)} ${(y - 16 * scale).toFixed(2)}) scale(${scale.toFixed(3)})"/>`;
+}
+
+function rfFlower(x, y, size, cls = "petal") {
+  const petals = [90, 162, 234, 306, 18].map((angle) => {
+    const [px, py] = rfPoint(angle, size * 0.62, { x, y });
+    return `<circle class="${cls}" cx="${px}" cy="${py}" r="${(size * 0.48).toFixed(2)}"/>`;
   }).join("");
-  const branch = (angles, sweep) => {
-    const [x1, y1] = ranchFramePoint(angles[0], 26.4);
-    const [x2, y2] = ranchFramePoint(angles.at(-1), 26.4);
-    const leaves = angles.map((angle, index) => {
-      const [x, y] = ranchFramePoint(angle, 26.4 + (index % 2 ? 1.5 : -1.5));
-      const turn = -(angle + 90) + (index % 2 ? 24 : -24) + (sweep ? 180 : 0);
-      return `<ellipse class="leaf" cx="${x}" cy="${y}" rx="3.5" ry="1.55" transform="rotate(${turn.toFixed(1)} ${x} ${y})"/>`;
-    }).join("");
-    return `<path class="stem" d="M${x1} ${y1}A26.4 26.4 0 0 ${sweep} ${x2} ${y2}"/>${leaves}`;
-  };
-  const laurel = branch([148, 164, 180, 196, 212, 228, 244], 0) + branch([32, 16, 0, -16, -32, -48, -64], 1);
-  const ribbons = '<path class="ribbon" d="M25.5 50 20.5 62.5 25 60 27.4 63.6 30.6 52Z"/><path class="ribbon" d="M38.5 50 43.5 62.5 39 60 36.6 63.6 33.4 52Z"/>';
-  const gems = [[0, "gem-a"], [180, "gem-a"], [270, "gem-b"], [45, "gem-b"], [135, "gem-b"]].map(([angle, kind]) => {
-    const [x, y] = ranchFramePoint(angle, 20.5);
-    return `<path class="gem ${kind}" d="M${x} ${y - 2.6}L${x + 2.2} ${y}L${x} ${y + 2.6}L${x - 2.2} ${y}Z"/>`;
+  return `${petals}<circle class="flower-heart" cx="${x}" cy="${y}" r="${(size * 0.36).toFixed(2)}"/>`;
+}
+
+function rfLeaf(x, y, angle, length = 3.4, cls = "leaf") {
+  return `<ellipse class="${cls}" cx="${x}" cy="${y}" rx="${length}" ry="${(length * 0.45).toFixed(2)}" transform="rotate(${angle} ${x} ${y})"/>`;
+}
+
+function rfNote(x, y, size = 1) {
+  return `<ellipse class="note" cx="${x}" cy="${y}" rx="${(2.2 * size).toFixed(2)}" ry="${(1.6 * size).toFixed(2)}" transform="rotate(-22 ${x} ${y})"/><path class="note-stem" d="M${(x + 2 * size).toFixed(2)} ${y}V${(y - 8 * size).toFixed(2)}Q${(x + 5 * size).toFixed(2)} ${(y - 6.5 * size).toFixed(2)} ${(x + 5.2 * size).toFixed(2)} ${(y - 3.6 * size).toFixed(2)}"/>`;
+}
+
+function rfAround(count, radius, start, draw) {
+  return Array.from({ length: count }, (_, index) => {
+    const angle = start + (360 / count) * index;
+    const [x, y] = rfPoint(angle, radius);
+    return draw(x, y, angle, index);
   }).join("");
-  const crown = '<path class="crown" d="M21.6 13.6 19.6 3.6 26.3 8.6 32 1.2 37.7 8.6 44.4 3.6 42.4 13.6Z"/><path class="crown-band" d="M21.6 12.4H42.4V15.2H21.6Z"/><circle class="jewel" cx="19.6" cy="3.6" r="1.4"/><circle class="jewel is-center" cx="32" cy="1.6" r="1.7"/><circle class="jewel" cx="44.4" cy="3.6" r="1.4"/>';
-  const sparkles = ranchFrameSparkle(7.5, 14, 3.6) + ranchFrameSparkle(57, 20, 2.8) + ranchFrameSparkle(56, 54, 2.2) + ranchFrameSparkle(8, 52, 2);
-  // 封蝋の縁（決まった数で波打たせる）
-  const wax = Array.from({ length: 40 }, (_, index) => {
-    const angle = (index / 40) * 360;
-    const [x, y] = ranchFramePoint(angle, 21 + 1.3 * Math.sin(index * 2.1) + 0.7 * Math.cos(index * 3.3));
+}
+
+function rfArc(radius, from, to, cls, sweep) {
+  const [x1, y1] = rfPoint(from, radius);
+  const [x2, y2] = rfPoint(to, radius);
+  return `<path class="${cls}" d="M${x1} ${y1}A${radius} ${radius} 0 0 ${sweep} ${x2} ${y2}"/>`;
+}
+
+function rfCoin(x, y, r) {
+  return `<circle class="coin" cx="${x}" cy="${y}" r="${r}"/><circle class="coin-in" cx="${x}" cy="${y}" r="${(r * 0.6).toFixed(2)}"/>`;
+}
+
+function rfPaw(x, y, size = 1) {
+  const toes = [[-3.2, -3.6], [-1.1, -5.2], [1.1, -5.2], [3.2, -3.6]].map(([dx, dy]) => `<ellipse class="paw" cx="${(x + dx * size).toFixed(2)}" cy="${(y + dy * size).toFixed(2)}" rx="${(1.15 * size).toFixed(2)}" ry="${(1.45 * size).toFixed(2)}"/>`).join("");
+  return `<ellipse class="paw" cx="${x}" cy="${y}" rx="${(3 * size).toFixed(2)}" ry="${(2.5 * size).toFixed(2)}"/>${toes}`;
+}
+
+function rfSnowflake(x, y, size) {
+  return `<path class="ice" d="M${x} ${y - size}V${y + size}M${(x - size * 0.87).toFixed(2)} ${(y - size / 2).toFixed(2)}L${(x + size * 0.87).toFixed(2)} ${(y + size / 2).toFixed(2)}M${(x - size * 0.87).toFixed(2)} ${(y + size / 2).toFixed(2)}L${(x + size * 0.87).toFixed(2)} ${(y - size / 2).toFixed(2)}"/>`;
+}
+
+function rfRose(x, y, size) {
+  return `<circle class="rose" cx="${x}" cy="${y}" r="${size}"/><circle class="rose-in" cx="${x}" cy="${y}" r="${(size * 0.55).toFixed(2)}"/><path class="rose-curl" d="M${(x - size * 0.4).toFixed(2)} ${y}A${(size * 0.4).toFixed(2)} ${(size * 0.4).toFixed(2)} 0 1 1 ${(x + size * 0.3).toFixed(2)} ${(y + size * 0.3).toFixed(2)}"/>`;
+}
+
+const RF_BUBBLE = "M18 18H46Q50 18 50 22V44Q50 48 46 48H28L20 55L22 48H18Q14 48 14 44V22Q14 18 18 18Z";
+const RF_SHEET = "M16 18H43L49 24V54H16Z";
+const RF_ARCH = "M15 54V34Q15 17 32 17Q49 17 49 34V54Z";
+const RF_OCTAGON = "M25 17H39L50 28V42L39 53H25L14 42V28Z";
+const RF_STAMP = (() => {
+  const bumps = 18;
+  return Array.from({ length: bumps * 2 }, (_, index) => {
+    const [x, y] = rfPoint((index / (bumps * 2)) * 360, index % 2 ? 16.6 : 18.4);
     return `${index ? "L" : "M"}${x} ${y}`;
   }).join("") + "Z";
-  // 木の札の継ぎ目（板をはめた輪に見せる）
-  const planks = [45, 135, 225, 315].map((angle) => {
-    const [x1, y1] = ranchFramePoint(angle, 17.6);
-    const [x2, y2] = ranchFramePoint(angle, 23.4);
-    return `<path class="grain" d="M${x1} ${y1}L${x2} ${y2}"/>`;
-  }).join("");
-  return { rivets, laurel, ribbons, gems, crown, sparkles, wax, planks };
 })();
+const RF_WAX = Array.from({ length: 40 }, (_, index) => {
+  const [x, y] = rfPoint((index / 40) * 360, 21 + 1.3 * Math.sin(index * 2.1) + 0.7 * Math.cos(index * 3.3));
+  return `${index ? "L" : "M"}${x} ${y}`;
+}).join("") + "Z";
 
-function ranchAchievementFrame({ icon = "", tier = 1, side = "manager", secret = false, locked = false } = {}) {
-  const [cx, cy] = RANCH_FRAME_CENTER;
-  const glyph = `<text class="glyph" x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central">${escapeHtml(locked ? "?" : icon)}</text>`;
-  const classes = `tribute-ach-frame is-${side === "wallet" ? "wallet" : "manager"}${secret ? " is-secret" : ` is-tier-${tier}`}${locked ? " is-locked" : ""}`;
+// 地の形。glyph はその形の中で字を置く高さ。
+const RF_PLATES = Object.freeze({
+  circle: { glyph: 35, svg: '<circle class="plate" cx="32" cy="35" r="17.5"/>' },
+  coin: { glyph: 35, svg: '<circle class="plate" cx="32" cy="35" r="17.5"/><circle class="plate-in" cx="32" cy="35" r="14.6"/>' },
+  square: { glyph: 35, svg: '<rect class="plate" x="14.5" y="17.5" width="35" height="35" rx="5"/>' },
+  board: { glyph: 35, svg: '<rect class="plate" x="14.5" y="17.5" width="35" height="35" rx="3"/><path class="grid" d="M23.25 17.5V52.5M32 17.5V52.5M40.75 17.5V52.5M14.5 26.25H49.5M14.5 35H49.5M14.5 43.75H49.5"/>' },
+  paper: { glyph: 37, svg: `<path class="plate" d="${RF_SHEET}"/><path class="fold" d="M43 18V24H49"/>` },
+  bubble: { glyph: 33, svg: `<path class="plate" d="${RF_BUBBLE}"/>` },
+  arch: { glyph: 38, svg: `<path class="plate" d="${RF_ARCH}"/>` },
+  octagon: { glyph: 35, svg: `<path class="plate" d="${RF_OCTAGON}"/>` },
+  // ハートの形は RANK_HEART_PATH（このファイルの後ろで決める）を使うので、描く時に作る。
+  heart: { glyph: 35, get svg() { return rfHeart(32, 37, 40, "plate"); } },
+  stamp: { glyph: 35, svg: `<path class="plate" d="${RF_STAMP}"/>` },
+  lock: { glyph: 40, svg: '<path class="shackle" d="M23 26V18Q23 9.5 31.5 9.5Q40 9.5 40 18V20"/><rect class="plate" x="15.5" y="25" width="33" height="28" rx="5"/>' },
+  envelope: { glyph: 41, svg: '<rect class="plate" x="12.5" y="21" width="39" height="29" rx="3"/><path class="fold" d="M13 22L32 34L51 22"/>' },
+  scroll: { glyph: 34, svg: '<rect class="plate" x="17" y="19" width="30" height="31"/><rect class="roll" x="11.5" y="17" width="6.5" height="35" rx="3"/><rect class="roll" x="46" y="17" width="6.5" height="35" rx="3"/>' },
+});
+
+// 系統ごとの形と飾り。t は枠の段階（1〜5）。back は地の後ろ、front は地の上（字の下）に描く。
+const RF_FAMILIES = Object.freeze({
+  // 牧場の管理: 柵の杭が増え、白く塗られ、花が咲き、金の杭と灯りになる。
+  tribute_manager: { plate: "circle", draw: (t) => {
+    const count = [6, 8, 10, 12, 12][t - 1];
+    const posts = Array.from({ length: count }, (_, index) => `<rect class="${t >= 3 ? "post is-paint" : "post"}" x="30.4" y="7.6" width="3.2" height="9.6" rx="1.2" transform="rotate(${((360 / count) * (index + 0.5)).toFixed(1)} 32 35)"/>`).join("");
+    const flowers = t >= 3 ? [[13, 55], [51, 55], ...(t >= 4 ? [[7, 35], [57, 35], [13, 15], [51, 15]] : [])].map(([x, y]) => rfFlower(x, y, 2.6)).join("") : "";
+    return {
+      back: `<circle class="rail" cx="32" cy="35" r="21"/>${t >= 2 ? '<circle class="rail" cx="32" cy="35" r="24.4"/>' : ""}${posts}`,
+      front: `${flowers}${t === 5 ? `${[[32, 3.6], [5, 47], [59, 47]].map(([x, y]) => `<circle class="lantern" cx="${x}" cy="${y}" r="2.3"/>`).join("")}${rfSparks([[9, 9, 2.6], [56, 59, 2.2]])}` : ""}`,
+    };
+  } },
+  // 請求: 帳簿の紙が重なり、しおり・背表紙・金の角が付き、最後は羽根ペンと封蝋。
+  tribute_mgr_request: { plate: "paper", draw: (t) => ({
+    back: [
+      t >= 2 ? `<path class="sheet" d="${RF_SHEET}" transform="rotate(8 32 36)"/>` : "",
+      t >= 3 ? `<path class="sheet" d="${RF_SHEET}" transform="rotate(-9 32 36)"/>` : "",
+      t >= 4 ? '<rect class="mf" x="11.5" y="16.5" width="5.5" height="39" rx="1.6"/>' : "",
+      t === 5 ? '<path class="quill" d="M60 3Q49 12 43 25L45.6 26.4Q54 15 60 3Z"/><path class="quill-vein" d="M59 4.5L44.3 25.6"/>' : "",
+    ].join(""),
+    front: [
+      t >= 3 ? '<path class="ribbon" d="M37.5 18V28L40 25.4L42.5 28V18Z"/>' : "",
+      t >= 4 ? '<path class="mf" d="M16 18H21.5L16 23.5Z"/><path class="mf" d="M16 54H21.5L16 48.5Z"/>' : "",
+      t === 5 ? `<circle class="wax-seal" cx="47" cy="52" r="5.2"/><circle class="wax-seal-in" cx="47" cy="52" r="3.2"/>${rfSparks([[7, 10, 2.6], [58, 40, 2]])}` : "",
+    ].join(""),
+  }) },
+  // 抵抗を折る: 地のひび → 切れた鎖 → 切れ目が増え、破片が散り、金の鎖が砕けて光る。
+  tribute_mgr_break: { plate: "circle", draw: (t) => {
+    const crack = '<path class="crack" d="M43.5 21L39.5 27L44 31L38.5 37"/>';
+    if (t === 1) return { back: "", front: crack };
+    const gaps = t === 2 ? [3] : t === 3 ? [3, 10] : [3, 7, 11];
+    const links = rfAround(14, 23.2, 90, (x, y, angle, index) => (gaps.includes(index) ? "" : `<ellipse class="chain" cx="${x}" cy="${y}" rx="3.3" ry="${index % 2 ? 1.5 : 2}" transform="rotate(${(-angle - 90).toFixed(1)} ${x} ${y})"/>`));
+    const shards = t >= 3 ? gaps.map((gap) => {
+      const angle = 90 + (360 / 14) * gap;
+      return [-9, 9].map((offset) => {
+        const [x, y] = rfPoint(angle + offset, 28.4);
+        return `<path class="shard" d="M${x} ${(y - 2).toFixed(2)}L${(x + 1.8).toFixed(2)} ${(y + 1.4).toFixed(2)}L${(x - 1.7).toFixed(2)} ${(y + 1.2).toFixed(2)}Z"/>`;
+      }).join("");
+    }).join("") : "";
+    return { back: links, front: `${crack}${shards}${t === 5 ? rfSparks([[8, 8, 2.8], [57, 10, 2.2], [57, 58, 2.4]]) : ""}` };
+  } },
+  // 既読無視: 吹き出しの横に「既読」。返さない吹き出しが重なり、夜の月と星が出て、月明かりで光る。
+  tribute_mgr_ignore: { plate: "bubble", draw: (t) => ({
+    back: [
+      t >= 3 ? `<path class="bubble-back" d="${RF_BUBBLE}" transform="translate(-6 -7)"/>` : "",
+      t >= 2 ? `<path class="bubble-back" d="${RF_BUBBLE}" transform="translate(-3 -3.5)"/>` : "",
+      t >= 4 ? '<path class="moon" d="M55 4.5A7.5 7.5 0 1 0 61.5 15.5A6 6 0 1 1 55 4.5Z"/>' : "",
+    ].join(""),
+    front: `<text class="tag-text" x="51" y="58.5" text-anchor="end">既読</text>${t >= 4 ? rfSparks([[46, 7, 1.8], [8, 56, 1.6]]) : ""}${t === 5 ? rfSparks([[6, 12, 2.4], [60, 30, 2], [40, 61, 1.8]]) : ""}`,
+  }) },
+  // 許す: 門の下に鍵 → 蝶番 → 扉が開き → つるが絡み → 金の門から光が差し、花びらが舞う。
+  tribute_mgr_grant: { plate: "arch", draw: (t) => ({
+    back: [
+      t === 5 ? rfAround(9, 29, 10, (x, y, angle) => (angle > 0 && angle < 180 ? `<path class="ray" d="M${rfPoint(angle, 22).join(" ")}L${x} ${y}"/>` : "")) : "",
+      t >= 3 ? '<path class="door" d="M15 22L7 27V57L15 54Z"/><path class="door" d="M49 22L57 27V57L49 54Z"/>' : "",
+    ].join(""),
+    front: [
+      '<circle class="key-bow" cx="18.5" cy="59" r="2.8"/><path class="key" d="M21.3 59H40M36 59V62M39 59V61.5"/>',
+      t >= 2 ? '<rect class="mf" x="13.4" y="30" width="3.2" height="5" rx="1"/><rect class="mf" x="47.4" y="30" width="3.2" height="5" rx="1"/>' : "",
+      t >= 4 ? [[17, 26, -60], [21, 20.5, -35], [27, 17.6, -12], [37, 17.6, 12], [43, 20.5, 35], [47, 26, 60]].map(([x, y, angle]) => rfLeaf(x, y, angle, 2.8)).join("") + rfFlower(32, 15.6, 2.4) : "",
+      t === 5 ? `${[[10, 12], [54, 10], [57, 44]].map(([x, y]) => rfLeaf(x, y, 30, 2, "petal-fall")).join("")}${rfSparks([[6, 20, 2.4], [59, 22, 2]])}` : "",
+    ].join(""),
+  }) },
+  // 退ける: 止まれの八角形。×の棒 → 鉄格子 → 槍先 → 霜と氷の粒 → 雪の結晶が囲み、冷たく光る。
+  tribute_mgr_deny: { plate: "octagon", draw: (t) => ({
+    back: [
+      t === 1 ? '<path class="bar" d="M11 14L53 56M53 14L11 56"/>' : "",
+      t >= 2 ? '<path class="bar" d="M9 11V59M15.5 9V61M48.5 9V61M55 11V59"/>' : "",
+      t >= 3 ? [9, 15.5, 48.5, 55].map((x) => `<path class="mf" d="M${x - 2.2} ${x === 9 || x === 55 ? 11.6 : 9.6}L${x} ${x === 9 || x === 55 ? 6.6 : 4.6}L${x + 2.2} ${x === 9 || x === 55 ? 11.6 : 9.6}Z"/>`).join("") : "",
+    ].join(""),
+    front: [
+      t >= 4 ? [[9, 33, 2.6], [55, 33, 2.6], [32, 59, 2.4]].map(([x, y, size]) => rfSnowflake(x, y, size)).join("") : "",
+      t === 5 ? `${[[32, 9.5, 3.2], [8, 52, 2.8], [56, 52, 2.8], [6, 18, 2.4], [58, 18, 2.4]].map(([x, y, size]) => rfSnowflake(x, y, size)).join("")}${rfSparks([[20, 6, 1.8], [44, 62, 1.6]])}` : "",
+    ].join(""),
+  }) },
+  // 復唱: 声の波が1本ずつ増え、音符が出て、最後は金の音符が囲む。
+  tribute_mgr_recite: { plate: "circle", draw: (t) => {
+    const arcs = Array.from({ length: Math.min(t, 3) }, (_, index) => {
+      const radius = 21 + index * 4;
+      return rfArc(radius, 148, 212, "wave", 0) + rfArc(radius, 32, -32, "wave", 1);
+    }).join("");
+    const notes = t >= 3 ? [[50, 15, 1], ...(t >= 4 ? [[12, 17, 0.9], [50, 59, 0.85]] : []), ...(t === 5 ? [[14, 58, 0.85], [32, 8, 0.9], [59, 38, 0.75]] : [])].map(([x, y, size]) => rfNote(x, y, size)).join("") : "";
+    return { back: arcs, front: `${notes}${t === 5 ? rfSparks([[5, 30, 2.2], [40, 4, 1.8]]) : ""}` };
+  } },
+  // 出稼ぎ: 荷車の車輪。輻が増え、留め金、ランタン、朝日の光、金の車輪が光る。
+  tribute_mgr_work: { plate: "circle", draw: (t) => {
+    const spokes = rfAround(t === 1 ? 6 : 8, 25, 90, (x, y, angle) => `<path class="spoke" d="M${rfPoint(angle, 17.5).join(" ")}L${x} ${y}"/>`);
+    return {
+      back: [
+        t >= 4 ? rfAround(12, 30.5, 7.5, (x, y, angle) => (angle > 0 && angle < 180 ? `<path class="ray" d="M${rfPoint(angle, 27.5).join(" ")}L${x} ${y}"/>` : "")) : "",
+        `${spokes}<circle class="rim" cx="32" cy="35" r="25.4"/>`,
+      ].join(""),
+      front: [
+        t >= 2 ? rfAround(8, 21.4, 112.5, (x, y) => `<circle class="bolt" cx="${x}" cy="${y}" r="1.2"/>`) : "",
+        t >= 3 ? '<path class="m" d="M55 2.5V7"/><rect class="lantern-body" x="52" y="7" width="6" height="8.2" rx="1.6"/><circle class="lantern" cx="55" cy="11.1" r="1.6"/>' : "",
+        t === 5 ? rfSparks([[6, 8, 2.6], [8, 60, 2], [58, 58, 2.2]]) : "",
+      ].join(""),
+    };
+  } },
+  // 盤上: オセロ盤の地。四隅から石が増え、縁が金になり、最後は全部の石が金に返る。
+  tribute_mgr_othello: { plate: "board", draw: (t) => {
+    const spots = [[9, 12], [55, 12], [9, 58], [55, 58], [32, 9.5], [32, 60.5], [7.5, 35], [56.5, 35], [20, 8], [44, 8], [20, 62], [44, 62]];
+    const count = [2, 4, 8, 12, 12][t - 1];
+    const stones = spots.slice(0, count).map(([x, y], index) => {
+      const kind = t === 5 ? "is-gold" : t === 4 && index % 2 ? "is-gold" : index % 2 ? "is-white" : "is-black";
+      return `<circle class="stone ${kind}" cx="${x}" cy="${y}" r="3.3"/>`;
+    }).join("");
+    return { back: "", front: `${stones}${t === 5 ? rfSparks([[21, 3.5, 1.8], [62, 24, 1.8]]) : ""}` };
+  } },
+  // 首輪: 革の首輪と留め金 → 鋲 → 名札 → 金の鋲とハートの名札 → 宝石と鎖。
+  tribute_mgr_collar: { plate: "circle", draw: (t) => ({
+    back: '<circle class="collar-band" cx="32" cy="35" r="21.2"/>',
+    front: [
+      '<rect class="buckle" x="26.5" y="10.5" width="11" height="7.5" rx="1.4"/><path class="buckle-pin" d="M32 10.5V18"/>',
+      t >= 2 ? rfAround(10, 21.2, 126, (x, y, angle) => (angle > 70 && angle < 110 ? "" : `<circle class="${t === 5 && Math.round(angle / 36) % 2 ? "gem-b" : t === 5 ? "gem-a" : "stud"}" cx="${x}" cy="${y}" r="${t === 5 ? 1.5 : 1.3}"/>`)) : "",
+      t >= 3 ? `<circle class="mf" cx="32" cy="57" r="1.4"/>${t >= 4 ? rfHeart(32, 61.5, 10, "tag") : '<circle class="tag" cx="32" cy="61" r="3.6"/>'}` : "",
+      t === 5 ? `${[[41, 59], [45, 61], [49, 62], [53, 61.5], [57, 59.5]].map(([x, y]) => `<circle class="chain-link" cx="${x}" cy="${y}" r="1.5"/>`).join("")}${rfSparks([[7, 9, 2.4], [58, 12, 2]])}` : "",
+    ].join(""),
+  }) },
+  // 牧場: 丘の景色。柵 → 風車 → サイロ → 虹とお城の塔（牧場の施設と同じもの）。
+  tribute_mgr_ranch: { plate: "circle", draw: (t) => ({
+    back: [
+      t === 5 ? ["rainbow-1", "rainbow-2", "rainbow-3"].map((cls, index) => rfArc(29.5 - index * 2.6, 168, 12, cls, 1)).join("") : "",
+      t === 5 ? '<path class="tower" d="M27 15V3H29V5H31V3H33V5H35V3H37V15Z"/><path class="tower-roof" d="M26 3L32 -3L38 3Z"/>' : "",
+      t >= 3 ? '<path class="mill" d="M8.5 56L10 33H14.4L16 56Z"/><path class="mill-blade" d="M5 26L19.5 40M19.5 26L5 40"/>' : "",
+      t >= 4 ? '<rect class="silo" x="49" y="32" width="8" height="24" rx="1"/><path class="silo-roof" d="M49 32Q53 25 57 32Z"/>' : "",
+      '<path class="grass" d="M2 58Q32 47 62 58V63H2Z"/>',
+    ].join(""),
+    front: [
+      t >= 2 ? '<path class="fence" d="M7 57.5H57M7 60.5H57M10 55V62M18 54V62M26 53.4V62M38 53.4V62M46 54V62M54 55V62"/>' : "",
+      t === 5 ? rfSparks([[5, 8, 2.4], [59, 10, 2.2]]) : "",
+    ].join(""),
+  }) },
+  // なでる: ハートの地。小さなハート → なでる手 → ハートの輪 → 光るハートの輪。
+  tribute_mgr_pat: { plate: "heart", draw: (t) => ({
+    back: t >= 4 ? rfAround(6, 27, 90, (x, y) => rfHeart(x, y, t === 5 ? 9 : 7.5, "heart-small")) : "",
+    front: [
+      t >= 2 && t < 4 ? rfHeart(52, 13, 9, "heart-small") : "",
+      t >= 3 ? '<path class="hand" d="M4 22Q4 15 10 14.5L19 13.5Q21.5 13.3 21.3 15.4Q21 17 18.6 17.2L14.5 17.6L20.8 17.4Q23.2 17.4 23 19.4Q22.8 21.2 20.4 21.2L13 21.6Q8 25 4 22Z"/>' : "",
+      t === 5 ? rfSparks([[58, 30, 2.2], [8, 52, 2], [50, 60, 1.8]]) : "",
+    ].join(""),
+  }) },
+  // 財布の献上: 硬貨の地。硬貨が1枚 → 積み → 両側 → 輪 → 宝石と光。
+  tribute_wallet: { plate: "coin", draw: (t) => {
+    const piles = [[[51, 54, 4.6]], [[51, 56, 4.6], [53, 51, 4.6], [50, 46.5, 4.6]], [[51, 56, 4.6], [53, 51, 4.6], [13, 56, 4.6], [11, 51, 4.6]]];
+    const coins = t <= 3 ? piles[t - 1].map(([x, y, r]) => rfCoin(x, y, r)).join("") : rfAround(10, 25, 90, (x, y) => rfCoin(x, y, 3.8));
+    return { back: t >= 4 ? coins : "", front: `${t <= 3 ? coins : ""}${t === 5 ? `${rfAround(5, 29.4, 108, (x, y, angle, index) => `<path class="${index % 2 ? "gem-b" : "gem-a"}" d="M${x} ${y - 2.4}L${x + 2} ${y}L${x} ${y + 2.4}L${x - 2} ${y}Z"/>`)}${rfSparks([[6, 8, 2.4], [58, 60, 2]])}` : ""}` };
+  } },
+  // 自分から: 贈り物の箱。蝶結び → 垂れ → 小箱 → もう1つと紙吹雪 → 金のリボンと光。
+  tribute_wal_silent: { plate: "square", draw: (t) => ({
+    back: t >= 2 ? '<path class="ribbon" d="M29.5 17.5V52.5H34.5V17.5Z"/>' : "",
+    front: [
+      `<path class="bow" d="M32 17Q24 8 21 12.5Q19 17 32 17Q45 17 43 12.5Q40 8 32 17Z"/><circle class="bow-knot" cx="32" cy="16.6" r="${t >= 2 ? 2.4 : 1.8}"/>`,
+      t >= 3 ? '<rect class="gift-small" x="3.5" y="49" width="10" height="9" rx="1.5"/><path class="ribbon-line" d="M8.5 49V58"/>' : "",
+      t >= 4 ? `<rect class="gift-small" x="50.5" y="50" width="10" height="9" rx="1.5"/><path class="ribbon-line" d="M55.5 50V59"/>${[[8, 12], [56, 14], [58, 36]].map(([x, y], index) => `<rect class="confetti${index % 2 ? " is-b" : ""}" x="${x}" y="${y}" width="2.6" height="1.4" transform="rotate(${30 * (index + 1)} ${x} ${y})"/>`).join("")}` : "",
+      t === 5 ? rfSparks([[6, 30, 2.4], [58, 26, 2], [32, 61, 1.8]]) : "",
+    ].join(""),
+  }) },
+  // 請求に応える: 切手のような縁。「済」の印が1つずつ増え、最後は領収の紙が扇に開く。
+  tribute_wal_request: { plate: "stamp", draw: (t) => {
+    const seals = [[50, 54], [14, 17], [50, 16]].slice(0, Math.max(0, t - 1)).map(([x, y]) => `<circle class="paid-seal" cx="${x}" cy="${y}" r="6"/><text class="paid-text" x="${x}" y="${y + 0.4}" text-anchor="middle" dominant-baseline="central">済</text>`).join("");
+    return {
+      back: t === 5 ? [-24, 0, 24].map((angle) => `<rect class="sheet" x="20" y="10" width="24" height="34" rx="1.5" transform="rotate(${angle} 32 46)"/>`).join("") : "",
+      front: `${seals}${t === 5 ? rfSparks([[6, 40, 2.2], [58, 34, 2]]) : ""}`,
+    };
+  } },
+  // 抵抗: 縄。ほつれた縄 → 一周 → 結び目 → 結び目が3つ → 金の組紐と房。
+  tribute_wal_resist: { plate: "circle", draw: (t) => {
+    const rope = t === 1
+      ? `${rfArc(22, 150, 390, "rope", 1)}${rfArc(22, 150, 390, "rope-twist", 1)}<path class="rope-fray" d="M12.5 23.5L9 21M12.5 23.5L10 26.5M13.3 22L11.5 18.5"/>`
+      : `<circle class="rope" cx="32" cy="35" r="22"/><circle class="rope-twist" cx="32" cy="35" r="22"/>${rfAround(4, 22, 45, (x, y, angle) => `<rect class="rope-band" x="${(x - 1.3).toFixed(2)}" y="${(y - 2.6).toFixed(2)}" width="2.6" height="5.2" rx="0.8" transform="rotate(${(-angle).toFixed(1)} ${x} ${y})"/>`)}`;
+    const knots = t >= 3 ? (t >= 4 ? [210, 270, 330] : [270]).map((angle) => {
+      const [x, y] = rfPoint(angle, 22);
+      return `<circle class="knot" cx="${x}" cy="${y}" r="3.4"/><path class="knot-line" d="M${x - 2.2} ${y - 1}Q${x} ${y + 1.8} ${x + 2.2} ${y - 1}"/>`;
+    }).join("") : "";
+    return {
+      back: rope,
+      front: `${knots}${t === 5 ? `<path class="tassel" d="M22 56L19 63H25ZM42 56L39 63H45Z"/><circle class="knot" cx="22" cy="55.5" r="2"/><circle class="knot" cx="42" cy="55.5" r="2"/>${rfSparks([[7, 9, 2.4], [57, 9, 2.2]])}` : ""}`,
+    };
+  } },
+  // 許された: 開いた錠前。鍵 → リボン → 角の花 → 宝石の錠と2本の鍵。
+  tribute_wal_granted: { plate: "lock", draw: (t) => ({
+    back: "",
+    front: [
+      t >= 2 ? '<circle class="key-bow" cx="55" cy="47" r="2.7"/><path class="key" d="M55 49.7V62M55 57H58M55 60H57.5"/>' : "",
+      t === 5 ? '<circle class="key-bow" cx="9" cy="47" r="2.7"/><path class="key" d="M9 49.7V62M9 57H6M9 60H6.5"/>' : "",
+      t >= 3 ? '<path class="bow" d="M40 18.5Q35 12 33 15Q32 18.5 40 18.5Q48 18.5 47 15Q45 12 40 18.5Z"/><circle class="bow-knot" cx="40" cy="18.3" r="1.7"/>' : "",
+      t >= 4 ? `${rfFlower(18, 28, 2.4)}${rfFlower(46, 50, 2.4)}` : "",
+      t === 5 ? `<path class="gem-a" d="M18 49.6L20 52L18 54.4L16 52Z"/><path class="gem-b" d="M46 25.6L48 28L46 30.4L44 28Z"/>${rfSparks([[6, 12, 2.4], [58, 10, 2]])}` : "",
+    ].join(""),
+  }) },
+  // 退けられた: 茨。小枝 → 半分 → 一周 → つぼみ → 薔薇が咲き、花びらが舞う（突き放されて咲く）。
+  tribute_wal_denied: { plate: "circle", draw: (t) => {
+    const span = [[230, 310], [180, 360], [0, 360], [0, 360], [0, 360]][t - 1];
+    const vine = span[1] - span[0] >= 360 ? '<circle class="vine" cx="32" cy="35" r="22.4"/>' : rfArc(22.4, span[0], span[1], "vine", 0);
+    const thornCount = [3, 6, 12, 12, 12][t - 1];
+    const thorns = Array.from({ length: thornCount }, (_, index) => {
+      const angle = span[0] + ((span[1] - span[0]) / thornCount) * (index + 0.5);
+      const [x1, y1] = rfPoint(angle - 3, 23.6);
+      const [x2, y2] = rfPoint(angle, 27.4);
+      const [x3, y3] = rfPoint(angle + 3, 23.6);
+      return `<path class="thorn" d="M${x1} ${y1}L${x2} ${y2}L${x3} ${y3}Z"/>`;
+    }).join("");
+    const buds = t === 4 ? [90, 210, 330].map((angle) => {
+      const [x, y] = rfPoint(angle, 22.4);
+      return `<ellipse class="bud" cx="${x}" cy="${y}" rx="2.2" ry="3" transform="rotate(${-angle + 90} ${x} ${y})"/>`;
+    }).join("") : "";
+    const roses = t === 5 ? rfAround(5, 22.4, 90, (x, y) => rfRose(x, y, 3.6)) + [[8, 8], [58, 60], [56, 6]].map(([x, y]) => rfLeaf(x, y, 40, 2, "petal-fall")).join("") + rfSparks([[6, 60, 2]]) : "";
+    return { back: `${vine}${thorns}`, front: `${buds}${roses}` };
+  } },
+  // 言葉: 手紙。封蝋 → もう1通 → 羽根ペン → 束ねたリボンと金の封蝋。
+  tribute_wal_words: { plate: "envelope", draw: (t) => ({
+    back: [
+      t >= 3 ? '<rect class="sheet" x="12.5" y="21" width="39" height="29" rx="3" transform="rotate(-10 32 35)"/>' : "",
+      t === 5 ? '<rect class="sheet" x="12.5" y="21" width="39" height="29" rx="3" transform="rotate(9 32 35)"/>' : "",
+      t >= 4 ? '<path class="quill" d="M61 3Q50 10 44 21L46.4 22.6Q54.5 13 61 3Z"/><path class="quill-vein" d="M60 4.4L45.2 21.8"/>' : "",
+    ].join(""),
+    front: [
+      t >= 2 ? `<circle class="${t === 5 ? "wax-seal is-gold" : "wax-seal"}" cx="46" cy="47" r="4.4"/>` : "",
+      t === 5 ? `<path class="ribbon" d="M10 37H54V40.5H10Z"/><path class="bow" d="M32 38.8Q25 32 23 35Q22 39 32 38.8Q42 39 41 35Q39 32 32 38.8Z"/>${rfSparks([[6, 12, 2.4], [58, 58, 2]])}` : "",
+    ].join(""),
+  }) },
+  // 復唱（財布）: 巻物。習字の線 → 筆 → 房 → 金の軸と墨の光。
+  tribute_wal_recite: { plate: "scroll", draw: (t) => ({
+    back: t >= 3 ? '<path class="brush" d="M60 4L50 18"/><path class="brush-tip" d="M50 18Q47 23 48.5 26Q51.5 23.5 52.2 19.4Z"/>' : "",
+    front: [
+      t >= 2 ? '<path class="ink" d="M21.5 45.5H42.5M21.5 48.5H36"/>' : "",
+      t >= 4 ? '<path class="tassel" d="M14.75 52V57M49.25 52V57"/><path class="tassel" d="M12.8 57L14.75 63L16.7 57ZM47.3 57L49.25 63L51.2 57Z"/>' : "",
+      t === 5 ? rfSparks([[6, 10, 2.4], [58, 40, 1.8], [36, 6, 1.6]]) : "",
+    ].join(""),
+  }) },
+  // 出稼ぎ（財布）: 籠。干し草 → 熊手 → 干し草の束 → 金の籠と朝日。
+  tribute_wal_work: { plate: "circle", draw: (t) => ({
+    back: [
+      t === 5 ? rfAround(10, 30.5, 9, (x, y, angle) => (angle > 0 && angle < 180 ? `<path class="ray" d="M${rfPoint(angle, 26.5).join(" ")}L${x} ${y}"/>` : "")) : "",
+      t >= 3 ? '<path class="fork" d="M58 4L44 30"/><path class="fork" d="M55.5 2.3L61.8 5.7M55.5 2.3L54 6.5M58.6 4L57.2 8.2M61.8 5.7L60.4 9.9"/>' : "",
+    ].join(""),
+    front: [
+      t >= 2 ? '<path class="hay" d="M20 50Q22 44 25 49M27 49Q30 42 33 49M35 49Q38 43 41 50M24 50Q26 45 29 50"/>' : "",
+      '<path class="basket" d="M17 50H47L43.5 62H20.5Z"/><path class="basket-weave" d="M18.2 54H45.8M19.3 58H44.7M25 50L26 62M32 50V62M39 50L38 62"/>',
+      t >= 4 ? '<rect class="bale" x="2.5" y="50" width="12" height="9" rx="2.5"/><path class="bale-line" d="M6.5 50V59M10.5 50V59"/>' : "",
+      t === 5 ? rfSparks([[6, 30, 2.2], [60, 46, 2]]) : "",
+    ].join(""),
+  }) },
+  // 盤上（財布）: 石が1つ → 3つ → 白黒の輪 → 金の硬貨に変わる石 → 石から芽が出て花が咲く（盤上の養分）。
+  tribute_wal_othello: { plate: "circle", draw: (t) => {
+    if (t <= 2) {
+      const stones = (t === 1 ? [[51, 54, "is-black"]] : [[51, 54, "is-black"], [55, 47, "is-white"], [13, 54, "is-black"]]).map(([x, y, kind]) => `<circle class="stone ${kind}" cx="${x}" cy="${y}" r="3.6"/>`).join("");
+      return { back: "", front: stones };
+    }
+    const ring = rfAround(8, 24.5, 90, (x, y, angle, index) => {
+      const kind = t >= 4 && index % 3 === 0 ? "is-gold" : index % 2 ? "is-white" : "is-black";
+      const sprout = t === 5 ? `<path class="sprout" d="M${x} ${y - 3.2}V${y - 6.4}"/>${rfLeaf(x - 1.6, y - 6, -30, 1.8)}${rfLeaf(x + 1.6, y - 6.6, 30, 1.8)}` : "";
+      return `<circle class="stone ${kind}" cx="${x}" cy="${y}" r="3.5"/>${sprout}`;
+    });
+    return { back: "", front: `${ring}${t === 5 ? rfFlower(32, 4.5, 2.2) + rfSparks([[6, 8, 2.2], [58, 60, 2]]) : ""}` };
+  } },
+  // なつき: 動物に付く飾りそのもの。鈴 → リボン → 花かんむり → 金の王冠（花かんむりの代わり）。
+  tribute_wal_fondness: { plate: "circle", draw: (t) => ({
+    back: "",
+    front: [
+      rfArc(19.2, 205, 335, "fond-collar", 0),
+      '<path class="bell" d="M28.2 59Q28 52.6 32 52.4Q36 52.6 35.8 59Z"/><circle class="bell-clapper" cx="32" cy="59.6" r="1.1"/>',
+      t >= 3 ? '<path class="bow is-pink" d="M47 17.5Q41 11 39 14.5Q38.5 18.5 47 17.5Q55.5 18.5 55 14.5Q53 11 47 17.5Z"/><circle class="bow-knot is-pink" cx="47" cy="17.3" r="1.8"/>' : "",
+      t === 4 ? rfAround(7, 21, 30, (x, y, angle) => (angle <= 150 ? rfFlower(x, y, 2.6, angle % 40 ? "petal" : "petal is-b") : "")) : "",
+      t === 5 ? '<path class="royal-crown" d="M20 16L18 4L25 9.5L32 1.5L39 9.5L46 4L44 16Z"/><path class="royal-band" d="M20 14.6H44V18H20Z"/><circle class="gem-a" cx="32" cy="16.3" r="1.5"/><circle class="gem-b" cx="25" cy="16.3" r="1.1"/><circle class="gem-b" cx="39" cy="16.3" r="1.1"/>' + rfSparks([[8, 8, 2.4], [57, 7, 2.2], [58, 54, 1.8]]) : "",
+    ].join(""),
+  }) },
+  // なでられた: 足あと。1つ → ハート → 2つ → 足あとの輪 → ハートと足あとの輪が光る。
+  tribute_wal_patted: { plate: "circle", draw: (t) => ({
+    back: "",
+    front: t >= 4
+      ? rfAround(t === 5 ? 8 : 6, 24.5, 90, (x, y) => rfPaw(x, y + 1, 0.62)) + (t === 5 ? [[6.5, 9], [57.5, 9], [6.5, 61], [57.5, 61]].map(([x, y]) => rfHeart(x, y, 7.5, "heart-small")).join("") + rfSparks([[32, 3.5, 2.2], [3, 35, 1.8]]) : "")
+      : `${rfPaw(51, 56, 0.7)}${t >= 2 ? rfHeart(13, 17, 8, "heart-small") : ""}${t >= 3 ? rfPaw(13, 56, 0.7) : ""}`,
+  }) },
+});
+
+// シークレットの封蝋の色（系統ごとに違う色）。
+const RF_SECRET_TONES = Object.freeze({
+  tribute_secret_resist3: "crimson",
+  tribute_secret_both: "indigo",
+  tribute_secret_second_plea: "emerald",
+  tribute_secret_moo: "amber",
+  tribute_secret_mood: "violet",
+  tribute_secret_ignored_paid: "midnight",
+  tribute_secret_named: "rose",
+});
+
+function ranchAchievementFrame({ family = "", icon = "", tier = 1, side = "manager", secret = false, locked = false } = {}) {
+  const sideClass = side === "wallet" ? "wallet" : "manager";
   if (secret) {
-    return `<svg class="${classes}" viewBox="0 0 64 64" aria-hidden="true"><path class="wax" d="${RANCH_FRAME_PARTS.wax}"/><circle class="wax-ring" cx="${cx}" cy="${cy}" r="15"/>${glyph}</svg>`;
+    const tone = RF_SECRET_TONES[family] || "crimson";
+    return `<svg class="tribute-ach-frame is-${sideClass} is-secret is-tone-${tone}${locked ? " is-locked" : ""}" viewBox="0 0 64 64" aria-hidden="true"><path class="wax" d="${RF_WAX}"/><circle class="wax-ring" cx="32" cy="35" r="15"/><text class="glyph" x="32" y="35.5" text-anchor="middle" dominant-baseline="central">${escapeHtml(locked ? "?" : icon)}</text></svg>`;
   }
-  const parts = [
-    tier >= 3 ? RANCH_FRAME_PARTS.ribbons : "",
-    tier >= 4 ? RANCH_FRAME_PARTS.laurel : "",
-    tier === 5 ? `<circle class="ring-outer" cx="${cx}" cy="${cy}" r="24.6"/>` : "",
-    `<circle class="ring" cx="${cx}" cy="${cy}" r="20.5"/><circle class="ring-rim" cx="${cx}" cy="${cy}" r="23.5"/><circle class="disc" cx="${cx}" cy="${cy}" r="17"/><circle class="ring-edge" cx="${cx}" cy="${cy}" r="17.3"/>`,
-    `<path class="shine" d="M11.6 27.5A21.8 21.8 0 0 1 22.8 15.2"/>`,
-    tier === 2 || tier === 3 ? RANCH_FRAME_PARTS.rivets : "",
-    tier === 1 ? RANCH_FRAME_PARTS.planks : "",
-    tier === 5 ? RANCH_FRAME_PARTS.gems + RANCH_FRAME_PARTS.crown + RANCH_FRAME_PARTS.sparkles : "",
-  ].join("");
-  return `<svg class="${classes}" viewBox="0 0 64 64" aria-hidden="true">${parts}${glyph}</svg>`;
+  const spec = RF_FAMILIES[family] || RF_FAMILIES.tribute_manager;
+  const plate = RF_PLATES[spec.plate] || RF_PLATES.circle;
+  const level = Math.min(5, Math.max(1, Math.floor(Number(tier) || 1)));
+  const { back = "", front = "" } = spec.draw(level);
+  const glyph = `<text class="glyph" x="32" y="${plate.glyph + 0.5}" text-anchor="middle" dominant-baseline="central">${escapeHtml(locked ? "?" : icon)}</text>`;
+  return `<svg class="tribute-ach-frame is-${sideClass} is-lv-${level} is-${family.replaceAll("_", "-")}${locked ? " is-locked" : ""}" viewBox="0 0 64 64" aria-hidden="true">${back}${plate.svg}${front}${glyph}</svg>`;
 }
 
 // 枠の見本（?tributePreview=achievement-frames）。系統ごとに、すべての段階の枠と名前を並べる。
@@ -1314,14 +1651,13 @@ function renderAchievementFrameGallery() {
   const families = [...existing, ...RANCH_ACHIEVEMENT_FAMILIES];
   const row = (entry) => `<div class="tribute-ach-gallery-row"><h4>${escapeHtml(entry.label)}<small>${escapeHtml(entry.icon)}・${entry.names.length}段階</small></h4><div class="tribute-ach-gallery-levels">${entry.names.map((name, index) => {
     const tier = ranchAchievementTier(index + 1, entry.names.length);
-    return `<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ icon: entry.icon, tier, side: entry.side })}<figcaption><b>Lv.${index + 1}</b>${escapeHtml(name)}</figcaption></figure>`;
+    return `<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ family: entry.family, icon: entry.icon, tier, side: entry.side })}<figcaption><b>Lv.${index + 1}</b>${escapeHtml(name)}</figcaption></figure>`;
   }).join("")}</div></div>`;
   const side = (key, title) => `<div class="tribute-ach-gallery-side"><h3>${title}</h3>${families.filter((entry) => entry.side === key).map(row).join("")}
-    <div class="tribute-ach-gallery-row"><h4>シークレット<small>封蝋</small></h4><div class="tribute-ach-gallery-levels">${RANCH_ACHIEVEMENT_SECRETS.filter((entry) => entry.side === key).map((entry) => `<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ icon: entry.icon, side: entry.side, secret: true })}<figcaption><b>SECRET</b>${escapeHtml(entry.name)}</figcaption></figure>`).join("")}</div></div></div>`;
-  const tiers = ["木の札", "銅の札", "銀の札", "金の札", "宝冠の札"];
+    <div class="tribute-ach-gallery-row"><h4>シークレット<small>封蝋</small></h4><div class="tribute-ach-gallery-levels">${RANCH_ACHIEVEMENT_SECRETS.filter((entry) => entry.side === key).map((entry) => `<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ family: entry.id, icon: entry.icon, side: entry.side, secret: true })}<figcaption><b>SECRET</b>${escapeHtml(entry.name)}</figcaption></figure>`).join("")}</div></div></div>`;
   return `<section class="tribute-panel tribute-ach-gallery" aria-label="牧場の実績の枠">
     <h2>牧場の実績の枠 <small>見本</small></h2>
-    <div class="tribute-ach-gallery-levels is-legend">${tiers.map((label, index) => `<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ icon: "牧", tier: index + 1, side: "manager" })}<figcaption><b>枠${index + 1}</b>${label}</figcaption></figure>`).join("")}<figure class="tribute-ach-gallery-cell">${ranchAchievementFrame({ icon: "牧", tier: 1, side: "manager", locked: true })}<figcaption><b>未解除</b>灰色</figcaption></figure></div>
+    <p class="tribute-note">系統ごとに形と飾りが違い、段階が上がるほど飾りが増えて、縁が 木・革 → 銅 → 銀 → 金 → 金と光 になります。シークレットは色の違う封蝋です。</p>
     ${side("manager", "管理人（貢がせ側）")}
     ${side("wallet", "財布（貢ぐ側）")}
   </section>`;
@@ -1338,7 +1674,7 @@ function renderAchievementPanel() {
     const counted = Math.max(0, Math.floor(Number(state.achievements.stats?.[entry.statKey]) || 0));
     const maximum = levels.at(-1).level;
     return `<div class="tribute-achievement ${current ? "is-unlocked" : "is-locked"}${current?.level === maximum ? " is-final" : ""}">
-      <span class="tribute-achievement-icon is-ranch-frame" aria-hidden="true">${ranchAchievementFrame({ icon: levels[0].icon, tier: current ? ranchAchievementTier(current.level, maximum) : 1, side: entry.family === "tribute_manager" ? "manager" : "wallet", locked: !current })}</span>
+      <span class="tribute-achievement-icon is-ranch-frame" aria-hidden="true">${ranchAchievementFrame({ family: entry.family, icon: levels[0].icon, tier: current ? ranchAchievementTier(current.level, maximum) : 1, side: entry.family === "tribute_manager" ? "manager" : "wallet", locked: !current })}</span>
       <span class="tribute-achievement-copy">
         <small>${escapeHtml(entry.side)}・${escapeHtml(levels[0].familyLabel)}</small>
         <strong>${escapeHtml(current ? current.name : "未解除")}</strong>
@@ -1374,7 +1710,7 @@ function cardAchievementIcon(entry) {
   const catalog = window.HariaiAchievements?.catalog || [];
   const maximum = Math.max(1, ...catalog.filter((definition) => definition.family === entry.family).map((definition) => definition.level));
   const side = /wallet|_wal_/.test(entry.family) ? "wallet" : "manager";
-  return `<i class="is-ranch-frame" aria-hidden="true">${ranchAchievementFrame({ icon: entry.icon, tier: entry.secret ? 1 : ranchAchievementTier(entry.level, maximum), side, secret: entry.secret === true })}</i>`;
+  return `<i class="is-ranch-frame" aria-hidden="true">${ranchAchievementFrame({ family: entry.secret ? entry.id : entry.family, icon: entry.icon, tier: entry.secret ? 1 : ranchAchievementTier(entry.level, maximum), side, secret: entry.secret === true })}</i>`;
 }
 
 // preview: カード編集の見本（押しても開かない）。

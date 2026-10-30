@@ -1975,40 +1975,180 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
   .tribute-ach-frame .spark { animation: none; opacity: 1; }
 }
 /* ───────────── 牧場の実績の枠（設計書17） ─────────────
-   1 木の札 → 2 銅（鋲） → 3 銀（鋲・リボン） → 4 金（月桂樹・リボン） → 5 宝冠（王冠・宝石・きらめき）。シークレットは封蝋。
-   管理人（貢がせ側）は薔薇色、財布（貢ぐ側）は琥珀色の地。 */
+   系統ごとに形と飾りが違う。段階（is-lv-1〜5）で縁の素材が 木・革 → 銅 → 銀 → 金 → 金と光 に変わる（--m）。
+   地は管理人（貢がせ側）が薔薇色、財布（貢ぐ側）が琥珀色。シークレットは色の違う封蝋。 */
 .tribute-ach-frame { display: block; width: 100%; height: 100%; overflow: visible; }
-.tribute-ach-frame.is-manager { --disc: #4b1739; --glyph: #ffd5ea; --ribbon: #ff4fa3; --ribbon-edge: #9c1f5f; }
-.tribute-ach-frame.is-wallet { --disc: #3f2a12; --glyph: #ffe7b8; --ribbon: #f0a93a; --ribbon-edge: #8f5a12; }
-.tribute-ach-frame.is-tier-1 { --ring: #8a5b30; --ring-rim: #4e3017; --ring-edge: #3d2511; --shine: rgba(255, 226, 180, 0.22); }
-.tribute-ach-frame.is-tier-2 { --ring: #d98a4c; --ring-rim: #7a421c; --ring-edge: #5a3016; --shine: #ffe0c0; --rivet: #ffd3a3; --rivet-edge: #7a421c; }
-.tribute-ach-frame.is-tier-3 { --ring: #cfd8e3; --ring-rim: #6f7d8f; --ring-edge: #5b6878; --shine: #ffffff; --rivet: #f4f8fc; --rivet-edge: #6f7d8f; }
-.tribute-ach-frame.is-tier-4 { --ring: #f3c54f; --ring-rim: #9a6a17; --ring-edge: #7d5410; --shine: #fff6c4; --leaf: #e9c45a; --leaf-edge: #9a6a17; }
-.tribute-ach-frame.is-tier-5 { --ring: #ffd45e; --ring-rim: #8a5a10; --ring-edge: #74490b; --shine: #fffbe0; --leaf: #ffd96a; --leaf-edge: #8a5a10; filter: drop-shadow(0 0 5px rgba(255, 212, 94, 0.55)); }
-.tribute-ach-frame .ring { fill: none; stroke: var(--ring); stroke-width: 6; }
-.tribute-ach-frame .ring-rim { fill: none; stroke: var(--ring-rim); stroke-width: 1; }
-.tribute-ach-frame .ring-edge { fill: none; stroke: var(--ring-edge); stroke-width: 1; }
-.tribute-ach-frame .ring-outer { fill: none; stroke: #fff1a8; stroke-width: 1.4; }
-.tribute-ach-frame .disc { fill: var(--disc); }
-.tribute-ach-frame .shine { fill: none; stroke: var(--shine); stroke-width: 1.8; stroke-linecap: round; }
-.tribute-ach-frame .grain { fill: none; stroke: #3d2511; stroke-width: 1.3; stroke-linecap: round; }
-.tribute-ach-frame .rivet { fill: var(--rivet); stroke: var(--rivet-edge); stroke-width: 0.6; }
-.tribute-ach-frame .ribbon { fill: var(--ribbon); stroke: var(--ribbon-edge); stroke-width: 0.7; stroke-linejoin: round; }
-.tribute-ach-frame .stem { fill: none; stroke: var(--leaf-edge); stroke-width: 0.8; }
-.tribute-ach-frame .leaf { fill: var(--leaf); stroke: var(--leaf-edge); stroke-width: 0.5; }
-.tribute-ach-frame .gem { stroke: #fff; stroke-width: 0.5; }
-.tribute-ach-frame .gem-a { fill: #ff5fa8; }
-.tribute-ach-frame .gem-b { fill: #6fe3ff; }
-.tribute-ach-frame .crown { fill: #ffd45e; stroke: #8a5a10; stroke-width: 0.8; stroke-linejoin: round; }
-.tribute-ach-frame .crown-band { fill: #e7b23c; stroke: #8a5a10; stroke-width: 0.6; }
-.tribute-ach-frame .jewel { fill: #ff5fa8; stroke: #fff; stroke-width: 0.5; }
-.tribute-ach-frame .jewel.is-center { fill: #6fe3ff; }
-.tribute-ach-frame .spark { fill: #fffbe0; transform-box: fill-box; transform-origin: center; animation: ranch-ach-twinkle 2.6s ease-in-out infinite; }
-.tribute-ach-frame .spark:nth-of-type(2n) { animation-delay: -1.3s; }
+.tribute-ach-frame.is-manager { --bg: #4b1739; --bg-in: #5e2149; --glyph: #ffd5ea; --accent: #ff4fa3; --accent-dark: #9c1f5f; }
+.tribute-ach-frame.is-wallet { --bg: #3f2a12; --bg-in: #523818; --glyph: #ffe7b8; --accent: #f0a93a; --accent-dark: #8f5a12; }
+.tribute-ach-frame.is-lv-1 { --m: #8d6a48; --m-dark: #4e3519; --m-light: #c9a57c; --mw: 2; }
+.tribute-ach-frame.is-lv-2 { --m: #d98a4c; --m-dark: #7a421c; --m-light: #ffd3a3; --mw: 2.4; }
+.tribute-ach-frame.is-lv-3 { --m: #d3dce6; --m-dark: #66748a; --m-light: #ffffff; --mw: 2.8; }
+.tribute-ach-frame.is-lv-4 { --m: #f2c24e; --m-dark: #946414; --m-light: #fff2b8; --mw: 3; }
+.tribute-ach-frame.is-lv-5 { --m: #ffd760; --m-dark: #85570c; --m-light: #fffbe0; --mw: 3.2; --glow: rgba(255, 212, 94, 0.6); filter: drop-shadow(0 0 5px var(--glow)); }
+/* 系統ごとの素材（冷たい・月明かり・薔薇色の光など） */
+.tribute-ach-frame.is-tribute-mgr-deny.is-lv-4,
+.tribute-ach-frame.is-tribute-mgr-deny.is-lv-5 { --m: #bfe6ff; --m-dark: #4f7c9c; --m-light: #ffffff; --glow: rgba(150, 215, 255, 0.65); }
+.tribute-ach-frame.is-tribute-mgr-ignore.is-lv-4,
+.tribute-ach-frame.is-tribute-mgr-ignore.is-lv-5 { --m: #cfd8ff; --m-dark: #5a6496; --m-light: #ffffff; --glow: rgba(190, 200, 255, 0.6); }
+.tribute-ach-frame.is-tribute-mgr-pat.is-lv-4,
+.tribute-ach-frame.is-tribute-mgr-pat.is-lv-5,
+.tribute-ach-frame.is-tribute-wal-patted.is-lv-4,
+.tribute-ach-frame.is-tribute-wal-patted.is-lv-5,
+.tribute-ach-frame.is-tribute-wal-denied.is-lv-5 { --m: #ff9cc8; --m-dark: #a3346b; --m-light: #ffe0ee; --glow: rgba(255, 140, 190, 0.6); }
+.tribute-ach-frame .plate { fill: var(--bg); stroke: var(--m); stroke-width: var(--mw); stroke-linejoin: round; }
+.tribute-ach-frame .plate-in { fill: none; stroke: var(--m-dark); stroke-width: 1; }
+.tribute-ach-frame .fold { fill: none; stroke: var(--m); stroke-width: 1.2; stroke-linejoin: round; }
+.tribute-ach-frame .grid { fill: none; stroke: rgba(255, 255, 255, 0.12); stroke-width: 0.7; }
+.tribute-ach-frame .shackle { fill: none; stroke: var(--m); stroke-width: 3.6; stroke-linecap: round; }
+.tribute-ach-frame .roll { fill: var(--m); stroke: var(--m-dark); stroke-width: 1; }
 .tribute-ach-frame .glyph { fill: var(--glyph); font: 900 15px var(--tr-font, sans-serif); }
-.tribute-ach-frame.is-secret .wax { fill: #a8123d; stroke: #6d0a26; stroke-width: 0.8; }
-.tribute-ach-frame.is-secret .wax-ring { fill: none; stroke: rgba(255, 143, 179, 0.7); stroke-width: 1; stroke-dasharray: 2 1.6; }
-.tribute-ach-frame.is-secret .glyph { fill: #ffe0ea; }
+.tribute-ach-frame .m { fill: none; stroke: var(--m); stroke-width: 1.4; stroke-linecap: round; }
+.tribute-ach-frame .mf { fill: var(--m); stroke: var(--m-dark); stroke-width: 0.6; }
+.tribute-ach-frame .spark { fill: var(--m-light); transform-box: fill-box; transform-origin: center; animation: ranch-ach-twinkle 2.6s ease-in-out infinite; }
+.tribute-ach-frame .spark:nth-of-type(2n) { animation-delay: -1.3s; }
+.tribute-ach-frame .ribbon { fill: var(--accent); stroke: var(--accent-dark); stroke-width: 0.7; stroke-linejoin: round; }
+.tribute-ach-frame .ribbon-line { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.tribute-ach-frame .bow { fill: var(--accent); stroke: var(--accent-dark); stroke-width: 0.6; }
+.tribute-ach-frame .bow-knot { fill: var(--accent-dark); }
+.tribute-ach-frame .bow.is-pink { fill: #ff7ab8; stroke: #b02a6c; }
+.tribute-ach-frame .bow-knot.is-pink { fill: #b02a6c; }
+.tribute-ach-frame .petal { fill: #ffb6d3; }
+.tribute-ach-frame .petal.is-b { fill: #fff1a8; }
+.tribute-ach-frame .flower-heart { fill: #ffd447; }
+.tribute-ach-frame .leaf { fill: #7fc96a; stroke: #3e7a32; stroke-width: 0.4; }
+.tribute-ach-frame .petal-fall { fill: #ffb6d3; opacity: 0.9; }
+.tribute-ach-frame .gem-a { fill: #ff5fa8; stroke: #fff; stroke-width: 0.5; }
+.tribute-ach-frame .gem-b { fill: #6fe3ff; stroke: #fff; stroke-width: 0.5; }
+.tribute-ach-frame .ray { fill: none; stroke: var(--m-light); stroke-width: 1.4; stroke-linecap: round; opacity: 0.7; }
+.tribute-ach-frame .heart-small { fill: #ff6fae; stroke: #fff; stroke-width: 1.2; }
+/* 牧場の管理（柵） */
+.tribute-ach-frame .post { fill: #9a6a3c; stroke: #4e3017; stroke-width: 0.6; }
+.tribute-ach-frame .post.is-paint { fill: #f6f1e7; stroke: #8b8070; }
+.tribute-ach-frame.is-lv-5 .post.is-paint { fill: var(--m); stroke: var(--m-dark); }
+.tribute-ach-frame .rail { fill: none; stroke: #8a5b30; stroke-width: 1.6; }
+.tribute-ach-frame.is-lv-3 .rail,
+.tribute-ach-frame.is-lv-4 .rail { stroke: #e9e2d4; }
+.tribute-ach-frame.is-lv-5 .rail { stroke: var(--m); }
+.tribute-ach-frame .lantern { fill: #fff3a6; stroke: #c08a1f; stroke-width: 0.6; }
+/* 請求（帳簿）・言葉（手紙）・請求に応える（領収） */
+.tribute-ach-frame .sheet { fill: #efe5cf; stroke: var(--m-dark); stroke-width: 0.8; }
+.tribute-ach-frame .quill { fill: #fdfaf3; stroke: #a99b84; stroke-width: 0.6; }
+.tribute-ach-frame .quill-vein { fill: none; stroke: #a99b84; stroke-width: 0.6; }
+.tribute-ach-frame .wax-seal { fill: #b3123f; stroke: #6d0a26; stroke-width: 0.6; }
+.tribute-ach-frame .wax-seal.is-gold { fill: var(--m); stroke: var(--m-dark); }
+.tribute-ach-frame .wax-seal-in { fill: none; stroke: #ff8fb3; stroke-width: 0.6; }
+.tribute-ach-frame .paid-seal { fill: #fff3ee; stroke: #d0263f; stroke-width: 1.4; }
+.tribute-ach-frame .paid-text { fill: #d0263f; font: 900 7px var(--tr-font, sans-serif); }
+/* 抵抗を折る（鎖） */
+.tribute-ach-frame .chain { fill: none; stroke: var(--m); stroke-width: 1.5; }
+.tribute-ach-frame .crack { fill: none; stroke: var(--m-light); stroke-width: 1.2; stroke-linejoin: round; }
+.tribute-ach-frame .shard { fill: var(--m); stroke: var(--m-dark); stroke-width: 0.4; }
+/* 既読無視（吹き出し） */
+.tribute-ach-frame .bubble-back { fill: var(--bg-in); stroke: var(--m-dark); stroke-width: 1.2; opacity: 0.85; }
+.tribute-ach-frame .tag-text { fill: var(--m-light); font: 800 6.6px var(--tr-font, sans-serif); }
+.tribute-ach-frame .moon { fill: var(--m-light); stroke: var(--m-dark); stroke-width: 0.6; }
+/* 許す（門と鍵） */
+.tribute-ach-frame .door { fill: var(--bg-in); stroke: var(--m); stroke-width: 1.2; stroke-linejoin: round; }
+.tribute-ach-frame .key { fill: none; stroke: var(--m); stroke-width: 1.8; stroke-linecap: round; }
+.tribute-ach-frame .key-bow { fill: none; stroke: var(--m); stroke-width: 1.8; }
+/* 退ける（鉄格子と氷） */
+.tribute-ach-frame .bar { fill: none; stroke: var(--m-dark); stroke-width: 2.4; stroke-linecap: round; }
+.tribute-ach-frame.is-lv-3 .bar,
+.tribute-ach-frame.is-lv-4 .bar,
+.tribute-ach-frame.is-lv-5 .bar { stroke: var(--m); }
+.tribute-ach-frame .ice { fill: none; stroke: #e6f7ff; stroke-width: 1.2; stroke-linecap: round; }
+/* 復唱（声の波と音符） */
+.tribute-ach-frame .wave { fill: none; stroke: var(--m); stroke-width: 1.8; stroke-linecap: round; }
+.tribute-ach-frame .note { fill: var(--m); }
+.tribute-ach-frame .note-stem { fill: none; stroke: var(--m); stroke-width: 1.1; stroke-linecap: round; }
+/* 出稼ぎ（車輪） */
+.tribute-ach-frame .spoke { fill: none; stroke: var(--m); stroke-width: 1.8; }
+.tribute-ach-frame .rim { fill: none; stroke: var(--m); stroke-width: 2.4; }
+.tribute-ach-frame .bolt { fill: var(--m-light); stroke: var(--m-dark); stroke-width: 0.4; }
+.tribute-ach-frame .lantern-body { fill: rgba(255, 220, 120, 0.25); stroke: var(--m); stroke-width: 0.9; }
+/* 盤上（石） */
+.tribute-ach-frame .stone { stroke-width: 0.7; }
+.tribute-ach-frame .stone.is-black { fill: #1b1720; stroke: #c9c0d6; stroke-width: 1; }
+.tribute-ach-frame .stone.is-white { fill: #f6f2ea; stroke: #8b8296; }
+.tribute-ach-frame .stone.is-gold { fill: #ffd760; stroke: #85570c; }
+.tribute-ach-frame .sprout { fill: none; stroke: #4f9a3d; stroke-width: 0.9; }
+/* 首輪 */
+.tribute-ach-frame .collar-band { fill: none; stroke: #7a4421; stroke-width: 5; }
+.tribute-ach-frame.is-lv-4 .collar-band,
+.tribute-ach-frame.is-lv-5 .collar-band { stroke: #8a1f48; }
+.tribute-ach-frame .buckle { fill: none; stroke: var(--m); stroke-width: 1.8; }
+.tribute-ach-frame .buckle-pin { fill: none; stroke: var(--m); stroke-width: 1.2; }
+.tribute-ach-frame .stud { fill: var(--m); stroke: var(--m-dark); stroke-width: 0.4; }
+.tribute-ach-frame .tag { fill: var(--m); stroke: var(--m-dark); stroke-width: 0.8; }
+.tribute-ach-frame .chain-link { fill: none; stroke: var(--m); stroke-width: 1; }
+/* 牧場（景色） */
+.tribute-ach-frame .grass { fill: #6dbb57; stroke: #3e7a32; stroke-width: 0.6; }
+.tribute-ach-frame .fence { fill: none; stroke: #f6f1e7; stroke-width: 1.1; stroke-linecap: round; }
+.tribute-ach-frame .mill { fill: #f4ead8; stroke: #8b7a60; stroke-width: 0.6; }
+.tribute-ach-frame .mill-blade { fill: none; stroke: #f4ead8; stroke-width: 1.6; stroke-linecap: round; }
+.tribute-ach-frame .silo { fill: #e7e2d8; stroke: #8b8070; stroke-width: 0.6; }
+.tribute-ach-frame .silo-roof { fill: #c95b5b; }
+.tribute-ach-frame .tower { fill: #f7eee6; stroke: #a08c7a; stroke-width: 0.6; }
+.tribute-ach-frame .tower-roof { fill: #ff8fb8; stroke: #b0457a; stroke-width: 0.6; }
+.tribute-ach-frame .rainbow-1 { fill: none; stroke: #ff7a8a; stroke-width: 2.4; }
+.tribute-ach-frame .rainbow-2 { fill: none; stroke: #ffd35c; stroke-width: 2.4; }
+.tribute-ach-frame .rainbow-3 { fill: none; stroke: #7fd0ff; stroke-width: 2.4; }
+/* なでる（手）・なでられた（足あと） */
+.tribute-ach-frame .hand { fill: #ffe0cc; stroke: #b07a5a; stroke-width: 0.7; stroke-linejoin: round; }
+.tribute-ach-frame .paw { fill: #ffb6d3; stroke: #b0457a; stroke-width: 0.5; }
+/* 硬貨・贈り物 */
+.tribute-ach-frame .coin { fill: var(--m); stroke: var(--m-dark); stroke-width: 0.8; }
+.tribute-ach-frame .coin-in { fill: none; stroke: var(--m-dark); stroke-width: 0.6; }
+.tribute-ach-frame .gift-small { fill: #ffe7f1; stroke: var(--accent-dark); stroke-width: 0.7; }
+.tribute-ach-frame .confetti { fill: #ff7ab8; }
+.tribute-ach-frame .confetti.is-b { fill: #6fe3ff; }
+/* 抵抗（縄） */
+.tribute-ach-frame .rope { fill: none; stroke: #b98e55; stroke-width: 3.6; stroke-linecap: round; }
+.tribute-ach-frame .rope-twist { fill: none; stroke: #e2c28d; stroke-width: 3.6; stroke-dasharray: 2.2 2.2; }
+.tribute-ach-frame.is-lv-5 .rope { stroke: var(--m-dark); }
+.tribute-ach-frame.is-lv-5 .rope-twist { stroke: var(--m); }
+.tribute-ach-frame .rope-fray { fill: none; stroke: #b98e55; stroke-width: 0.9; stroke-linecap: round; }
+.tribute-ach-frame .rope-band { fill: var(--accent); stroke: var(--accent-dark); stroke-width: 0.5; }
+.tribute-ach-frame .knot { fill: #c79c62; stroke: #6e4a1e; stroke-width: 0.7; }
+.tribute-ach-frame.is-lv-5 .knot { fill: var(--m); stroke: var(--m-dark); }
+.tribute-ach-frame .knot-line { fill: none; stroke: #6e4a1e; stroke-width: 0.6; }
+.tribute-ach-frame .tassel { fill: var(--accent); stroke: var(--accent-dark); stroke-width: 0.6; }
+/* 退けられた（茨と薔薇） */
+.tribute-ach-frame .vine { fill: none; stroke: #3f6b33; stroke-width: 2.2; }
+.tribute-ach-frame .thorn { fill: #3f6b33; }
+.tribute-ach-frame .bud { fill: #e0346a; stroke: #3f6b33; stroke-width: 0.8; }
+.tribute-ach-frame .rose { fill: #e0346a; stroke: #8f1240; stroke-width: 0.5; }
+.tribute-ach-frame .rose-in { fill: #ff6d98; }
+.tribute-ach-frame .rose-curl { fill: none; stroke: #8f1240; stroke-width: 0.5; }
+/* 復唱（巻物と筆） */
+.tribute-ach-frame .ink { fill: none; stroke: rgba(255, 255, 255, 0.45); stroke-width: 1.2; stroke-linecap: round; }
+.tribute-ach-frame .brush { fill: none; stroke: #8a5b30; stroke-width: 2; stroke-linecap: round; }
+.tribute-ach-frame .brush-tip { fill: #1b1720; }
+/* 出稼ぎ（籠と干し草） */
+.tribute-ach-frame .basket { fill: #c9955a; stroke: #6e4a1e; stroke-width: 0.8; stroke-linejoin: round; }
+.tribute-ach-frame.is-lv-5 .basket { fill: var(--m); stroke: var(--m-dark); }
+.tribute-ach-frame .basket-weave { fill: none; stroke: #6e4a1e; stroke-width: 0.6; }
+.tribute-ach-frame .hay { fill: none; stroke: #f3d27a; stroke-width: 1.4; stroke-linecap: round; }
+.tribute-ach-frame .fork { fill: none; stroke: #9a9aa6; stroke-width: 1.4; stroke-linecap: round; }
+.tribute-ach-frame .bale { fill: #f0cf6e; stroke: #a07a25; stroke-width: 0.7; }
+.tribute-ach-frame .bale-line { fill: none; stroke: #a07a25; stroke-width: 0.7; }
+/* なつき（首輪・鈴・リボン・花かんむり・金の王冠） */
+.tribute-ach-frame .fond-collar { fill: none; stroke: #ff7ab8; stroke-width: 3.2; stroke-linecap: round; }
+.tribute-ach-frame .bell { fill: #ffd447; stroke: #a07a25; stroke-width: 0.7; }
+.tribute-ach-frame .bell-clapper { fill: #a07a25; }
+.tribute-ach-frame .royal-crown { fill: #ffd760; stroke: #85570c; stroke-width: 0.8; stroke-linejoin: round; }
+.tribute-ach-frame .royal-band { fill: #e7b23c; stroke: #85570c; stroke-width: 0.6; }
+/* シークレット（封蝋） */
+.tribute-ach-frame.is-secret { --wax: #a8123d; --wax-dark: #6d0a26; --wax-line: rgba(255, 143, 179, 0.7); }
+.tribute-ach-frame.is-tone-indigo { --wax: #3b3fa8; --wax-dark: #1e2166; --wax-line: rgba(170, 176, 255, 0.75); }
+.tribute-ach-frame.is-tone-emerald { --wax: #157a55; --wax-dark: #0a4430; --wax-line: rgba(150, 240, 200, 0.7); }
+.tribute-ach-frame.is-tone-amber { --wax: #c27412; --wax-dark: #7a4508; --wax-line: rgba(255, 220, 150, 0.75); }
+.tribute-ach-frame.is-tone-violet { --wax: #7a2fa8; --wax-dark: #461866; --wax-line: rgba(220, 170, 255, 0.75); }
+.tribute-ach-frame.is-tone-midnight { --wax: #1d2a4f; --wax-dark: #0b1229; --wax-line: rgba(160, 190, 255, 0.7); }
+.tribute-ach-frame.is-tone-rose { --wax: #d14d86; --wax-dark: #82214f; --wax-line: rgba(255, 200, 225, 0.8); }
+.tribute-ach-frame.is-secret .wax { fill: var(--wax); stroke: var(--wax-dark); stroke-width: 0.8; }
+.tribute-ach-frame.is-secret .wax-ring { fill: none; stroke: var(--wax-line); stroke-width: 1; stroke-dasharray: 2 1.6; }
+.tribute-ach-frame.is-secret .glyph { fill: #fff2f6; }
 .tribute-ach-frame.is-locked { filter: grayscale(1); opacity: 0.42; }
 @keyframes ranch-ach-twinkle {
   0%, 100% { opacity: 0.35; transform: scale(0.8); }
@@ -2024,7 +2164,6 @@ button.tribute-card-face[data-frame]:not([data-frame="kurokawa"]):hover { border
 .tribute-ach-gallery-row h4 { display: flex; align-items: baseline; gap: 6px; margin: 0 0 4px; font-size: 0.82rem; }
 .tribute-ach-gallery-row h4 small { color: var(--tr-mist); font-size: 0.68rem; font-weight: 400; }
 .tribute-ach-gallery-levels { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
-.tribute-ach-gallery-levels.is-legend { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .tribute-ach-gallery-cell { display: grid; justify-items: center; gap: 2px; margin: 0; text-align: center; }
 .tribute-ach-gallery-cell svg { width: 56px; height: 56px; }
 .tribute-ach-gallery-cell figcaption { display: grid; color: var(--tr-text); font-size: 0.6rem; line-height: 1.3; }
