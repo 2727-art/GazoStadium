@@ -1,4 +1,4 @@
-import { SHOP_PRODUCTS, getShopProductLabel } from "./shop-products.mjs?v=lazy-loading-v1-ranch-premium-icons-v2";
+import { SHOP_PRODUCTS, getShopProductLabel } from "./shop-products.mjs?v=lazy-loading-v1-ranch-premium-icons-v2-ranch-premium-icons-v3";
 import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, requestSafety, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import {
@@ -119,7 +119,7 @@ import {
   runOnlineOpponentDestroyedTransition,
 } from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v2";
 import { createSoloHiddenWaitGuard } from "./online-solo-idle-guard.mjs?v=solo-match-cost-guard-v1";
-import { RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, premiumAvatarUrl as ranchPremiumAvatarUrl, sealSvg as ranchSealSvg } from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2";
+import { RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, premiumAvatarUrl as ranchPremiumAvatarUrl, sealSvg as ranchSealSvg } from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2-ranch-premium-icons-v3";
 import {
   ONLINE_P2P_RECOVERY_PHASES,
   createOnlineP2pGenerationToken,

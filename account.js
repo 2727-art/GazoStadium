@@ -1,4 +1,4 @@
-import { getShopProductLabel } from "./shop-products.mjs?v=lazy-loading-v1-ranch-premium-icons-v2";
+import { getShopProductLabel } from "./shop-products.mjs?v=lazy-loading-v1-ranch-premium-icons-v2-ranch-premium-icons-v3";
 import { ensureHariaiUser, assertHariaiUser, runHariaiAccountTransition } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import { getPreviousAccount, selectGoogleAccount, useSelectedAccount, runSafeAccountSwitch } from "./account-switch.js?v=account-switch-v1-lazy-loading-v1-mobile-loading-v1";
 import {

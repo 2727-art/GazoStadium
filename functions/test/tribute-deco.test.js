@@ -62,12 +62,13 @@ test("the decoration catalog is the same in the browser, the store prices and th
     ranch_avatar_46: 500,
     ranch_avatar_47: 500,
     ranch_avatar_48: 500,
+    ranch_avatar_49: 500,
   }, "the prices agreed for the ranch shelf");
   // 持っている飾りは Firestore の in（30個まで）で読む。
   assert.ok(rules.DECORATION_PRODUCT_IDS.length <= 30, `${rules.DECORATION_PRODUCT_IDS.length} decoration products`);
   // 有料アイコンは画面・ストア・サーバーで同じ番号と商品ID。
   assert.deepEqual(deco.PREMIUM_AVATARS.map((entry) => entry.id), [...rules.PREMIUM_AVATAR_IDS]);
-  for (const avatar of [0, 35, 36, 42, 43, 48, 49, "40", null]) {
+  for (const avatar of [0, 35, 36, 42, 43, 48, 49, 50, "40", null]) {
     const card = { ...rules.normalizeDecorations({ frame: "bara" }), avatar: rules.normalizeAvatar(avatar) };
     assert.deepEqual(deco.requiredDecorationProducts({ frame: "bara", avatar }), rules.requiredDecorationProducts(card), String(avatar));
     assert.equal(deco.isPremiumAvatar(avatar), rules.premiumAvatarProductId(avatar) !== "", String(avatar));
@@ -175,7 +176,7 @@ test("seals keep one look per shape and ink, escape their words, and frames only
   assert.equal(typeof tributeShare.renderRecruitImage, "function");
   assert.match(tributeShare.sealSvg({ label: "受領", name: "ミオ様", at, shape: "crown", ink: "kin", rough: false }), /class="tribute-seal is-crown"/, "the share module re-exports the shared seal");
   // 画面・ストア・共有画像は同じ URL で読み込み、ブラウザでは1つのモジュールになる。
-  const specifier = './tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2"';
+  const specifier = './tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2-ranch-premium-icons-v3"';
   for (const [name, source] of [["tribute.js", client], ["tribute-share.mjs", share], ["online.js", online], ["shop-products.mjs", read("shop-products.mjs")]]) {
     assert.ok(source.includes(`from "${specifier}`), name);
   }

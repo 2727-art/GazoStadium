@@ -153,7 +153,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1-ranch-photo-v1-ranch-achievements-v1-ranch-premium-icons-v2";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1-ranch-photo-v1-ranch-achievements-v1-ranch-premium-icons-v2-ranch-premium-icons-v3";
 // 写真・受付カード・レシートの描画器は、画像を作る時だけ読み込む。
 let shareRendererRequest;
 function loadShareRenderer() {
@@ -165,7 +165,7 @@ function loadShareRenderer() {
   }) : Promise.resolve();
   return shareRendererRequest ||= Promise.all([
     fontReady,
-    import("./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1-ranch-premium-icons-v2"),
+    import("./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1-ranch-premium-icons-v2-ranch-premium-icons-v3"),
   ]).then(([, module]) => module)
     .catch((error) => { shareRendererRequest = null; throw error; });
 }
@@ -191,7 +191,7 @@ import {
   premiumAvatar,
   requiredDecorationProducts,
   sealSvg,
-} from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2";
+} from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2-ranch-premium-icons-v3";
 
 const appRoot = document.querySelector("#app");
 // 確認シートとレシートは画面の外側に置く。画面要素の入場アニメーションが transform を使うため、

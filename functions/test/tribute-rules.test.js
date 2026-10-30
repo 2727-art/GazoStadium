@@ -123,19 +123,19 @@ test("manager cards need a persona, a disclosure tag and a style but never a gen
   assert.match(rules.normalizeManagerCard({ personaName: "ミオ", disclosure: "female", styles: ["insight"], entryFee: 0 }).error, /中の人の札/);
 });
 
-test("manager cards take one of the 48 prepared icons or fall back to the letter sigil", () => {
+test("manager cards take one of the 49 prepared icons or fall back to the letter sigil", () => {
   const base = { personaName: "ミオ様", disclosure: "nekama", styles: ["insight"], entryFee: 0 };
-  assert.deepEqual([...rules.AVATAR_IDS], Array.from({ length: 49 }, (_, id) => id));
-  assert.equal(rules.AVATAR_MAX, 48);
+  assert.deepEqual([...rules.AVATAR_IDS], Array.from({ length: 50 }, (_, id) => id));
+  assert.equal(rules.AVATAR_MAX, 49);
   assert.equal(rules.normalizeManagerCard(base).card.avatar, 0, "no icon keeps the letter sigil");
-  for (const avatar of [1, 7, 12, 13, 17, 23, 24, 29, 30, 35, 36, 42, 43, 48, "5"]) assert.equal(rules.normalizeManagerCard({ ...base, avatar }).card.avatar, Number(avatar));
-  for (const avatar of [49, -1, 2.5, "https://example.com/a.png", "../avatar-01.webp", null, { id: 3 }]) {
+  for (const avatar of [1, 7, 12, 13, 17, 23, 24, 29, 30, 35, 36, 42, 43, 48, 49, "5"]) assert.equal(rules.normalizeManagerCard({ ...base, avatar }).card.avatar, Number(avatar));
+  for (const avatar of [50, -1, 2.5, "https://example.com/a.png", "../avatar-01.webp", null, { id: 3 }]) {
     assert.equal(rules.normalizeManagerCard({ ...base, avatar }).card.avatar, 0, String(avatar));
     assert.equal(rules.normalizeAvatar(avatar), 0, `stored ${String(avatar)}`);
   }
-  // 36〜48 は有料（ranch_avatar_<番号>）。持っていないと保存できない商品として数える。
-  assert.deepEqual([...rules.PREMIUM_AVATAR_IDS], [36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]);
-  for (const avatar of [0, 1, 35, 49, "x"]) assert.equal(rules.premiumAvatarProductId(avatar), "", String(avatar));
+  // 36〜49 は有料（ranch_avatar_<番号>）。持っていないと保存できない商品として数える。
+  assert.deepEqual([...rules.PREMIUM_AVATAR_IDS], [36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]);
+  for (const avatar of [0, 1, 35, 50, "x"]) assert.equal(rules.premiumAvatarProductId(avatar), "", String(avatar));
   assert.equal(rules.premiumAvatarProductId("38"), "ranch_avatar_38");
   const card = rules.normalizeManagerCard({ ...base, avatar: 41, frame: "kusari" }).card;
   assert.deepEqual(rules.requiredDecorationProducts(card), ["ranch_frame_kusari", "ranch_avatar_41"]);

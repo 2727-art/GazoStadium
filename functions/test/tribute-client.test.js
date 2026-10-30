@@ -170,22 +170,22 @@ test("client filters and contract views mirror the server", async () => {
   assert.equal(core.viewContract(contract, "p", now).collarNo, 3);
   assert.equal(core.viewContract(contract, "p", now).peerReadSeq, 4, "the payer sees how far the manager has read");
   assert.equal(core.viewContract(contract, "m", now).peerReadSeq, 9);
-  for (const avatar of [undefined, 49, -2, "x"]) {
+  for (const avatar of [undefined, 50, -2, "x"]) {
     const odd = { ...contract, managerCard: { ...contract.managerCard, avatar } };
     assert.equal(core.viewContract(odd, "p", now).manager.avatar, serverView(odd, "p", now).manager.avatar, String(avatar));
     assert.equal(core.viewContract(odd, "p", now).manager.avatar, 0, String(avatar));
   }
 });
 
-test("manager icons are 48 prepared WebP files (24 drawings, 11 photos, 13 paid squares) chosen in the card editor, never uploads", async () => {
+test("manager icons are 49 prepared WebP files (24 drawings, 11 photos, 14 paid squares) chosen in the card editor, never uploads", async () => {
   const core = await loadCore();
   assert.deepEqual(core.AVATARS.map((avatar) => avatar.id), rules.AVATAR_IDS.filter((id) => id > 0));
   assert.equal(core.AVATAR_MAX, rules.AVATAR_MAX);
-  assert.equal(core.AVATAR_MAX, 48);
-  // 有料13・イラスト24・写真の地雷系4・写真の夜ギャル7。ブランドやキャラクターが写った3枚は入れていない。
+  assert.equal(core.AVATAR_MAX, 49);
+  // 有料14・イラスト24・写真の地雷系4・写真の夜ギャル7。ブランドやキャラクターが写った3枚は入れていない。
   const groupOf = (id) => core.AVATARS.find((avatar) => avatar.id === id).group;
   assert.deepEqual(core.AVATAR_GROUPS.map((group) => group.id), ["premium", "illust", "jirai", "gal"]);
-  assert.deepEqual(core.AVATAR_GROUPS.map((group) => core.AVATARS.filter((avatar) => avatar.group === group.id).length), [13, 24, 4, 7]);
+  assert.deepEqual(core.AVATAR_GROUPS.map((group) => core.AVATARS.filter((avatar) => avatar.group === group.id).length), [14, 24, 4, 7]);
   assert.deepEqual(core.AVATARS.filter((avatar) => avatar.group === "premium").map((avatar) => avatar.id), [...rules.PREMIUM_AVATAR_IDS]);
   assert.equal(groupOf(12), "illust");
   assert.equal(groupOf(13), "jirai");
@@ -200,7 +200,7 @@ test("manager icons are 48 prepared WebP files (24 drawings, 11 photos, 13 paid 
     assert.equal(file.subarray(8, 12).toString("latin1"), "WEBP", `avatar ${id}`);
     assert.ok(file.length < 20_000, `avatar ${id} stays small`);
   }
-  for (const value of [0, 49, -1, "1; background:url(x)", null]) {
+  for (const value of [0, 50, -1, "1; background:url(x)", null]) {
     assert.equal(core.avatarId(value), 0, String(value));
     assert.equal(core.avatarUrl(value), "", String(value));
   }
@@ -226,7 +226,7 @@ test("manager icons are 48 prepared WebP files (24 drawings, 11 photos, 13 paid 
   assert.match(styles, /\.tribute-avatar-group \{/);
   assert.match(styles, /\.tribute-sigil\.has-avatar img \{/);
   assert.match(styles, /\.tribute-avatar-grid \{ display: grid; grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
-  assert.match(design, /管理人の印は、用意した48種のアイコン/);
+  assert.match(design, /管理人の印は、用意した49種のアイコン/);
   // 有料アイコンは四角に印の色の縁とホログラム。画面とシェア画像の両方で丸く切らない。
   assert.match(styles, /\.tribute-sigil\.has-avatar\.is-premium,\r?\n\.tribute-avatar-choice\.is-premium \{[^}]*border-radius: 6px;[^}]*background: var\(--sigil, #ff4fa3\);/);
   assert.match(read("tribute-share.mjs"), /if \(image && manager\?\.premiumAvatar\) \{\s*paintPremiumAvatar\(/);

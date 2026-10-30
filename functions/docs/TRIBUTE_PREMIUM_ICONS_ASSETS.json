@@ -225,6 +225,23 @@
       "bytes": 8474,
       "sha256": "8d8eae7e713719f1d88c40040bba186982d1ba0ffb4e16432ec948f6b3778978",
       "sheen": 0.35
+    },
+    {
+      "id": 49,
+      "file": "assets/tribute-avatars/avatar-49.webp",
+      "sourceFile": "35.webp",
+      "sourceSha256": "7330f51905efcdbe7073a4a3675d982ee4dbdbc95079e15f956b53edf7892d9a",
+      "crop": {
+        "left": 62,
+        "top": 30,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 82,
+      "bytes": 18944,
+      "sha256": "16cb8eb070f584718b3d322e017f05e5796036afe0746b3c4c2da1f81a1050cb"
     }
   ]
 }

@@ -33,7 +33,7 @@ test("six more paid icons: the same number, product, price and square gold look 
     assert.match(deco.premiumAvatarUrl(id), new RegExp(`/assets/tribute-avatars/avatar-${id}\\.webp$`));
     assert.equal(core.AVATARS.find((avatar) => avatar.id === id)?.group, "premium", `core ${id}`);
   }
-  assert.deepEqual(core.AVATARS.filter((avatar) => avatar.group === "premium").map((avatar) => avatar.label).slice(7),
+  assert.deepEqual(core.AVATARS.filter((avatar) => avatar.group === "premium").map((avatar) => avatar.label).slice(7, 13),
     ["有料・ミルクティー", "有料・瑠璃", "有料・琥珀", "有料・ネオン", "有料・深紅", "有料・ルージュ"]);
   // 年齢や学校を連想させる言葉は、名前と説明に使わない。
   for (const id of NEW_IDS) {
@@ -41,16 +41,17 @@ test("six more paid icons: the same number, product, price and square gold look 
     assert.doesNotMatch(`${entry.name}${entry.description}`, /制服|学校|学生|生徒|女子高|JK|少女|子供|ロリ|セーラー|の子/, `product ${id}`);
   }
   // 持っている飾りは Firestore の in（30個まで）で読む。
-  assert.equal(rules.DECORATION_PRODUCT_IDS.length, 27);
+  assert.ok(rules.DECORATION_PRODUCT_IDS.length <= 30);
   // Realtime Database の持ち物の検証にも入る。
-  assert.match(read("database.rules.json"), /ranch_avatar_\(36\|37\|38\|39\|40\|41\|42\|43\|44\|45\|46\|47\|48\)/);
+  const avatarRule = read("database.rules.json").match(/ranch_avatar_\(([0-9|]+)\)/)[1].split("|").map(Number);
+  for (const id of NEW_IDS) assert.ok(avatarRule.includes(id), `database rule ${id}`);
 });
 
 test("the icons are processed from the user's images without a redraw, recorded with hashes, and stay small", () => {
   const record = JSON.parse(read("functions/docs/TRIBUTE_PREMIUM_ICONS_ASSETS.json"));
-  assert.deepEqual(record.icons.map((icon) => icon.id), [36, 37, 38, 39, 40, 41, 42, ...NEW_IDS]);
+  assert.deepEqual(record.icons.map((icon) => icon.id).slice(0, 13), [36, 37, 38, 39, 40, 41, 42, ...NEW_IDS]);
   assert.match(record.method, /No sparkles and no generative redraw/);
-  assert.equal(record.icons.filter((icon) => /^[0-9a-f]{64}$/.test(icon.sourceSha256)).length, 13, "all 13 remade from their originals");
+  assert.ok(record.icons.slice(0, 13).every((icon) => /^[0-9a-f]{64}$/.test(icon.sourceSha256)), "36-48 remade from their originals");
   for (const icon of record.icons) {
     const file = fs.readFileSync(path.join(root, icon.file));
     assert.equal(crypto.createHash("sha256").update(file).digest("hex"), icon.sha256, icon.file);
@@ -107,18 +108,19 @@ test("paid icons are square with the owner's sigil border and a thin edge hologr
 test("cache keys: the ranch, the store and the account page load the new product list as one module", () => {
   const html = read("index.html");
   for (const name of ["tribute.js", "online.js", "account.js"]) {
-    assert.ok(new RegExp(`"module": "${name.replace(".", "\\.")}\\?v=[^"]*${MARKER}"`).test(html), name);
+    assert.ok(new RegExp(`"module": "${name.replace(".", "\\.")}\\?v=[^"]*${MARKER}[^"]*"`).test(html), name);
   }
-  assert.ok(new RegExp(`data-src="tribute\\.css\\?v=[^"]*${MARKER}"`).test(html), "tribute.css");
+  assert.ok(new RegExp(`data-src="tribute\\.css\\?v=[^"]*${MARKER}[^"]*"`).test(html), "tribute.css");
   const specifier = (source, name) => source.match(new RegExp(`(?:from |import\\()"\\./${name.replace(".", "\\.")}\\?v=([^"]+)"`))?.[1] || "";
   const client = read("tribute.js");
   const online = read("online.js");
-  for (const name of ["tribute-core.mjs", "tribute-deco.mjs", "tribute-share.mjs"]) assert.ok(specifier(client, name).endsWith(MARKER), name);
-  assert.ok(specifier(online, "shop-products.mjs").endsWith(MARKER));
-  assert.ok(specifier(read("account.js"), "shop-products.mjs").endsWith(MARKER));
+  // 次の公開で印が後ろに足されても、この公開の印は残る。
+  for (const name of ["tribute-core.mjs", "tribute-deco.mjs", "tribute-share.mjs"]) assert.ok(specifier(client, name).includes(MARKER), name);
+  assert.ok(specifier(online, "shop-products.mjs").includes(MARKER));
+  assert.ok(specifier(read("account.js"), "shop-products.mjs").includes(MARKER));
   const decoKeys = new Set([client, online, read("tribute-share.mjs"), read("shop-products.mjs")].map((source) => specifier(source, "tribute-deco.mjs")));
   assert.equal(decoKeys.size, 1, "one tribute-deco.mjs module in the browser");
   const design = read("TRIBUTE_DESIGN.md");
-  assert.match(design, /有料アイコン（`avatar` 36〜48/);
+  assert.match(design, /有料アイコン（`avatar` 36〜4[89]/);
   assert.ok(fs.existsSync(path.join(root, "functions/scripts/verify-tribute-premium-icons-2-release.cjs")));
 });
