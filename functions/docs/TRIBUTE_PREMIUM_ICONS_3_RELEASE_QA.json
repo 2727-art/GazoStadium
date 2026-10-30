@@ -1,0 +1,97 @@
+{
+  "checkedAt": "2026-10-30T07:00:58.147Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "8cdb8b8",
+  "implementationCommits": [
+    "6cb6756 (paid icon 49)",
+    "8cdb8b8 (paid icons 50 and 51, remade by the user without uniforms; square sources of any size)"
+  ],
+  "baseCommit": "33ccb76",
+  "decisions": {
+    "requests": [
+      "続いて添付4種類の有料アイコン化をお願いします",
+      "添付2枚を有料アイコン化お願いします"
+    ],
+    "excluded": "three of the first four show school uniforms (the earlier sailor-collar image cropped, a striped blazer with a tie in a classroom, a ribbon-tie uniform jacket); the user's note that niji7 was set to an adult of 20 did not change it, because the judgement is about how the icon reads; two of them were remade in casual clothes and became 50 and 51",
+    "decidedBy": "user requests and Claude's content line, 2026-10-30 JST"
+  },
+  "scope": {
+    "functions": ["economyAction", "tributeAction"],
+    "realtimeDatabaseRules": "ranch_avatar_(36|...|49|50|51)",
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": ["index.html", "tribute.js", "online.js", "account.js", "tribute-core.mjs", "tribute-deco.mjs", "tribute-share.mjs", "shop-products.mjs"],
+    "icons": {
+      "new": { "49": "キャラメル", "50": "漆黒", "51": "バニラ" },
+      "price": 500,
+      "sourceSize": { "49": [1024, 1024], "50": [1254, 1254], "51": [1254, 1254] }
+    },
+    "decorationProducts": { "count": 30, "firestoreInLimit": 30, "next": "split the decorationsAction in query before adding more" },
+    "cacheKey": "ranch-premium-icons-v3",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2410,
+    "passed": 2376,
+    "failed": 0,
+    "skipped": 34,
+    "newFiles": ["functions/test/tribute-premium-icons-3.test.js"]
+  },
+  "preview": {
+    "checked": ["card editor: 16 paid icons, 49-51 load, try-on and buy prompt for 50"],
+    "consoleErrors": 0,
+    "horizontalOverflow": false
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": ["index.html", "tribute.js", "online.js", "account.js", "tribute-core.mjs", "tribute-share.mjs", "tribute-deco.mjs", "shop-products.mjs", "avatar-49..51 (new, 404)"],
+    "unchangedMatched": ["avatar-01..48", "tribute.css", "app.js", "achievements.js", "549 ranch images"],
+    "functionsList": { "economyAction": "50ff973176ef85d3bf8c3106450a0cbb4b9b0651", "tributeAction": "50ff973176ef85d3bf8c3106450a0cbb4b9b0651" }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 8cdb8b8 and origin/main contained)",
+    "order": ["functions:economyAction,functions:tributeAction", "database", "git push origin HEAD:main (33ccb76..8cdb8b8)", "hosting"],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": {
+        "economyAction": { "before": "50ff973176ef85d3bf8c3106450a0cbb4b9b0651", "after": "857acea2d1974309800a18d20e63ac87e430f007" },
+        "tributeAction": { "before": "50ff973176ef85d3bf8c3106450a0cbb4b9b0651", "after": "857acea2d1974309800a18d20e63ac87e430f007" }
+      },
+      "unchanged": "31 functions on 43db9e7, 4 secret-bound functions on their previous hashes"
+    },
+    "realtimeDatabaseRules": { "readBack": "database:get /.settings/rules", "matchesCommit": true },
+    "workersBuild": { "commit": "8cdb8b8", "conclusion": "success", "completedAt": "2026-10-30T06:55:43Z" },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-premium-icons-3-release.cjs",
+      "checkedAt": "2026-10-30T07:00:58.147Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "avatarsPerRoute": 51,
+      "ranchImagesPerRoute": 549,
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-premium-icons-v3 on tribute.js, online.js and account.js",
+      "decoChecks": { "premiumAvatars": 16, "new": ["ranch_avatar_49:アイコン・キャラメル", "ranch_avatar_50:アイコン・漆黒", "ranch_avatar_51:アイコン・バニラ"] },
+      "coreChecks": { "AVATAR_MAX": 51 },
+      "icons": "49, 50, 51: 200 image/webp",
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "real AnjuPay purchases and saving a card with the new icons can only be checked by a signed-in manager; covered by tests and previews",
+    "decoration products are at the Firestore in limit of 30; split the decorationsAction query before adding more"
+  ]
+}
