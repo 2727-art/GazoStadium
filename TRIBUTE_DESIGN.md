@@ -977,7 +977,7 @@ Status: 第1段（牧場経営）を実装した（キャッシュキー `ranch-
 
 ## 17. 牧場の実績（遊び方の型とシークレット、2026年10月）
 
-Status: 実装した（キャッシュキー `ranch-achievements-v1`、公開はまだ）。名前・枠・段階・数え方は、ユーザーが決めた（2026-10-30）。
+Status: 実装した（キャッシュキー `ranch-achievements-v1`）。2026-10-30 に `41a4a7b` で本番に公開した（Functions はすべて。記録は `functions/docs/TRIBUTE_RANCH_ACHIEVEMENTS_RELEASE.md`）。名前・枠・段階・数え方は、ユーザーが決めた（2026-10-30）。
 
 ### 17.1 ねらい
 

@@ -1,0 +1,168 @@
+{
+  "checkedAt": "2026-10-30T02:49:53.961Z",
+  "status": "verified on Firebase routes; Workers routes wait for the rebuild",
+  "project": "gazostadium",
+  "sourceCommit": "41a4a7b",
+  "implementationCommits": [
+    "07d26bf (level frames for the ranch achievements)",
+    "54f7ec9 (a frame per achievement family)",
+    "1f899e8 (counting and the achievement collection)",
+    "41a4a7b (release check reads the lazily imported tribute-share)"
+  ],
+  "baseCommit": "6a8667e",
+  "decisions": {
+    "names": "実績名は提案通りでOKです",
+    "frames": "one frame per family, richer with each level, not crowns (実績枠は全て共通ではなく、実績系統に応じた枠が理想です。「豪華＝冠」ではありません。)",
+    "counting": "数える仕組み・実績一覧への登録に進んでください",
+    "lines": "no amounts, no streaks, daily or timed achievements, not public automatically, once per pair per Japan day, history only where the records prove it",
+    "decidedBy": "user, 2026-10-30 JST"
+  },
+  "catalog": {
+    "managerFamilies": 11,
+    "walletFamilies": 11,
+    "secrets": 7,
+    "tiers": "1, 3, 10, 30, 100; ranch level 5/10/20/30, fondness 7/30/100/365, pats 1/10/30/100/365",
+    "ranchDefinitions": 135,
+    "categories": [
+      "お貢ぎ牧場・管理人の型",
+      "お貢ぎ牧場・財布の型",
+      "お貢ぎ牧場・シークレット"
+    ],
+    "autoPublic": false
+  },
+  "scope": {
+    "functions": "all 37 (the shared achievement catalog; older functions drop unknown achievement ids when they rewrite a profile)",
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "hosting": true,
+    "changedPublicFiles": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "achievements.js"
+    ],
+    "ranchImages": {
+      "total": 549,
+      "changed": 0
+    },
+    "cacheKey": "ranch-achievements-v1",
+    "historyVersion": 2,
+    "historyBackfill": [
+      "mgrCollar",
+      "mgrRanchLevel",
+      "mgrPatDays",
+      "mgrOthello",
+      "walPatted",
+      "walServedTop"
+    ],
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2403,
+    "passed": 2369,
+    "failed": 0,
+    "skipped": 34,
+    "ranAs": "the Functions predeploy check",
+    "newFiles": [
+      "functions/test/tribute-ranch-achievement-frames.test.js",
+      "functions/test/tribute-ranch-achievements.test.js"
+    ]
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": [
+      "index.html",
+      "tribute.js",
+      "tribute.css",
+      "tribute-core.mjs",
+      "achievements.js"
+    ],
+    "unchangedFilesMatched": [
+      "account.js",
+      "app.js",
+      "online.js",
+      "tribute-share.mjs",
+      "tribute-deco.mjs"
+    ],
+    "unchangedImagesMatched": 549,
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "localExports": 37,
+      "deletions": 0,
+      "tributeActionHash": "3cb1108997da4b0d5d800fdab79fb74c12b9117f"
+    }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 41a4a7b and origin/main contained)",
+    "order": [
+      "functions (all)",
+      "git push origin HEAD:main (6a8667e..41a4a7b)",
+      "hosting"
+    ],
+    "functionsDeploy": {
+      "predeployCheck": "2403 tests, 2369 passed, 0 failed, 34 skipped",
+      "updated": 37,
+      "allSuccessful": true
+    },
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "tributeAction": {
+        "before": "3cb1108997da4b0d5d800fdab79fb74c12b9117f",
+        "after": "43db9e7942603e269d1be8163ec564c00961c80e"
+      },
+      "sharedHash": {
+        "43db9e7942603e269d1be8163ec564c00961c80e": 33
+      },
+      "secretBoundHashes": {
+        "getP2pIceServers": "088939bcb8130765580d98c0163cd9f5a64af123",
+        "redeemAchievementCode": "662584b5ce48f5fa0b8c0e0933eba6eb269f4a45",
+        "reportP2pConnectivity": "375dab03b8f734be71b1b18d94aede6926595b73",
+        "reportMarketP2pConnectivity": "375dab03b8f734be71b1b18d94aede6926595b73"
+      }
+    },
+    "workersBuild": {
+      "commit": "41a4a7b",
+      "conclusion": "failure",
+      "completedAt": "2026-10-30T02:37:30Z",
+      "note": "failed as soon as it started, like the transient failure of 04a0937 (cleared on the next push); logs are in the Cloudflare dashboard, which I cannot sign in to; the release record push starts a new build"
+    },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-ranch-achievements-release.cjs",
+      "checkedAt": "2026-10-30T02:49:53.961Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "previous release (6a8667e)",
+        "https://hariaistadium.com": "previous release (6a8667e)"
+      },
+      "imagesPerRoute": 549,
+      "imagesByteIdentical": true,
+      "previousMarkers": true,
+      "privateFiles404": true,
+      "olderRoutesCompatible": "the previous client filters achievement ids through its own catalog, so new ranch unlocks are skipped without an ack and announced later by the new client"
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-achievements-v1 for tribute.js, tribute.css and achievements.js on both the tab's index.html and a freshly fetched one, and on the tribute-core.mjs import",
+      "clientChecks": "ranchAchievementFrame, the 管理人の型 and 財布の型 blocks, the ？？？ seal and the unlock notice after any ranch action in tribute.js; frame and secret styles in tribute.css; the three categories in achievements.js",
+      "coreChecks": {
+        "RANCH_ACHIEVEMENT_FAMILIES": 22,
+        "RANCH_ACHIEVEMENT_SECRETS": 7,
+        "ranchAchievementTier(1..5, 5)": [1, 2, 3, 4, 5],
+        "ranchAchievementTier(1..4, 4)": [2, 3, 4, 5]
+      },
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "workers.dev and hariaistadium.com rebuild on the release record push; recheck all four routes afterwards",
+    "counting and unlocks on real contracts can only be checked by signed-in managers and wallets; covered by tests and previews",
+    "only six counts are rebuilt from earlier records; requests, resists, ignores, pleas, recitations, work orders and words count from the release"
+  ]
+}
