@@ -153,7 +153,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1-ranch-photo-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1-ranch-photo-v1-ranch-achievements-v1";
 // 写真・受付カード・レシートの描画器は、画像を作る時だけ読み込む。
 let shareRendererRequest;
 function loadShareRenderer() {
@@ -1663,29 +1663,52 @@ function renderAchievementFrameGallery() {
   </section>`;
 }
 
+// 牧場の実績（設計書17）。管理人の型・財布の型（今の2つの記録を含む）とシークレットを、系統ごとの枠で並べる。
+// 数は額ではなく回数や日数。見つけていないシークレットは、条件を隠して「？？？」の封蝋にする。
 function renderAchievementPanel() {
   const catalog = window.HariaiAchievements?.catalog;
   if (!state.achievements || !Array.isArray(catalog)) return "";
   const unlocked = new Set(state.achievements.unlocked);
-  const rows = ACHIEVEMENT_SIDES.map((entry) => {
+  const stats = state.achievements.stats || {};
+  const families = [
+    ...ACHIEVEMENT_SIDES.map((entry) => ({ family: entry.family, side: entry.family === "tribute_manager" ? "manager" : "wallet", stat: entry.statKey, unit: `${entry.unit}（回）` })),
+    ...RANCH_ACHIEVEMENT_FAMILIES,
+  ];
+  const card = (entry) => {
     const levels = catalog.filter((definition) => definition.family === entry.family).sort((a, b) => a.level - b.level);
     if (!levels.length) return "";
     const current = levels.filter((definition) => unlocked.has(definition.id)).at(-1) || null;
-    const counted = Math.max(0, Math.floor(Number(state.achievements.stats?.[entry.statKey]) || 0));
+    const counted = Math.max(0, Math.floor(Number(stats[entry.stat]) || 0));
     const maximum = levels.at(-1).level;
     return `<div class="tribute-achievement ${current ? "is-unlocked" : "is-locked"}${current?.level === maximum ? " is-final" : ""}">
-      <span class="tribute-achievement-icon is-ranch-frame" aria-hidden="true">${ranchAchievementFrame({ family: entry.family, icon: levels[0].icon, tier: current ? ranchAchievementTier(current.level, maximum) : 1, side: entry.family === "tribute_manager" ? "manager" : "wallet", locked: !current })}</span>
+      <span class="tribute-achievement-icon is-ranch-frame" aria-hidden="true">${ranchAchievementFrame({ family: entry.family, icon: levels[0].icon, tier: current ? ranchAchievementTier(current.level, maximum) : 1, side: entry.side, locked: !current })}</span>
       <span class="tribute-achievement-copy">
-        <small>${escapeHtml(entry.side)}・${escapeHtml(levels[0].familyLabel)}</small>
+        <small>${escapeHtml(levels[0].familyLabel)}</small>
         <strong>${escapeHtml(current ? current.name : "未解除")}</strong>
-        <em>${current ? `Lv.${current.level} / ${maximum}` : `最大Lv.${maximum}`} ・ ${escapeHtml(entry.unit)} ${counted.toLocaleString("ja-JP")}回</em>
+        <em>${current ? `Lv.${current.level} / ${maximum}` : `最大Lv.${maximum}`} ・ ${escapeHtml(entry.unit)} ${counted.toLocaleString("ja-JP")}</em>
       </span>
     </div>`;
-  }).join("");
+  };
+  const block = (side, title, open) => {
+    const list = families.filter((entry) => entry.side === side);
+    const secrets = RANCH_ACHIEVEMENT_SECRETS.filter((entry) => entry.side === side);
+    const found = secrets.filter((entry) => unlocked.has(entry.id));
+    const started = list.filter((entry) => catalog.some((definition) => definition.family === entry.family && unlocked.has(definition.id))).length;
+    const seals = secrets.map((entry) => (unlocked.has(entry.id)
+      ? `<span class="tribute-achievement-secret" title="${escapeHtml(`${entry.name}：${entry.condition}`)}">${ranchAchievementFrame({ family: entry.id, icon: entry.icon, side, secret: true })}<b>${escapeHtml(entry.name)}</b></span>`
+      : `<span class="tribute-achievement-secret is-locked">${ranchAchievementFrame({ family: entry.id, icon: entry.icon, side, secret: true, locked: true })}<b>？？？</b></span>`)).join("");
+    return `<details class="tribute-achievement-side"${open ? " open" : ""}>
+      <summary><b>${title}</b><small>${started} / ${list.length} 系統 ・ シークレット ${found.length} / ${secrets.length}</small></summary>
+      <div class="tribute-achievement-grid">${list.map(card).join("")}</div>
+      <div class="tribute-achievement-secrets" aria-label="${title}のシークレット">${seals}</div>
+    </details>`;
+  };
+  const walletSide = state.contracts.some((contract) => contract.role === "payer") || Number(stats.walletPairDays) > 0;
   return `<section class="tribute-panel tribute-achievements">
     <h2>牧場の実績 <small>同じ相手とは日本時間の1日1回だけ数えます</small></h2>
-    <div class="tribute-achievement-grid">${rows}</div>
-    <p class="tribute-note">金額や順位ではなく、管理が続いた記録です。実績は自動では公開されず、展示するかは実績コレクションで選べます。</p>
+    ${block("manager", "管理人の型", Boolean(state.profile?.card))}
+    ${block("wallet", "財布の型", walletSide)}
+    <p class="tribute-note">金額や順位ではなく、管理が続いた記録と遊び方の型です。実績は自動では公開されず、展示するかは実績コレクションで選べます。</p>
     <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="open-achievements">実績コレクションを見る</button></div>
   </section>`;
 }
@@ -4784,6 +4807,8 @@ function scheduleMarkRead() {
       const result = await progress.promise;
       succeeded = result?.ok === true;
       if (!isCurrent(generation) || state.uid !== uid || (!previewScreen && auth.currentUser?.uid !== uid)) return;
+      // 既読無視が始まると、牧場の実績（既読無視）が解除されることがある。
+      notifyAchievementUnlocks(result?.newlyUnlocked);
       // 旧サーバーの { ok: true } は購読結果を待つ。送信成功だけで既読扱いにはしない。
       if (succeeded && result.contractId === contractId && Number.isSafeInteger(result.readSeq) && result.readSeq >= 0) {
         progress.acknowledgedSeq = Math.max(progress.acknowledgedSeq, Math.min(seq, result.readSeq));
@@ -4819,6 +4844,11 @@ async function mutate(action, payload, { success = "", after = null, form = null
     if (stateRequest?.generation === generation && stateRequest?.targetState === targetState) stateRequest = null;
     targetState.readRequests.clear();
     if (success) showToast(success);
+    // 牧場の実績（設計書17）は、どの操作でも解除されうる。ここで1回だけ知らせる（あとで知らせる画面には空で渡る）。
+    if (Array.isArray(result?.newlyUnlocked) && result.newlyUnlocked.length) {
+      notifyAchievementUnlocks(result.newlyUnlocked);
+      result.newlyUnlocked = [];
+    }
     if (after) after(result);
     return result;
   } catch (error) {
@@ -6763,11 +6793,16 @@ function previewCall(action, payload) {
           // first-steps: 管理人カードも契約もない、はじめての財布（はじめての方へを確かめる）。
           ...(previewScreen.startsWith("first-steps") ? { card: null, accepting: false, counts: { payerOpen: 0, managerActive: 0, managerPending: 0 }, receiptCount: 0, boardUntil: 0 } : {}),
         },
-        achievements: {
-          stats: { managerPairDays: 12, walletPairDays: 4 },
-          unlocked: ["tribute_manager_1", "tribute_manager_3", "tribute_manager_10", "tribute_wallet_1", "tribute_wallet_3"],
-          newlyUnlocked: [],
-        },
+        // 見本の実績: 今の2つの記録と、型の実績（いろいろな段階）・シークレットを少し。
+        achievements: (() => {
+          const stats = { managerPairDays: 12, walletPairDays: 4, mgrRequestPaid: 34, mgrBreak: 4, mgrIgnore: 1, mgrGrant: 12, mgrDeny: 0, mgrRecite: 3, mgrCollar: 6, mgrRanchLevel: 30, mgrPatDays: 11, walSilentDays: 2, walWords: 120, walServedTop: 45, walPatted: 1, secretNamed: 1, secretMoo: 1 };
+          const byStats = RANCH_ACHIEVEMENT_FAMILIES.flatMap((entry) => entry.thresholds.filter((target) => Number(stats[entry.stat]) >= target).map((target) => `${entry.family}_${target}`));
+          return {
+            stats,
+            unlocked: ["tribute_manager_1", "tribute_manager_3", "tribute_manager_10", "tribute_wallet_1", "tribute_wallet_3", ...byStats, "tribute_secret_named", "tribute_secret_moo"],
+            newlyUnlocked: [],
+          };
+        })(),
         // newcomer: まだ財布として契約したことがない人（財布の始め方と見学を確かめる）。
         // first-steps-expired: 前の申し込みが48時間で失効した、はじめての財布。
         contracts: previewScreen === "first-steps" ? []

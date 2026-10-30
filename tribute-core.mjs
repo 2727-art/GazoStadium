@@ -59,6 +59,31 @@ export const RANCH_MOO = Object.freeze({ length: 20, lines: 3 });
 export const RANCH_NAME = Object.freeze({ length: 10 });
 
 // ───────────── 牧場の実績（設計書17） ─────────────
+// 系統ごとの数の名前（サーバーの tributeAchievementStats と同じ。functions/achievements.js の TRIBUTE_STYLE_FAMILIES）。
+const RANCH_ACHIEVEMENT_STAT_KEYS = Object.freeze({
+  tribute_mgr_request: "mgrRequestPaid",
+  tribute_mgr_break: "mgrBreak",
+  tribute_mgr_ignore: "mgrIgnore",
+  tribute_mgr_grant: "mgrGrant",
+  tribute_mgr_deny: "mgrDeny",
+  tribute_mgr_recite: "mgrRecite",
+  tribute_mgr_work: "mgrWork",
+  tribute_mgr_othello: "mgrOthello",
+  tribute_mgr_collar: "mgrCollar",
+  tribute_mgr_ranch: "mgrRanchLevel",
+  tribute_mgr_pat: "mgrPatDays",
+  tribute_wal_silent: "walSilentDays",
+  tribute_wal_request: "walRequestPaid",
+  tribute_wal_resist: "walResist",
+  tribute_wal_granted: "walGranted",
+  tribute_wal_denied: "walDenied",
+  tribute_wal_words: "walWords",
+  tribute_wal_recite: "walRecite",
+  tribute_wal_work: "walWork",
+  tribute_wal_othello: "walOthelloLost",
+  tribute_wal_fondness: "walServedTop",
+  tribute_wal_patted: "walPatted",
+});
 // 遊び方の型の実績と、シークレット。名前はユーザーが決めた（2026-10-30）。額では解除しない。連続日数は作らない。
 // side: manager（貢がせ側）／wallet（貢ぐ側）。thresholds は回数（同じ相手とは日本時間の1日1回まで数える）。
 export const RANCH_ACHIEVEMENT_FAMILIES = Object.freeze([
@@ -85,16 +110,16 @@ export const RANCH_ACHIEVEMENT_FAMILIES = Object.freeze([
   ["tribute_wal_fondness", "wallet", "鈴", "なつき", "仕えた日", [7, 30, 100, 365], ["鈴の鳴る財布", "リボンの財布", "花かんむりの財布", "金の王冠の財布"]],
   ["tribute_wal_patted", "wallet", "掌", "なでられた", "なでてもらった日", [1, 10, 30, 100, 365], ["なでられた", "なでられ慣れた", "なでられ待ちの財布", "百回なでられた", "一年なでられた財布"]],
 ].map(([family, side, icon, label, unit, thresholds, names]) => Object.freeze({
-  family, side, icon, label, unit, thresholds: Object.freeze(thresholds), names: Object.freeze(names),
+  family, side, icon, label, unit, stat: RANCH_ACHIEVEMENT_STAT_KEYS[family], thresholds: Object.freeze(thresholds), names: Object.freeze(names),
 })));
 
 // シークレット（条件は隠し、1回で解除）。
 export const RANCH_ACHIEVEMENT_SECRETS = Object.freeze([
   ["tribute_secret_resist3", "wallet", "三", "三回渋って、払う", "3回抵抗した請求を払った"],
   ["tribute_secret_both", "wallet", "両", "Payも言葉も", "同じ日に、献上と言葉の献上をした"],
-  ["tribute_secret_second_plea", "wallet", "再", "二度目の願い出", "退けられたあと、同じお預けで許された"],
-  ["tribute_secret_moo", "wallet", "鳴", "鳴いた財布", "鳴き声を書いた"],
-  ["tribute_secret_mood", "manager", "気", "気分次第", "同じ日に、許すと退けるを両方した"],
+  ["tribute_secret_second_plea", "wallet", "再", "二度目の願い出", "退けられたあと、同じお預けの間に許された"],
+  ["tribute_secret_moo", "wallet", "鳴", "鳴いた財布", "牧場の鳴き声を書いた"],
+  ["tribute_secret_mood", "manager", "気", "気分次第", "同じ日に、願い出を許すことと退けることを両方した"],
   ["tribute_secret_ignored_paid", "manager", "黙", "無視しても払われる", "既読無視の間に、請求が払われた"],
   ["tribute_secret_named", "manager", "名", "名付け親", "牧場に名前を付けた"],
 ].map(([id, side, icon, name, condition]) => Object.freeze({ id, side, icon, name, condition })));

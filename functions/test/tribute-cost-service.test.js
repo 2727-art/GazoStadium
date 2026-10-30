@@ -144,7 +144,8 @@ test("retried mark_read preserves an intervening other-role receipt and newer ev
 
 test("initialized ranch achievement state reads stats once, within the unlock transaction", async () => {
   const h = tributeHarness();
-  h.documents.set("tributeAchievementStats/payer", { historyBackfilled: true, walletPairDays: 3, managerPairDays: 0 });
+  // 数え直しが今の版（牧場の実績の版2）まで終わっている記録。
+  h.documents.set("tributeAchievementStats/payer", { historyBackfilled: true, historyVersion: 2, walletPairDays: 3, managerPairDays: 0 });
   const result = await h.act("payer", "state");
   assert.equal(result.achievements.stats.walletPairDays, 3);
   assert.ok(result.achievements.unlocked.includes("tribute_wallet_3"));
@@ -184,6 +185,8 @@ function commonHarness({ ready = true, initialize = true } = {}) {
     anjuPayFleaAchievementStatsStore: { ensure: async () => { calls.flea++; }, statsRef: (uid) => h.reference(`fleaStats/${uid}`) },
     tributeService: {
       achievementStatsRef: (uid) => h.reference(`tributeStats/${uid}`),
+      // この試しの数え直しは historyBackfilled だけを立てるので、準備ができたかも同じ印で見る。
+      achievementStatsReady: (snapshot) => snapshot.exists && snapshot.get("historyBackfilled") === true,
       async ensureAchievementStats(uid) {
         calls.backfill++;
         await h.reference(`tributeStats/${uid}`).get();

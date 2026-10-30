@@ -1273,7 +1273,9 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
   });
   assert.match(legacyHtml, /二週間の棚/);
   assert.match(legacyHtml, /精進の芽/);
-  assert.equal((collectionHtml.match(/SECRET RECORD/g) || []).length, 2);
+  // 対戦の2つと、お貢ぎ牧場の7つ（設計書17）。どれも解除するまで名前と条件を隠す。
+  assert.equal((collectionHtml.match(/SECRET RECORD/g) || []).length, 9);
+  assert.doesNotMatch(collectionHtml, /三回渋って、払う|Payも言葉も|二度目の願い出|鳴いた財布|気分次第|無視しても払われる|名付け親/);
   assert.match(collectionHtml, /achievement-level-1 is-secret/);
   assert.match(collectionHtml, /条件は解除まで非公開です/);
   assert.doesNotMatch(collectionHtml, /百敗の主演|敗北劇の名優|100連敗|200連敗/);
@@ -1352,10 +1354,14 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
 });
 
 test("お貢ぎ牧場 achievements count only the ranch stats, stay opt-in, and report their own counters", () => {
-  assert.deepEqual(normalizeTributeStats({ managerPairDays: "12", walletPairDays: -3, extra: 9 }), { managerPairDays: 12, walletPairDays: 0 });
+  const normalized = normalizeTributeStats({ managerPairDays: "12", walletPairDays: -3, extra: 9 });
+  assert.deepEqual({ managerPairDays: normalized.managerPairDays, walletPairDays: normalized.walletPairDays }, { managerPairDays: 12, walletPairDays: 0 });
+  assert.equal(normalized.extra, undefined, "only the ranch's own counters are kept");
   const definitions = ACHIEVEMENT_DEFINITIONS.filter((definition) => definition.scope === "tribute");
-  assert.equal(definitions.length, 20);
-  assert.equal(definitions.every((definition) => definition.autoPublic === false && definition.category === "tribute_ranch"), true);
+  // 今の2つの記録（各10段階）と、遊び方の型（設計書17: 20系統が5段階・2系統が4段階）とシークレット7つ。
+  assert.equal(definitions.length, 20 + 108 + 7);
+  assert.equal(definitions.every((definition) => definition.autoPublic === false), true);
+  assert.deepEqual([...new Set(definitions.map((definition) => definition.category))].sort(), ["tribute_manager_style", "tribute_ranch", "tribute_secret", "tribute_wallet_style"]);
   assert.deepEqual(
     eligibleAchievementIds({ tributeStats: { managerPairDays: 30, walletPairDays: 14 }, scope: "tribute" }).sort(),
     ["tribute_manager_1", "tribute_manager_3", "tribute_manager_10", "tribute_manager_30", "tribute_wallet_1", "tribute_wallet_3", "tribute_wallet_7", "tribute_wallet_14"].sort(),
@@ -1379,7 +1385,7 @@ test("お貢ぎ牧場 achievements count only the ranch stats, stay opt-in, and 
   const upgraded = unlockAchievements(custom, ["tribute_wallet_3"], 2_000).profile;
   assert.deepEqual(upgraded.customShowcase, ["tribute_wallet_3"], "a chosen ranch badge advances within its family");
   const publicProfile = publicAchievementProfile(unlocked, {}, {}, {}, {}, {}, {}, { managerPairDays: 4, walletPairDays: 2 });
-  assert.deepEqual(publicProfile.stats.tribute, { managerPairDays: 4, walletPairDays: 2 });
+  assert.deepEqual({ managerPairDays: publicProfile.stats.tribute.managerPairDays, walletPairDays: publicProfile.stats.tribute.walletPairDays }, { managerPairDays: 4, walletPairDays: 2 });
   const final = ACHIEVEMENT_DEFINITIONS.filter((definition) => definition.level === 10 && definition.scope === "tribute").map((definition) => definition.name);
   assert.deepEqual(final.sort(), ["万の献上を統べる大牧場主", "千回差し出した伝説の財布"].sort());
 

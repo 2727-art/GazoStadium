@@ -79,6 +79,7 @@ function harness({ profile, progress, tributeReady = true } = {}) {
     danwakuMatchBadgeRef: () => { assert.fail("retired NOTE badge reference must not be requested"); },
     tributeService: {
       achievementStatsRef: (uid) => reference(`tributeStats/${uid}`),
+      achievementStatsReady: (snapshot) => snapshot.exists && snapshot.get("historyBackfilled") === true,
       ensureAchievementStats: async (uid) => { backfills.push(uid); documents.set(`tributeStats/${uid}`, { ...documents.get(`tributeStats/${uid}`), historyBackfilled: true }); },
     },
     syncAchievementPublicSurfaces: async (uid, value) => publicSyncs.push({ uid, profile: plain(value) }),

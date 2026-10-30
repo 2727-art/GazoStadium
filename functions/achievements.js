@@ -582,6 +582,80 @@ const tributeDefinitions = [
   }),
 ];
 
+// お貢ぎ牧場の遊び方の型（設計書17）。名前はユーザーが決めた（2026-10-30）。額では解除しない。連続日数は作らない。
+// 数える実績は、同じ相手とは日本時間の1日1回まで（[key] は tributeAchievementStats の数）。どれも自動では公開しない。
+// [family, side, key, icon, familyLabel, thresholds, names, description]
+const TRIBUTE_STYLE_FAMILIES = Object.freeze([
+  ["tribute_mgr_request", "manager", "mgrRequestPaid", "請", "請求", [1, 3, 10, 30, 100], ["はじめての請求", "払わせ上手", "請求すれば財布が鳴る", "請求書の束", "請求台帳の主"], (target) => `管理する側として、請求が${target}回払われた（同じ財布は1日1回まで）`],
+  ["tribute_mgr_break", "manager", "mgrBreak", "折", "抵抗を折る", [1, 3, 10, 30, 100], ["抵抗を折った", "渋っても無駄", "抵抗は想定内", "折れる音を知る人", "抵抗折りの名人"], (target) => `財布に抵抗された請求が、${target}回払われた（同じ財布は1日1回まで）`],
+  ["tribute_mgr_ignore", "manager", "mgrIgnore", "既", "既読無視", [1, 3, 10, 30, 100], ["既読無視デビュー", "返事は気が向いたら", "沈黙で躾ける", "既読の支配者", "無視されたい財布の飼い主"], (target) => `財布のメッセージを既読のまま返さずにいた（${target}回、同じ財布は1日1回まで）`],
+  ["tribute_mgr_grant", "manager", "mgrGrant", "許", "許す", [1, 3, 10, 30, 100], ["許可を出す人", "甘い飼い主", "待たせて許す", "許しの主", "慈悲深い牧場主"], (target) => `お預け中の財布の願い出を${target}回許した（同じ財布は1日1回まで）`],
+  ["tribute_mgr_deny", "manager", "mgrDeny", "退", "退ける", [1, 3, 10, 30, 100], ["退けた", "突き放す飼い主", "まだ早い", "却下の常連", "冷たい牧場主"], (target) => `お預け中の財布の願い出を${target}回退けた（同じ財布は1日1回まで）`],
+  ["tribute_mgr_recite", "manager", "mgrRecite", "唱", "復唱", [1, 3, 10, 30, 100], ["言わせた", "一字一句", "復唱の教官", "言葉で躾ける人", "復唱を聞き飽きた主"], (target) => `財布の復唱を${target}回確かめた（同じ財布は1日1回まで）`],
+  ["tribute_mgr_work", "manager", "mgrWork", "稼", "出稼ぎ", [1, 3, 10, 30, 100], ["出稼ぎに出した", "働かせ上手", "出稼ぎの采配", "財布を稼がせる人", "出稼ぎ牧場の主"], (target) => `財布の出稼ぎの完走を${target}回確かめた（同じ財布は1日1回まで）`],
+  ["tribute_mgr_othello", "manager", "mgrOthello", "盤", "盤上", [1, 3, 10, 30, 100], ["盤上の初勝利", "石で黙らせる", "盤を支配する", "オセロの飼い主", "盤上に君臨する"], (target) => `貢ぎオセロで財布に${target}回勝った（同じ財布は1日1回まで）`],
+  ["tribute_mgr_collar", "manager", "mgrCollar", "輪", "首輪", [1, 3, 10, 30, 100], ["最初の首輪", "首輪を配る人", "首輪の引き出し", "三十の首輪", "百の首輪を知る人"], (target) => `${target}人の財布を迎えて、首輪を渡した`],
+  ["tribute_mgr_ranch", "manager", "mgrRanchLevel", "牧", "牧場", [5, 10, 20, 30], ["柵の中の小さな牧場", "金の牛の像が立つ", "サイロのある牧場", "お城の塔の主"], (target) => `牧場レベルが${target}になった`],
+  ["tribute_mgr_pat", "manager", "mgrPatDays", "撫", "なでる", [1, 10, 30, 100, 365], ["はじめてなでた", "なでる手", "なで慣れた飼い主", "百回なでた", "一年なでた手"], (target) => `牧場で財布の動物をなでた日が${target}日になった（同じ財布は1日1回）`],
+  ["tribute_wal_silent", "wallet", "walSilentDays", "自", "自分から", [1, 3, 10, 30, 100], ["はじめての自発", "言われる前に差し出す", "自分から鳴る財布", "勝手に貢ぐ癖", "呼ばれる前に開く財布"], (target) => `請求なしで献上した日が${target}日になった（同じ管理人へは1日1回まで）`],
+  ["tribute_wal_request", "wallet", "walRequestPaid", "応", "請求に応える", [1, 3, 10, 30, 100], ["請求に応えた", "請求には逆らえない", "請求されると弱い", "請求が来ると嬉しい", "請求待ちの財布"], (target) => `管理人の請求を${target}回払った（同じ管理人へは1日1回まで）`],
+  ["tribute_wal_resist", "wallet", "walResist", "抗", "抵抗", [1, 3, 10, 30, 100], ["一応渋った", "渋るだけは渋る", "三回渋って結局払う", "抵抗は様式美", "抵抗の達人（でも払う）"], (target) => `請求に抵抗してから払った（${target}回、同じ管理人へは1日1回まで）`],
+  ["tribute_wal_granted", "wallet", "walGranted", "願", "許された", [1, 3, 10, 30, 100], ["許された", "待てができる財布", "許しを乞うのが上手", "お預け上手", "許しの常連"], (target) => `お預け中の願い出を${target}回許された（同じ管理人へは1日1回まで）`],
+  ["tribute_wal_denied", "wallet", "walDenied", "却", "退けられた", [1, 3, 10, 30, 100], ["退けられた", "それでも願い出る", "却下され慣れた", "突き放されて喜ぶ財布", "不屈の願い出"], (target) => `お預け中の願い出を${target}回退けられた（同じ管理人へは1日1回まで）`],
+  ["tribute_wal_words", "wallet", "walWords", "言", "言葉", [1, 3, 10, 30, 100], ["言葉を差し出した", "Payより言葉", "言葉で仕える財布", "手紙の多い財布", "言葉の献上の主"], (target) => `言葉の献上を${target}回した（同じ管理人へは1日1回まで）`],
+  ["tribute_wal_recite", "wallet", "walRecite", "復", "復唱", [1, 3, 10, 30, 100], ["言わされた", "一字一句の財布", "復唱がうまくなった", "言わされ慣れた財布", "復唱の生き字引"], (target) => `復唱を${target}回確かめてもらった（同じ管理人へは1日1回まで）`],
+  ["tribute_wal_work", "wallet", "walWork", "働", "出稼ぎ", [1, 3, 10, 30, 100], ["出稼ぎ帰り", "稼いでくる財布", "働く財布", "出稼ぎの常連", "牧場一の働き者"], (target) => `出稼ぎを${target}回完走して、確かめてもらった（同じ管理人へは1日1回まで）`],
+  ["tribute_wal_othello", "wallet", "walOthelloLost", "石", "盤上", [1, 3, 10, 30, 100], ["盤上で負けた", "負けても盤に向かう", "石ごと差し出す", "負けの常連", "盤上の養分"], (target) => `貢ぎオセロに負けて、罰金を${target}回差し出した（同じ管理人へは1日1回まで）`],
+  ["tribute_wal_fondness", "wallet", "walServedTop", "鈴", "なつき", [7, 30, 100, 365], ["鈴の鳴る財布", "リボンの財布", "花かんむりの財布", "金の王冠の財布"], (target) => `ひとりの管理人に仕えた日が${target}日になった（牧場の動物の飾りと同じ日数）`],
+  ["tribute_wal_patted", "wallet", "walPatted", "掌", "なでられた", [1, 10, 30, 100, 365], ["なでられた", "なでられ慣れた", "なでられ待ちの財布", "百回なでられた", "一年なでられた財布"], (target) => `牧場で動物をなでてもらった日が${target}日になった`],
+].map(([family, side, key, icon, familyLabel, thresholds, names, description]) => Object.freeze({
+  family, side, key, icon, familyLabel, thresholds: Object.freeze(thresholds), names: Object.freeze(names), description,
+})));
+
+// お貢ぎ牧場のシークレット（条件は解除するまで隠す。1回で解除）。[id, side, key, icon, name, description]
+const TRIBUTE_SECRETS = Object.freeze([
+  ["tribute_secret_resist3", "wallet", "secretResist3", "三", "三回渋って、払う", "3回抵抗した請求を払った"],
+  ["tribute_secret_both", "wallet", "secretBoth", "両", "Payも言葉も", "同じ日に、献上と言葉の献上をした"],
+  ["tribute_secret_second_plea", "wallet", "secretSecondPlea", "再", "二度目の願い出", "退けられたあと、同じお預けの間に許された"],
+  ["tribute_secret_moo", "wallet", "secretMoo", "鳴", "鳴いた財布", "牧場の鳴き声を書いた"],
+  ["tribute_secret_mood", "manager", "secretMood", "気", "気分次第", "同じ日に、願い出を許すことと退けることを両方した"],
+  ["tribute_secret_ignored_paid", "manager", "secretIgnoredPaid", "黙", "無視しても払われる", "既読無視の間に、請求が払われた"],
+  ["tribute_secret_named", "manager", "secretNamed", "名", "名付け親", "牧場に名前を付けた"],
+].map(([id, side, key, icon, name, description]) => Object.freeze({ id, side, key, icon, name, description })));
+
+const tributeStyleDefinitions = [
+  ...TRIBUTE_STYLE_FAMILIES.flatMap((entry) => series({
+    scope: "tribute",
+    category: entry.side === "manager" ? "tribute_manager_style" : "tribute_wallet_style",
+    family: entry.family,
+    familyLabel: entry.familyLabel,
+    icon: entry.icon,
+    thresholds: entry.thresholds,
+    names: entry.names,
+    description: entry.description,
+    hint: entry.side === "manager" ? "同じ財布とは日本時間の1日1回だけ数える" : "同じ管理人とは日本時間の1日1回だけ数える",
+    condition: (target) => ({ type: "tribute_stat", key: entry.key, target }),
+    autoPublic: false,
+  })),
+  ...TRIBUTE_SECRETS.map((entry) => Object.freeze({
+    id: entry.id,
+    scope: "tribute",
+    category: "tribute_secret",
+    family: entry.id,
+    familyLabel: "牧場のシークレット",
+    icon: entry.icon,
+    level: 1,
+    target: 1,
+    name: entry.name,
+    description: entry.description,
+    hint: "牧場の遊びの中で見つかるシークレット実績",
+    autoPublic: false,
+    legacy: false,
+    secret: true,
+    condition: { type: "tribute_stat", key: entry.key, target: 1 },
+  })),
+];
+
 // 終わった牧場基金（2026年10月まで）の上納の称号。限定称号として、当時の記録から一度だけ解除する（新しくは取れない）。
 // 解除はお貢ぎ牧場のサービスが tributeHonors から行う。上の称号を取った人は、下の称号も持つ。
 const tributeHonorDefinitions = [
@@ -631,6 +705,7 @@ const ACHIEVEMENT_DEFINITIONS = Object.freeze([
   ...marketDefinitions,
   ...fleaDefinitions,
   ...tributeDefinitions,
+  ...tributeStyleDefinitions,
   ...tributeHonorDefinitions,
 ]);
 const ACHIEVEMENT_BY_ID = new Map(ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition]));
@@ -776,11 +851,18 @@ function normalizeFleaStats(value) {
   };
 }
 
+// お貢ぎ牧場の実績の数。grantDay・denyDay は、最後に願い出を許した・退けた日本時間の日（20261030 の形。「気分次第」に使う）。
+const TRIBUTE_STAT_KEYS = Object.freeze([
+  "managerPairDays",
+  "walletPairDays",
+  ...TRIBUTE_STYLE_FAMILIES.map((entry) => entry.key),
+  ...TRIBUTE_SECRETS.map((entry) => entry.key),
+  "grantDay",
+  "denyDay",
+]);
+
 function normalizeTributeStats(value) {
-  return {
-    managerPairDays: count(value?.managerPairDays),
-    walletPairDays: count(value?.walletPairDays),
-  };
+  return Object.fromEntries(TRIBUTE_STAT_KEYS.map((key) => [key, count(value?.[key])]));
 }
 
 function normalizeCrownMonthlyStats(value) {
@@ -1104,6 +1186,9 @@ function publicAchievementProfile(
 }
 
 module.exports = Object.freeze({
+  TRIBUTE_STYLE_FAMILIES,
+  TRIBUTE_SECRETS,
+  TRIBUTE_STAT_KEYS,
   ACHIEVEMENT_BY_ID,
   ACHIEVEMENT_DEFINITIONS,
   ACTIVE_BATTLE_MODES,

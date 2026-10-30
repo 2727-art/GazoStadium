@@ -220,6 +220,9 @@ const RECENT_OPS_LIMIT = 30;
 const PROFILE_SAVE_INTERVAL_MS = 2_000;
 const APPLY_INTERVAL_MS = 30_000;
 const ACHIEVEMENT_STATS_SCHEMA_VERSION = 1;
+// 実績の記録の数え直しの版。2: 牧場の実績（設計書17）のうち、これまでの記録から分かるもの
+// （迎えた財布の数・牧場レベル・仕えた日・なでた日・貢ぎオセロの勝ち）を入れる。
+const ACHIEVEMENT_HISTORY_VERSION = 2;
 const ACHIEVEMENT_BACKFILL_PAIR_LIMIT = 1_000;
 const AGE_REQUIRED_MESSAGE = "お貢ぎ牧場は、18歳以上であることと遊びの前提を確認してから使えます。";
 const END_REASON_LABELS = Object.freeze({
@@ -283,6 +286,13 @@ function fondnessAtView(value) {
   return Object.fromEntries(RANCH_FONDNESS
     .map((step) => [String(step.tier), integer(source[step.tier], 0, Number.MAX_SAFE_INTEGER, 0)])
     .filter(([, at]) => at > 0));
+}
+
+// 実績の記録が、いまの版まで数え直してあるか。
+function achievementStatsReady(snapshot) {
+  return Boolean(snapshot?.exists)
+    && snapshot.get("historyBackfilled") === true
+    && integer(snapshot.get("historyVersion"), 0, 1_000, 1) >= ACHIEVEMENT_HISTORY_VERSION;
 }
 
 function ranchXpOf(data) {
@@ -948,6 +958,9 @@ function createTributeService(deps) {
       extraWrites: [],
       unlocks: { manager: [], payer: [] },
       unlockedProfiles: { manager: null, payer: null },
+      // 牧場の実績（設計書17）で、この操作で増える数。書き込む前にまとめて読み、1回だけ書く（stageAchievements）。
+      achievementBumps: [],
+      achievementCheck: false,
     };
   }
 
@@ -993,7 +1006,80 @@ function createTributeService(deps) {
     const give = Math.min(points, RANCH_XP_PAIR_DAY - used);
     if (give <= 0) return;
     patchPair(ctx, { ranchXpDayKey: ctx.dateKey, ranchXpDay: used + give });
+    const before = ranchLevelFor(ctx.profiles.manager.value.ranchXp);
     patchProfile(ctx, "manager", { ranchXp: ctx.profiles.manager.value.ranchXp + give });
+    const after = ranchLevelFor(ctx.profiles.manager.value.ranchXp);
+    if (after > before) achieveMax(ctx, "manager", "mgrRanchLevel", after);
+  }
+
+  // ───────────── 牧場の実績（設計書17） ─────────────
+  // 遊び方の型とシークレットの数。額では数えない。数える実績は、同じ組とは日本時間の1日1回まで
+  // （組の achievementDays に、側と数の名前ごとに最後に数えた日を残す）。連続日数は作らない。
+  function achieve(ctx, who, key) {
+    // 数えるのは進行中の契約だけ（申し込み中の組には、まだ組の記録がない）。
+    if (ctx.contract.status !== "active") return;
+    const days = object(ctx.pair.value.achievementDays);
+    const slot = `${who}:${key}`;
+    if (days[slot] === ctx.dateKey) return;
+    patchPair(ctx, { achievementDays: { ...days, [slot]: ctx.dateKey } });
+    ctx.achievementBumps.push({ who, key, mode: "count" });
+  }
+
+  // いちばん大きくなった値（迎えた財布の数・牧場レベル・仕えた日）と、シークレット（1）。
+  function achieveMax(ctx, who, key, value) {
+    ctx.achievementBumps.push({ who, key, mode: "max", value: integer(value, 0, Number.MAX_SAFE_INTEGER, 0) });
+  }
+
+  // 日本時間の日付を数にする（「同じ日に許すと退けるを両方した」を確かめるため）。
+  function dayNumber(ctx) {
+    return Number(ctx.dateKey.replaceAll("-", ""));
+  }
+
+  function applyAchievementBumps(statsValue, bumps) {
+    const stats = { ...statsValue };
+    for (const bump of bumps) {
+      const current = integer(stats[bump.key], 0, Number.MAX_SAFE_INTEGER, 0);
+      stats[bump.key] = bump.mode === "max" ? Math.max(current, bump.value) : current + 1;
+    }
+    // シークレット「気分次第」: 同じ日に、許すと退けるを両方した。
+    if (stats.grantDay > 0 && stats.grantDay === stats.denyDay) stats.secretMood = Math.max(1, integer(stats.secretMood, 0, 1, 0));
+    return normalizeTributeStats(stats);
+  }
+
+  // 書き込む前に、実績の記録と実績の一覧を読み、数を進めて解除する。献上の操作は、先に読んだもの（extra.achievements）を使う。
+  async function stageAchievements(transaction, ctx, extra) {
+    const sides = new Set(ctx.achievementBumps.map((bump) => bump.who));
+    if (ctx.achievementCheck) {
+      sides.add("manager");
+      sides.add("payer");
+    }
+    for (const who of ["manager", "payer"]) {
+      if (!sides.has(who)) continue;
+      const uid = who === "manager" ? ctx.managerUid : ctx.payerUid;
+      let slot = extra?.achievements?.[who];
+      if (!slot) {
+        const [statsSnapshot, profileSnapshot] = await Promise.all([
+          transaction.get(achievementStatsRef(uid)),
+          transaction.get(achievementProfileRef(uid)),
+        ]);
+        slot = { stats: normalizeTributeStats(statsSnapshot.data()), profile: profileSnapshot.data() };
+      }
+      const bumps = ctx.achievementBumps.filter((bump) => bump.who === who);
+      const stats = bumps.length ? applyAchievementBumps(slot.stats, bumps) : slot.stats;
+      if (bumps.length) {
+        ctx.extraWrites.push((writer) => writer.set(achievementStatsRef(uid), {
+          schemaVersion: ACHIEVEMENT_STATS_SCHEMA_VERSION,
+          ...stats,
+          updatedAt: ctx.now,
+        }, { merge: true }));
+      }
+      const unlockResult = unlockAchievements(slot.profile, eligibleAchievementIds({ tributeStats: stats, scope: "tribute" }), ctx.now);
+      if (unlockResult.newlyUnlocked.length) {
+        ctx.extraWrites.push((writer) => writer.set(achievementProfileRef(uid), unlockResult.profile));
+        ctx.unlocks[who].push(...unlockResult.newlyUnlocked);
+        ctx.unlockedProfiles[who] = unlockResult.profile;
+      }
+    }
   }
 
   // なつき（設計書16）: その財布が通算で仕えた日数を、組と契約に残す。記録のない組（公開より前から続く組）は、
@@ -1005,6 +1091,7 @@ function createTributeService(deps) {
     const marks = step ? { fondnessAt: { ...fondnessAtView(ctx.pair.value.fondnessAt), [step.tier]: ctx.now } } : {};
     patchPair(ctx, { servedTotal, ...marks });
     setContract(ctx, { servedTotal, ...marks });
+    achieveMax(ctx, "payer", "walServedTop", servedTotal);
   }
 
   // その日初めての献上・言葉の献上か（仕えた日が1日増えるか）。servedDayPatch を当てる前に読む。
@@ -1025,6 +1112,7 @@ function createTributeService(deps) {
       streak: outcome.result === "lost" ? record.streak + 1 : 0,
     };
     patchPair(ctx, { othelloRecord: next });
+    if (outcome.result === "lost") achieve(ctx, "manager", "mgrOthello");
     setContract(ctx, {
       othello: null,
       othelloRecord: next,
@@ -1065,13 +1153,23 @@ function createTributeService(deps) {
     const note = cleanLine(data?.note, LIMITS.requestNote);
     if (note) checkManagerText(ctx, note);
     messageRate(ctx);
+    // 牧場の実績: 許した／退けた（管理人）、許された／退けられた（財布）。
+    // シークレット「二度目の願い出」: 同じお預けの間に、退けられたあとで許された。「気分次第」は applyAchievementBumps で確かめる。
+    const holdSince = integer(holdView(ctx.contract)?.since, 0, Number.MAX_SAFE_INTEGER, 0);
     if (grant) {
       setContract(ctx, {
         plea: { ...object(ctx.contract.plea), grantedAt: ctx.now },
         pleaGrantedCount: integer(ctx.contract.pleaGrantedCount, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
       });
+      achieve(ctx, "manager", "mgrGrant");
+      achieve(ctx, "payer", "walGranted");
+      achieveMax(ctx, "manager", "grantDay", dayNumber(ctx));
+      if (holdSince > 0 && integer(ctx.contract.pleaDeniedHold, 0, Number.MAX_SAFE_INTEGER, 0) === holdSince) achieveMax(ctx, "payer", "secretSecondPlea", 1);
     } else {
-      setContract(ctx, { plea: null });
+      setContract(ctx, { plea: null, ...(holdSince > 0 ? { pleaDeniedHold: holdSince } : {}) });
+      achieve(ctx, "manager", "mgrDeny");
+      achieve(ctx, "payer", "walDenied");
+      achieveMax(ctx, "manager", "denyDay", dayNumber(ctx));
     }
     pushEvent(ctx, { type: grant ? "plea_granted" : "plea_denied", actor: "manager", pleaSeq: plea.pleaSeq, amount: plea.amount, ...(note ? { note } : {}) });
     grantRanchXp(ctx, RANCH_XP.plea);
@@ -1316,6 +1414,8 @@ function createTributeService(deps) {
     const readSeq = object(contract.readSeq);
     const previous = integer(readSeq[role], 0, Number.MAX_SAFE_INTEGER, 0);
     const next = Math.max(previous, Math.min(eventSeq, integer(data?.seq, 0, Number.MAX_SAFE_INTEGER, 0)));
+    // 既読無視が始まる時は、実績（既読無視）を数えるため、ふつうの道で書く。
+    if (next > previous && ignoreStart(contract, role, next, now).ignoredSince) return null;
     if (next > previous) transaction.set(reference, { readSeq: { ...readSeq, [role]: next }, ...ignoreStart(contract, role, next, now) }, { merge: true });
     return { ok: true, contractId, readSeq: next, eventSeq };
   }
@@ -1364,6 +1464,7 @@ function createTributeService(deps) {
         }
         if (ctx.contract.status === "active") settleCaps(ctx);
         result = spec.write(ctx, extra);
+        await stageAchievements(transaction, ctx, extra);
       }
       flush(ctx);
       wallets = touchedWallets(ctx);
@@ -1416,37 +1517,12 @@ function createTributeService(deps) {
   }
 
   // 実績は金額ではなく、管理が続いた記録として数える。同じ組は日本時間の1日1回だけ。
+  // 書き込みと解除は、ほかの牧場の実績とまとめて stageAchievements で行う（献上の操作では、数が変わらなくても解除を確かめ直す）。
   function stageTributeAchievements(ctx, extra, countsToday) {
     if (!extra?.achievements) return;
-    const sides = [
-      ["manager", ctx.managerUid, "managerPairDays"],
-      ["payer", ctx.payerUid, "walletPairDays"],
-    ];
-    for (const [who, uid, key] of sides) {
-      const slot = extra.achievements[who];
-      const stats = { ...slot.stats };
-      if (countsToday) {
-        stats[key] += 1;
-        ctx.extraWrites.push((transaction) => transaction.set(achievementStatsRef(uid), {
-          schemaVersion: ACHIEVEMENT_STATS_SCHEMA_VERSION,
-          ...stats,
-          historyBackfilled: true,
-          updatedAt: ctx.now,
-        }, { merge: true }));
-      }
-      slot.stats = stats;
-      const unlockResult = unlockAchievements(
-        slot.profile,
-        eligibleAchievementIds({ tributeStats: stats, scope: "tribute" }),
-        ctx.now,
-      );
-      slot.profile = unlockResult.profile;
-      if (unlockResult.newlyUnlocked.length) {
-        ctx.extraWrites.push((transaction) => transaction.set(achievementProfileRef(uid), unlockResult.profile));
-        ctx.unlocks[who].push(...unlockResult.newlyUnlocked);
-        ctx.unlockedProfiles[who] = unlockResult.profile;
-      }
-    }
+    ctx.achievementCheck = true;
+    if (!countsToday) return;
+    ctx.achievementBumps.push({ who: "manager", key: "managerPairDays", mode: "count" }, { who: "payer", key: "walletPairDays", mode: "count" });
   }
 
 
@@ -1651,32 +1727,46 @@ function createTributeService(deps) {
   async function ensureAchievementStats(uid) {
     const reference = achievementStatsRef(uid);
     const existing = await reference.get();
-    if (existing.exists && existing.get("historyBackfilled") === true) return normalizeTributeStats(existing.data());
-    const [asManager, asPayer] = await Promise.all([
+    if (achievementStatsReady(existing)) return normalizeTributeStats(existing.data());
+    const [asManager, asPayer, ownProfile] = await Promise.all([
       firestore.collection("tributePairs").where("managerUid", "==", uid).limit(ACHIEVEMENT_BACKFILL_PAIR_LIMIT).get(),
       firestore.collection("tributePairs").where("payerUid", "==", uid).limit(ACHIEVEMENT_BACKFILL_PAIR_LIMIT).get(),
+      profileRef(uid).get(),
     ]);
+    const now = currentTime();
+    const managerPairs = asManager.docs.map((document) => object(document.data()));
+    const payerPairs = asPayer.docs.map((document) => object(document.data()));
+    const profile = readProfile(ownProfile);
+    const sum = (pairs, read) => pairs.reduce((total, pair) => total + read(pair), 0);
+    // 版1: 貢ぎ帳から確実に言える献上の日。版2: 牧場の実績のうち、これまでの記録から分かるもの（ほかは公開日から数える）。
     const seed = {
-      managerPairDays: asManager.docs.reduce((sum, document) => sum + historicalPairDays(document.data()), 0),
-      walletPairDays: asPayer.docs.reduce((sum, document) => sum + historicalPairDays(document.data()), 0),
+      managerPairDays: sum(managerPairs, historicalPairDays),
+      walletPairDays: sum(payerPairs, historicalPairDays),
+      mgrCollar: profile.collarCount,
+      mgrRanchLevel: profile.card || profile.ranchXp > 0 ? ranchLevelFor(profile.ranchXp) : 0,
+      mgrPatDays: sum(managerPairs, (pair) => integer(pair.patDays, 0, Number.MAX_SAFE_INTEGER, 0)),
+      mgrOthello: sum(managerPairs, (pair) => othelloRecordView(pair.othelloRecord).lost),
+      walPatted: sum(payerPairs, (pair) => integer(pair.patDays, 0, Number.MAX_SAFE_INTEGER, 0)),
+      walServedTop: payerPairs.reduce((top, pair) => Math.max(top, servedTotalOf(pair, now)), 0),
     };
-    let stats = seed;
+    let stats = normalizeTributeStats(seed);
     await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reference);
-      if (snapshot.exists && snapshot.get("historyBackfilled") === true) {
+      if (achievementStatsReady(snapshot)) {
         stats = normalizeTributeStats(snapshot.data());
         return;
       }
       const current = normalizeTributeStats(snapshot.data());
-      stats = {
-        managerPairDays: Math.max(current.managerPairDays, seed.managerPairDays),
-        walletPairDays: Math.max(current.walletPairDays, seed.walletPairDays),
-      };
-      const now = currentTime();
+      const firstTime = !(snapshot.exists && snapshot.get("historyBackfilled") === true);
+      const keys = Object.keys(seed).filter((key) => firstTime || !["managerPairDays", "walletPairDays"].includes(key));
+      stats = { ...current };
+      for (const key of keys) stats[key] = Math.max(integer(current[key], 0, Number.MAX_SAFE_INTEGER, 0), seed[key]);
+      stats = normalizeTributeStats(stats);
       transaction.set(reference, {
         schemaVersion: ACHIEVEMENT_STATS_SCHEMA_VERSION,
         ...stats,
         historyBackfilled: true,
+        historyVersion: ACHIEVEMENT_HISTORY_VERSION,
         backfilledAt: now,
         updatedAt: now,
       }, { merge: true });
@@ -1693,7 +1783,7 @@ function createTributeService(deps) {
       ]);
       // Ready users need only the atomic stats/profile read. Never carry a
       // preflight stats value into the transaction that unlocks achievements.
-      if (!statsSnapshot.exists || statsSnapshot.get("historyBackfilled") !== true) return null;
+      if (!achievementStatsReady(statsSnapshot)) return null;
       const stats = normalizeTributeStats(statsSnapshot.data());
       // 終わった牧場基金の称号（上納者・大上納者・牧場の主）を、限定称号として一度だけ実績に移す。
       const honorIds = [];
@@ -2009,19 +2099,37 @@ function createTributeService(deps) {
     if (normalized.error) fail("invalid-argument", normalized.error);
     let saved = null;
     let now = 0;
+    let unlocked = null;
     await firestore.runTransaction(async (transaction) => {
       saved = null;
+      unlocked = null;
       now = currentTime();
       const snapshot = await transaction.get(profileRef(uid));
       const profile = readProfile(snapshot);
       requireAge(profile);
       if (!profile.card) fail("failed-precondition", "牧場の名前は、管理人カードを作ってから付けられます。");
+      // シークレット「名付け親」: 牧場に名前を付けた。読むのは書く前にまとめる。
+      let unlockResult = null;
+      if (normalized.name) {
+        const [statsSnapshot, achievementSnapshot] = await Promise.all([
+          transaction.get(achievementStatsRef(uid)),
+          transaction.get(achievementProfileRef(uid)),
+        ]);
+        const stats = applyAchievementBumps(normalizeTributeStats(statsSnapshot.data()), [{ key: "secretNamed", mode: "max", value: 1 }]);
+        unlockResult = unlockAchievements(achievementSnapshot.data(), eligibleAchievementIds({ tributeStats: stats, scope: "tribute" }), now);
+        transaction.set(achievementStatsRef(uid), { schemaVersion: ACHIEVEMENT_STATS_SCHEMA_VERSION, ...stats, updatedAt: now }, { merge: true });
+        if (unlockResult.newlyUnlocked.length) transaction.set(achievementProfileRef(uid), unlockResult.profile);
+      }
       const patch = { ranchName: normalized.name, updatedAt: now };
       transaction.set(profileRef(uid), patch, { merge: true });
       saved = { ...object(snapshot.data()), ...patch };
+      unlocked = unlockResult?.newlyUnlocked.length ? unlockResult : null;
     });
+    if (unlocked && typeof syncAchievementPublicSurfaces === "function") {
+      await bestEffort("tribute achievements", [syncAchievementPublicSurfaces(uid, unlocked.profile)]);
+    }
     const profile = readProfile({ exists: true, data: () => saved });
-    return { ok: true, profile: ownProfileView(profile, jstMonthKey(now), now) };
+    return { ok: true, profile: ownProfileView(profile, jstMonthKey(now), now), ...(unlocked ? { newlyUnlocked: unlocked.newlyUnlocked } : {}) };
   }
 
   // 管理人の自分の言葉（定型文・ご褒美）。管理人だけが読み、カードには入れないので掲示板に出ない。活動には数えない。
@@ -2440,6 +2548,7 @@ function createTributeService(deps) {
           managerPersonaName: managerName(ctx),
         });
         const collarNo = ensureCollar(ctx);
+        achieveMax(ctx, "manager", "mgrCollar", ctx.profiles.manager.value.collarCount);
         // 牧場の経験値: 新しい財布を迎えた（設計書16.3）。なつきは組の通算を写す（契約をまたぐ）。
         grantRanchXp(ctx, RANCH_XP.accept);
         setContract(ctx, {
@@ -2570,6 +2679,15 @@ function createTributeService(deps) {
           };
           delete requests[requestId];
           setContract(ctx, { pendingRequests: requests });
+          // 牧場の実績: 請求に応えた／払われた、抵抗してから払った／抵抗を折った、3回渋って払った、既読無視の間に払われた。
+          achieve(ctx, "payer", "walRequestPaid");
+          achieve(ctx, "manager", "mgrRequestPaid");
+          if (marks.resisted > 0) {
+            achieve(ctx, "payer", "walResist");
+            achieve(ctx, "manager", "mgrBreak");
+          }
+          if (marks.resisted >= 3) achieveMax(ctx, "payer", "secretResist3", 1);
+          if (integer(ctx.contract.ignoredSince, 0, Number.MAX_SAFE_INTEGER, 0) > 0) achieveMax(ctx, "manager", "secretIgnoredPaid", 1);
         } else if (requested === "othello") {
           // 貢ぎオセロの罰金。財布の1回の限度額までを、財布が長押しで差し出す（管理人に限度額は見せない）。
           const result = othelloResultView(ctx.contract);
@@ -2579,6 +2697,7 @@ function createTributeService(deps) {
           purpose = "penalty";
           marks = { othello: result.gameSeq };
           setContract(ctx, { othelloResult: null });
+          achieve(ctx, "payer", "walOthelloLost");
         } else if (requested === "contest") {
           // 出稼ぎの勝負の罰金。財布の1回の限度額までを、財布が長押しで差し出す（管理人に限度額は見せない）。
           const result = workResultView(ctx.contract);
@@ -2603,7 +2722,11 @@ function createTributeService(deps) {
           const named = normalizePurpose(data?.purpose, { allowSexual });
           if (named.error) fail("failed-precondition", named.error);
           purpose = named.purpose;
+          // 牧場の実績: 請求なしで差し出した日（自分から）。
+          achieve(ctx, "payer", "walSilentDays");
         }
+        // シークレット「Payも言葉も」: 同じ日に、言葉の献上もしている。
+        if (ctx.contract.wordOfferDayKey === ctx.dateKey) achieveMax(ctx, "payer", "secretBoth", 1);
         const outcome = stageTribute(ctx, extra, { kind, amount, requestId, purpose, marks, opKey: `client:${clientRequestId}` });
         return {
           ok: true,
@@ -2972,7 +3095,8 @@ function createTributeService(deps) {
       },
     },
     // 言葉の献上。Pay 0 で、告白・短い話・報告などの文（400文字まで）を差し出す。1つの契約で日本時間の1日3回まで。
-    // 管理人は献上と同じく受取印とご褒美で受け取る。Pay を動かさないので、番付・貢がれ総額・応援欄・実績・限度額には数えない。
+    // 管理人は献上と同じく受取印とご褒美で受け取る。Pay を動かさないので、番付・貢がれ総額・応援欄・限度額には数えない。
+    // 牧場の実績（設計書17）では「言葉」として数える（Pay の額ではなく、言葉を差し出した回数）。
     offer_words: {
       roles: ["payer"],
       statuses: ["active"],
@@ -2991,6 +3115,8 @@ function createTributeService(deps) {
           awaitingReceipt: integer(ctx.contract.awaitingReceipt, 0, Number.MAX_SAFE_INTEGER, 0) + 1,
         });
         pushEvent(ctx, { type: "word_offering", actor: "payer", text: normalized.text });
+        achieve(ctx, "payer", "walWords");
+        if (ctx.contract.todayKey === ctx.dateKey) achieveMax(ctx, "payer", "secretBoth", 1);
         // 言葉の献上も、仕えた日として数える（Pay は動かないので、額の記録は変えない）。
         if (newServedDay(ctx)) {
           grantRanchXp(ctx, RANCH_XP.servedDay);
@@ -3067,6 +3193,8 @@ function createTributeService(deps) {
         const card = ctx.profiles.manager.value.card;
         const seal = sealFor(data?.seal, { seals: card?.seals, ngWords: ctx.contract.ngWords });
         setContract(ctx, { reciteOrder: null });
+        achieve(ctx, "manager", "mgrRecite");
+        achieve(ctx, "payer", "walRecite");
         pushEvent(ctx, { type: "recite_confirm", actor: "manager", orderSeq: order.orderSeq, target: order.target, seal, ...sealLook(card), ...rewardMarks });
         if (reward) setContract(ctx, { lastManagerReplySeq: ctx.seq, ignoredSince: 0 });
         grantRanchXp(ctx, RANCH_XP.confirm);
@@ -3167,6 +3295,8 @@ function createTributeService(deps) {
         const patDays = integer(ctx.pair.value.patDays, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
         patchPair(ctx, { patDays });
         setContract(ctx, { pattedAt: ctx.now, patDayKey: ctx.dateKey, patDays });
+        achieve(ctx, "manager", "mgrPatDays");
+        achieve(ctx, "payer", "walPatted");
         return { ok: true, contract: view(ctx) };
       },
     },
@@ -3183,6 +3313,7 @@ function createTributeService(deps) {
           return { ok: true, contract: view(ctx), unchanged: true };
         }
         setContract(ctx, { mooLines: normalized.lines });
+        if (normalized.lines.length) achieveMax(ctx, "payer", "secretMoo", 1);
         return { ok: true, contract: view(ctx) };
       },
     },
@@ -3454,6 +3585,8 @@ function createTributeService(deps) {
         const card = ctx.profiles.manager.value.card;
         const seal = sealFor(data?.seal, { seals: card?.seals, ngWords: ctx.contract.ngWords });
         setContract(ctx, { workOrder: null });
+        achieve(ctx, "manager", "mgrWork");
+        achieve(ctx, "payer", "walWork");
         pushEvent(ctx, {
           type: "work_confirm",
           actor: "manager",
@@ -3642,7 +3775,9 @@ function createTributeService(deps) {
         const readSeq = object(ctx.contract.readSeq);
         if (seq > integer(readSeq[ctx.role], 0, Number.MAX_SAFE_INTEGER, 0)) {
           ctx.quiet = true;
-          setContract(ctx, { readSeq: { ...readSeq, [ctx.role]: seq }, ...ignoreStart(ctx.contract, ctx.role, seq, ctx.now) });
+          const ignoring = ignoreStart(ctx.contract, ctx.role, seq, ctx.now);
+          setContract(ctx, { readSeq: { ...readSeq, [ctx.role]: seq }, ...ignoring });
+          if (ignoring.ignoredSince) achieve(ctx, "manager", "mgrIgnore");
         }
         return { ok: true, contractId: ctx.contractId, readSeq: integer(object(ctx.contract.readSeq)[ctx.role], 0, Number.MAX_SAFE_INTEGER, 0), eventSeq: ctx.seq };
       },
@@ -4506,6 +4641,7 @@ function createTributeService(deps) {
     resolveSafetyTarget,
     ensureAchievementStats,
     achievementStatsRef,
+    achievementStatsReady,
   });
 }
 

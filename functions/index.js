@@ -1971,8 +1971,8 @@ async function ensureAchievementState(uid, { deferTributeBackfill = false } = {}
     // The common achievement screen can use this transaction's tribute stats
     // directly once history is initialized. Other callers retain their existing
     // eager initialization, and no snapshot is reused across transactions.
-    if (deferTributeBackfill
-      && (!tributeStatsSnapshot.exists || tributeStatsSnapshot.get("historyBackfilled") !== true)) return null;
+    // お貢ぎ牧場の実績の記録は、いまの版まで数え直してあるかを牧場のサービスに聞く（設計書17で版2）。
+    if (deferTributeBackfill && !tributeService.achievementStatsReady(tributeStatsSnapshot)) return null;
     const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
     const progress = normalizeEconomyProgress(progressData);
     const crownMonthlyStats = normalizeCrownMonthlyStats(crownMonthlyStatsSnapshot.data());

@@ -972,13 +972,16 @@ test("ranch achievements count each pair once per JST day on both sides and unlo
   const applied = await harness.act("payer", "apply", { publicManagerId, expectedEntryFee: 10, application: BASE_APPLICATION });
   const contractId = applied.contract.contractId;
   const accepted = await harness.act("manager", "accept", { contractId });
-  assert.deepEqual(accepted.newlyUnlocked, ["tribute_manager_1"], "the entry fee is the manager's first counted tribute");
+  // 献上の日の実績だけを見る（迎えた時は、牧場の実績「首輪」も解除される。設計書17）。
+  const pairDayIds = (ids) => (ids || []).filter((id) => /^tribute_(manager|wallet)_\d+$/.test(id));
+  assert.deepEqual(pairDayIds(accepted.newlyUnlocked), ["tribute_manager_1"], "the entry fee is the manager's first counted tribute");
+  assert.ok(accepted.newlyUnlocked.includes("tribute_mgr_collar_1"), "welcoming the first wallet hands out the first collar");
   assert.equal(tributeStats(harness, "manager").managerPairDays, 1);
   assert.equal(tributeStats(harness, "payer").walletPairDays, 1);
   assert.ok(achievementProfile(harness, "payer").unlocked.tribute_wallet_1, "the payer unlocks in the same transaction");
 
   const sameDay = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 50, clientRequestId: nextRequestId() });
-  assert.equal(sameDay.newlyUnlocked, undefined);
+  assert.deepEqual(pairDayIds(sameDay.newlyUnlocked), [], "no new tribute-day record on the same day");
   assert.equal(tributeStats(harness, "payer").walletPairDays, 1, "a second tribute to the same manager on the same day is not counted");
   assert.equal(tributeStats(harness, "manager").managerPairDays, 1);
 
@@ -986,22 +989,23 @@ test("ranch achievements count each pair once per JST day on both sides and unlo
   await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
   harness.advance(DAY - 60_000);
   const third = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
-  assert.deepEqual(third.newlyUnlocked, ["tribute_wallet_3"]);
+  assert.deepEqual(pairDayIds(third.newlyUnlocked), ["tribute_wallet_3"]);
   assert.equal(tributeStats(harness, "payer").walletPairDays, 3);
   const managerProfile = achievementProfile(harness, "manager");
   assert.ok(managerProfile.unlocked.tribute_manager_3);
   assert.ok(managerProfile.pendingUnlocks.tribute_manager_3, "the manager sees the unlock on the next visit");
   assert.deepEqual(
     harness.achievementSyncs.map((entry) => entry.uid),
-    ["manager", "payer", "manager", "payer"],
-    "public showcases are refreshed for each side that unlocked (accept, then the third day)",
+    ["manager", "payer", "payer", "manager", "payer"],
+    "public showcases are refreshed for each side that unlocked (accept, the first silent tribute, then the third day)",
   );
   assert.ok(harness.achievementSyncs.some((entry) => entry.uid === "manager" && entry.unlocked.includes("tribute_manager_3")));
 
   const managerState = await harness.act("manager", "state");
-  assert.deepEqual(managerState.achievements.stats, { managerPairDays: 3, walletPairDays: 0 });
-  assert.deepEqual(managerState.achievements.newlyUnlocked.sort(), ["tribute_manager_1", "tribute_manager_3"].sort());
-  assert.deepEqual(managerState.achievements.unlocked.sort(), ["tribute_manager_1", "tribute_manager_3"].sort());
+  const { managerPairDays, walletPairDays } = managerState.achievements.stats;
+  assert.deepEqual({ managerPairDays, walletPairDays }, { managerPairDays: 3, walletPairDays: 0 });
+  assert.deepEqual(pairDayIds(managerState.achievements.newlyUnlocked).sort(), ["tribute_manager_1", "tribute_manager_3"].sort());
+  assert.deepEqual(pairDayIds(managerState.achievements.unlocked).sort(), ["tribute_manager_1", "tribute_manager_3"].sort());
 });
 
 test("an escrow take counts for both sides as that day's tribute and reports the unlock to the manager", async () => {
@@ -1030,7 +1034,8 @@ test("first use backfills only what the ledger proves, without double counting l
     managerUid: "veteran", payerUid: "stranger", count: 0, total: 0, firstAt: 0, lastAt: 0,
   });
   const first = await harness.act("veteran", "state");
-  assert.deepEqual(first.achievements.stats, { managerPairDays: 0, walletPairDays: 3 }, "2 proven days for old1, 1 for old2, none for an unpaid pair");
+  assert.deepEqual({ managerPairDays: first.achievements.stats.managerPairDays, walletPairDays: first.achievements.stats.walletPairDays }, { managerPairDays: 0, walletPairDays: 3 }, "2 proven days for old1, 1 for old2, none for an unpaid pair");
+  assert.equal(first.achievements.stats.walServedTop, 4, "the longest service is estimated from the ledger (4 days with old1)");
   assert.deepEqual(first.achievements.newlyUnlocked.sort(), ["tribute_wallet_1", "tribute_wallet_3"].sort());
   assert.equal(tributeStats(harness, "veteran").historyBackfilled, true);
 
