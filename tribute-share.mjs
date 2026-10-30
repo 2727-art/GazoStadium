@@ -20,7 +20,7 @@ import {
   sealSvg,
   sealTextLayout,
   waxPoints,
-} from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1";
+} from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2";
 
 export const SHARE_WIDTH = 1080;
 export const SHARE_HEIGHT = 1350;

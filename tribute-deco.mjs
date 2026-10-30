@@ -25,6 +25,12 @@ export const RANCH_DECORATION_PRODUCTS = Object.freeze([
   Object.freeze({ id: "ranch_avatar_40", type: "ranchAvatar", avatar: 40, name: "アイコン・白桃", price: 500, description: "白に近い淡い桃色で描いた、ピースの子。四角い金縁の印。" }),
   Object.freeze({ id: "ranch_avatar_41", type: "ranchAvatar", avatar: 41, name: "アイコン・藤色", price: 500, description: "藤色の髪とリボン、上目づかいの紫の瞳。四角い金縁の印。" }),
   Object.freeze({ id: "ranch_avatar_42", type: "ranchAvatar", avatar: 42, name: "アイコン・空色", price: 500, description: "水色の髪と青い瞳、青いリボンのセーラー襟。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_43", type: "ranchAvatar", avatar: 43, name: "アイコン・ミルクティー", price: 500, description: "黒髪に桃色のリボン、紅茶を手にほほえむ。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_44", type: "ranchAvatar", avatar: 44, name: "アイコン・瑠璃", price: 500, description: "焦げ茶のボブに、ハートの浮かぶ青い瞳。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_45", type: "ranchAvatar", avatar: 45, name: "アイコン・琥珀", price: 500, description: "色のまじる金の髪、首輪と鎖で見下ろす。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_46", type: "ranchAvatar", avatar: 46, name: "アイコン・ネオン", price: 500, description: "夜の部屋で、スマホの光に照らされる。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_47", type: "ranchAvatar", avatar: 47, name: "アイコン・深紅", price: 500, description: "黒髪に赤い唇、黒い手袋の指を口元に。四角い金縁の印。" }),
+  Object.freeze({ id: "ranch_avatar_48", type: "ranchAvatar", avatar: 48, name: "アイコン・ルージュ", price: 500, description: "濃い桃色の唇と爪で、静かにと合図する。四角い金縁の印。" }),
 ]);
 
 // 金庫の段階で手に入る非売品の飾り（ストアでは売らない）。サーバーの VAULT_DECORATIONS と同じ。

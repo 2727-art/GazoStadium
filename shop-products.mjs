@@ -2,7 +2,7 @@ import { AI_TEXT_TRAINING_STYLE_PRODUCTS } from "./ai-text-training-cosmetics.js
 import { STAMP_PRODUCTS } from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 import { PLAYER_TITLE_PRODUCTS } from "./player-titles.js?v=player-titles-v3-retire-team-v1-remove-royale-v1";
 import { CHAT_COSMETIC_PRODUCTS } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
-import { RANCH_DECORATION_PRODUCTS } from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1";
+import { RANCH_DECORATION_PRODUCTS } from "./tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2";
 export const SHOP_PRODUCTS = [
   ...AI_TEXT_TRAINING_STYLE_PRODUCTS,
   { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },

@@ -56,10 +56,18 @@ test("the decoration catalog is the same in the browser, the store prices and th
     ranch_avatar_40: 500,
     ranch_avatar_41: 500,
     ranch_avatar_42: 500,
+    ranch_avatar_43: 500,
+    ranch_avatar_44: 500,
+    ranch_avatar_45: 500,
+    ranch_avatar_46: 500,
+    ranch_avatar_47: 500,
+    ranch_avatar_48: 500,
   }, "the prices agreed for the ranch shelf");
+  // 持っている飾りは Firestore の in（30個まで）で読む。
+  assert.ok(rules.DECORATION_PRODUCT_IDS.length <= 30, `${rules.DECORATION_PRODUCT_IDS.length} decoration products`);
   // 有料アイコンは画面・ストア・サーバーで同じ番号と商品ID。
   assert.deepEqual(deco.PREMIUM_AVATARS.map((entry) => entry.id), [...rules.PREMIUM_AVATAR_IDS]);
-  for (const avatar of [0, 35, 36, 42, 43, "40", null]) {
+  for (const avatar of [0, 35, 36, 42, 43, 48, 49, "40", null]) {
     const card = { ...rules.normalizeDecorations({ frame: "bara" }), avatar: rules.normalizeAvatar(avatar) };
     assert.deepEqual(deco.requiredDecorationProducts({ frame: "bara", avatar }), rules.requiredDecorationProducts(card), String(avatar));
     assert.equal(deco.isPremiumAvatar(avatar), rules.premiumAvatarProductId(avatar) !== "", String(avatar));
@@ -167,8 +175,8 @@ test("seals keep one look per shape and ink, escape their words, and frames only
   assert.equal(typeof tributeShare.renderRecruitImage, "function");
   assert.match(tributeShare.sealSvg({ label: "受領", name: "ミオ様", at, shape: "crown", ink: "kin", rough: false }), /class="tribute-seal is-crown"/, "the share module re-exports the shared seal");
   // 画面・ストア・共有画像は同じ URL で読み込み、ブラウザでは1つのモジュールになる。
-  const specifier = './tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1"';
-  for (const [name, source] of [["tribute.js", client], ["tribute-share.mjs", share], ["online.js", online]]) {
+  const specifier = './tribute-deco.mjs?v=ranch-vault-v1-ranch-premium-icons-v1-ranch-premium-icons-v2"';
+  for (const [name, source] of [["tribute.js", client], ["tribute-share.mjs", share], ["online.js", online], ["shop-products.mjs", read("shop-products.mjs")]]) {
     assert.ok(source.includes(`from "${specifier}`), name);
   }
   assert.match(share, /new Path2D\(HEART_PATH\)/);
@@ -241,7 +249,7 @@ test("the recruit image is drawn on the manager's device with the disclosure, th
 });
 
 test("the AnjuPay store sells the ranch shelf with a confirmation, without a fund share, and the design doc records the rules", () => {
-  assert.match(online, /import \{ RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, premiumAvatarUrl as ranchPremiumAvatarUrl, sealSvg as ranchSealSvg \} from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1-ranch-premium-icons-v1";/);
+  assert.match(online, /import \{ RANCH_DECORATION_PRODUCTS, frameAttr as ranchFrameAttr, premiumAvatarUrl as ranchPremiumAvatarUrl, sealSvg as ranchSealSvg \} from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1-ranch-premium-icons-v1(?:-[a-z0-9-]+)?";/);
   assert.match(online, /<h3 class="shop-ranch-sub">管理人の有料アイコン（四角・金縁）<\/h3><div class="shop-grid">\$\{ranchShelf\("ranchAvatar"\)\}<\/div>/);
   assert.match(online, /<span class="tribute-deco-swatch"\$\{ranchFrameAttr\(product\.deco\)\}><\/span>/, "store swatches get their color variables");
   assert.match(online, /枠は5色から選べ、どの枠にもピンクがあります（色は追加料金なし）。/);

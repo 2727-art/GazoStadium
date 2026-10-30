@@ -119,6 +119,112 @@
       "quality": 90,
       "bytes": 19728,
       "sha256": "83810ff660c3c84bf8c307efa4e29d7545e8676e1152fa8c36dd91f4c9e51e8c"
+    },
+    {
+      "id": 43,
+      "file": "assets/tribute-avatars/avatar-43.webp",
+      "sourceFile": "24.webp",
+      "sourceSha256": "72e1de28c9d12dc30e7b4c2042cb03e41f2d7f31b510d31639943e35f9d25adb",
+      "crop": {
+        "left": 50,
+        "top": 20,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 84,
+      "bytes": 19656,
+      "sha256": "3618f42136a6722fb4eda3bc4c6d6f7bff60c3d6ac622363ff8036f804d2b4dd"
+    },
+    {
+      "id": 44,
+      "file": "assets/tribute-avatars/avatar-44.webp",
+      "sourceFile": "25.webp",
+      "sourceSha256": "5da495467fdb0f618b4bcb740062220f841b454aaec79ad7769b835f8e5e62d0",
+      "crop": {
+        "left": 70,
+        "top": 50,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 80,
+      "bytes": 19930,
+      "sha256": "85142053303ff293c7bd88a90cd0793cf93bba9455b188f46c5864022ac18126"
+    },
+    {
+      "id": 45,
+      "file": "assets/tribute-avatars/avatar-45.webp",
+      "sourceFile": "26.webp",
+      "sourceSha256": "98abf4b3f765ba7727f143daec97ebbc62b8db7ffca46da6c16a8b1851379ab8",
+      "crop": {
+        "left": 0,
+        "top": 20,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 84,
+      "bytes": 19014,
+      "sha256": "cb49912e3f7eb58446ef61166cad1a7c3117b49bfefbad6fcf4669d60b180c07",
+      "sheen": 0.45
+    },
+    {
+      "id": 46,
+      "file": "assets/tribute-avatars/avatar-46.webp",
+      "sourceFile": "28.webp",
+      "sourceSha256": "2b3356c21d95724904afa611c465e3f8e3b6a9eb4887e643ed86157a1229c534",
+      "crop": {
+        "left": 110,
+        "top": 20,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 90,
+      "bytes": 12494,
+      "sha256": "ec008bd1a692d6cb5b5e522abe35b0389f770c2ee87922cec919511679412fcf",
+      "sheen": 0.2
+    },
+    {
+      "id": 47,
+      "file": "assets/tribute-avatars/avatar-47.webp",
+      "sourceFile": "30.webp",
+      "sourceSha256": "01a9a565e6434163e40021f2aa7434eb5fb274600b0a46824fb937785a32d205",
+      "crop": {
+        "left": 70,
+        "top": 20,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 90,
+      "bytes": 11992,
+      "sha256": "60b667a498196b85b5e95fea1e17d8bb7ecd8bbe46bc4cda350a492ba1571dd4",
+      "sheen": 0.35
+    },
+    {
+      "id": 48,
+      "file": "assets/tribute-avatars/avatar-48.webp",
+      "sourceFile": "31.webp",
+      "sourceSha256": "7aab9e355ad9102652f97fbcf05f45c036bbe7c0fc71b4a2637c9626eabce2ff",
+      "crop": {
+        "left": 62,
+        "top": 10,
+        "width": 900,
+        "height": 900
+      },
+      "width": 256,
+      "height": 256,
+      "quality": 90,
+      "bytes": 9206,
+      "sha256": "126849ef175c7cf208f768780fcd756494c57a3358969eaebba9f10f8df2fc38",
+      "sheen": 0.35
     }
   ]
 }

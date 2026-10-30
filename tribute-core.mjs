@@ -502,10 +502,10 @@ export function stylesLabel(card) {
   return normalizeStyles(card?.styles).map((id) => STYLE_LABELS[id]).join("・");
 }
 export const SIGIL_COLORS = Object.freeze(["#ff4fa3", "#b48cff", "#5fd4ff", "#ffd166", "#7ee08a", "#ff7a59"]);
-// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある42種から選ぶ。
+// 管理人の印のアイコン。id 0 はペルソナ名の1文字。画像はアップロードできず、ここにある48種から選ぶ。
 // 1〜6 はゆるめの絵、7〜12 は同じ6人の大人びた絵。13〜16 は写真・地雷系、17〜23 は写真・夜ギャル（無料）。
 // 24〜29 はパステル調のミニイラスト、30〜35 は同じ6人の等身イラスト。既存の番号は変えない。
-// 36〜42 は有料（1枚 500 Pay の買い切り。四角に金の縁で出す）。商品は tribute-deco.mjs の PREMIUM_AVATARS。
+// 36〜48 は有料（1枚 500 Pay の買い切り。四角に金の縁で出す）。商品は tribute-deco.mjs の PREMIUM_AVATARS。
 export const AVATAR_GROUPS = Object.freeze([
   Object.freeze({ id: "premium", label: "有料・四角（各500 Pay）" }),
   Object.freeze({ id: "illust", label: "イラスト" }),
@@ -555,6 +555,12 @@ export const AVATARS = Object.freeze([
   Object.freeze({ id: 40, group: "premium", label: "有料・白桃" }),
   Object.freeze({ id: 41, group: "premium", label: "有料・藤色" }),
   Object.freeze({ id: 42, group: "premium", label: "有料・空色" }),
+  Object.freeze({ id: 43, group: "premium", label: "有料・ミルクティー" }),
+  Object.freeze({ id: 44, group: "premium", label: "有料・瑠璃" }),
+  Object.freeze({ id: 45, group: "premium", label: "有料・琥珀" }),
+  Object.freeze({ id: 46, group: "premium", label: "有料・ネオン" }),
+  Object.freeze({ id: 47, group: "premium", label: "有料・深紅" }),
+  Object.freeze({ id: 48, group: "premium", label: "有料・ルージュ" }),
 ]);
 export const AVATAR_MAX = AVATARS.length;
 
