@@ -1786,6 +1786,81 @@ export function todayWordProblem(value) {
 
 // 貢がれ総額の番付（当月）と、管理人の詳細の応援欄。サーバーの LIMITS・normalizeRankingWord・normalizeCheer と同じ判定。
 export const GROSS_RANKING = Object.freeze({ limit: 10, minPayers: 3, badgeTop: 5 });
+
+// 番付の冠と月替わり（設計書18）。サーバーの LIMITS（monthRankTop・crownTop・hallTop）と同じ。
+// 冠は各番付の1〜5位で、消えない。収穫は順位で決まり（確率はない）、Pay は付かない。
+export const CROWNS = Object.freeze({ recordTop: 10, crownTop: 5, hallTop: 3 });
+export const CROWN_BOARDS = Object.freeze({ gross: "貢がれ総額", score: "番付加算" });
+export const HARVESTS = Object.freeze([
+  Object.freeze({ id: "gold", label: "金の卵", rule: "どちらかの番付で首位" }),
+  Object.freeze({ id: "silver", label: "銀の卵", rule: "2〜3位" }),
+  Object.freeze({ id: "egg", label: "大きな卵", rule: "4〜10位" }),
+  Object.freeze({ id: "milk", label: "牛乳", rule: "番付の外でも、財布から貢がれた月" }),
+]);
+
+export function rankText(rank) {
+  const value = integer(rank);
+  return value === 1 ? "首位" : value > 0 ? `${value}位` : "番付の外";
+}
+
+export function monthLabel(monthKey, { year = false } = {}) {
+  const [yearText, month] = String(monthKey || "").split("-");
+  const number = Number(month);
+  if (!number) return "";
+  return year ? `${yearText}年${number}月` : `${number}月`;
+}
+
+// 「10月 貢がれ総額 首位」（year で「2026年10月 …」）。
+export function crownLabel(crown, options = {}) {
+  if (!crown) return "";
+  return `${monthLabel(crown.monthKey, options)} ${CROWN_BOARDS[crown.board] || ""} ${rankText(crown.rank)}`;
+}
+
+// 掲示板のカードの札。先月の冠があれば「先月 首位」、なければいちばん良い冠と回数（「冠 首位×3」）。
+export function crownTagText(crowns) {
+  if (!crowns || !integer(crowns.best)) return "";
+  if (crowns.last) return `先月 ${rankText(crowns.last.rank)}`;
+  return `冠 ${rankText(crowns.best)}${integer(crowns.count) > 1 ? `×${integer(crowns.count)}` : ""}`;
+}
+
+// その月の収穫。2つの番付のよい方の順位で決まる（10位までの順位は締めた時に残る）。番付の外は、貢がれた月なら牛乳。
+export function harvestFor({ gross = 0, score = 0 } = {}) {
+  const ranks = [integer(gross), integer(score)].filter((rank) => rank > 0 && rank <= CROWNS.recordTop);
+  const best = ranks.length ? Math.min(...ranks) : 0;
+  const id = best === 1 ? "gold" : best && best <= 3 ? "silver" : best ? "egg" : "milk";
+  return HARVESTS.find((harvest) => harvest.id === id);
+}
+
+// 牧場の日報の順位の動き（設計書18.6）。前に牧場を開いた時の順位（この端末に残す）と比べる。
+// standing: { monthKey, gross: { rank, above: [{ id, name }] }, score: … }。残すのは順位と、上にいた管理人の公開IDだけ。
+export function standingSnapshot(standing) {
+  const side = (entry) => (entry ? { rank: integer(entry.rank), above: (Array.isArray(entry.above) ? entry.above : []).map((row) => String(row?.id || "")).filter(Boolean) } : null);
+  return { monthKey: String(standing?.monthKey || ""), gross: side(standing?.live?.gross), score: side(standing?.live?.score) };
+}
+
+export function standingDiary(previous, standing) {
+  // 月が変わった最初の日報には出さない（結果発表が代わりになる）。
+  if (!previous || typeof previous !== "object" || previous.monthKey !== standing?.monthKey) return [];
+  const lines = [];
+  for (const [kind, label] of Object.entries(CROWN_BOARDS)) {
+    const before = previous[kind];
+    const now = standing?.live?.[kind];
+    if (!before || !now) continue;
+    const from = integer(before.rank);
+    const to = integer(now.rank);
+    if (from === to) continue;
+    if (!from) lines.push(`${label}の番付に入った（${to}位）。`);
+    else if (!to) lines.push(`${label}の番付から外れた。`);
+    else if (to < from) lines.push(`${label}で${rankText(to)}に上がった。`);
+    else {
+      const passed = (Array.isArray(now.above) ? now.above : []).filter((row) => !(before.above || []).includes(row.id));
+      lines.push(passed.length
+        ? `${label}で${passed[0].name}${passed.length > 1 ? `ほか${passed.length - 1}人` : ""}に抜かれて${to}位になった。`
+        : `${label}で${to}位に下がった。`);
+    }
+  }
+  return lines;
+}
 export const RANKING_WORD = Object.freeze({ length: 40 });
 export const CHEER = Object.freeze({ length: 40, perDay: 3 });
 

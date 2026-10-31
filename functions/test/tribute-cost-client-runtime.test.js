@@ -86,6 +86,8 @@ async function harness(dispatch) {
     setFormError() {},
     // トップの近道の印と ?open=ranch（ranch-nav-v1）。端末と URL にだけ触るので、ここでは何もしない。
     rememberRanchRegular() { calls.push({ ui: "regular" }); }, markRanchUrl(open) { calls.push({ ui: open ? "url-open" : "url-close" }); },
+    // 牧場の順位（ranch-crowns-v1）は、契約の画面を開いた後に別に読む。ここでは読まない。
+    loadStanding() {},
   });
   vm.runInContext([
     "createState", "isCurrent", "ensureUser", "call", "readOnce", "closeSharePreview", "applyState", "requestState", "refreshState", "navigate",

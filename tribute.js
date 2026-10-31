@@ -121,6 +121,16 @@ import {
   purposeLabel,
   ranchAnimalMood,
   ranchDiary,
+  CROWN_BOARDS,
+  CROWNS,
+  crownLabel,
+  crownTagText,
+  harvestFor,
+  HARVESTS,
+  monthLabel,
+  rankText,
+  standingDiary,
+  standingSnapshot,
   ranchAchievementTier,
   ranchFondness,
   ranchLevelFor,
@@ -153,7 +163,7 @@ import {
   wordAgeLabel,
   wordRemainingLabel,
   workOrderNotesFor,
-} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1-ranch-photo-v1-ranch-achievements-v1-ranch-premium-icons-v2-ranch-premium-icons-v3";
+} from "./tribute-core.mjs?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1-ranch-wallet-words-v1-ranch-hold-v1-ranch-premium-icons-v1-ranch-recite-v1-ranch-safari-regex-v1-ranch-styles-v1-ranch-style-words-v1-ranch-othello-v1-ranch-contest-v1-ranch-pasture-v1-ranch-growth-v1-ranch-peek-v1-ranch-pat-v1-ranch-photo-v1-ranch-achievements-v1-ranch-premium-icons-v2-ranch-premium-icons-v3-ranch-crowns-v1";
 // 写真・受付カード・レシートの描画器は、画像を作る時だけ読み込む。
 let shareRendererRequest;
 function loadShareRenderer() {
@@ -165,7 +175,7 @@ function loadShareRenderer() {
   }) : Promise.resolve();
   return shareRendererRequest ||= Promise.all([
     fontReady,
-    import("./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1-ranch-premium-icons-v2-ranch-premium-icons-v3"),
+    import("./tribute-share.mjs?v=ranch-vault-v1-ranch-screenshot-v1-ranch-wallet-words-v1-ranch-premium-icons-v1-ranch-report-marks-v1-ranch-othello-v1-ranch-reception-card-v1-ranch-photo-v1-ranch-premium-icons-v2-ranch-premium-icons-v3-ranch-crowns-v1"),
   ]).then(([, module]) => module)
     .catch((error) => { shareRendererRequest = null; throw error; });
 }
@@ -253,7 +263,8 @@ function createState() {
     readRequests: new Map(),
     achievements: null,
     walletBalance: null,
-    board: { status: "idle", managers: [], nekamaOnly: false, feeZeroOnly: false, style: "" },
+    // pinned: 先月の首位（設計書18.5）。掲示板のいちばん上の欄。
+    board: { status: "idle", managers: [], pinned: [], nekamaOnly: false, feeZeroOnly: false, style: "" },
     manager: { status: "idle", publicManagerId: "", data: null },
     applyTarget: null,
     // 終わった契約の「同じ条件で申し込む」で写す設定（その管理人の申し込みでだけ使う）。
@@ -261,10 +272,11 @@ function createState() {
     thread: { contractId: "", raw: null, view: null, events: [], status: "idle" },
     receipts: { status: "idle", items: [], more: false, cursor: null, loadingMore: false },
     ledger: { status: "idle", asPayer: [], asManager: [] },
-    // kind: 番付加算（score）か貢がれ総額（gross）か。画面を移っても選んだ方を覚えておく。
-    ranking: { status: "idle", managers: [], monthKey: "", kind: "score" },
+    // kind: 番付加算（score）か貢がれ総額（gross）か殿堂（hall）か。画面を移っても選んだ方を覚えておく。
+    ranking: { status: "idle", managers: [], months: [], monthKey: "", kind: "score" },
     // わたしの牧場（設計書16）: 押した動物と、この画面を開いた時に作った日報。
-    ranch: { selected: "", diary: null, heart: null, naming: false },
+    // standing: 先月の結果・収穫の棚・今月の順位（設計書18.6）。standingDiary は、読んだ時に一度だけ作る順位の日報。
+    ranch: { selected: "", diary: null, heart: null, naming: false, standing: null, standingAt: 0, standingDiary: null },
     vault: { status: "idle", data: null, pendingMove: null, moveError: "" },
     // 管理人カードの編集で使う、持っている飾り・解除済みの実績・金庫のいちばん高い段階（編集を開いた時に読む）。
     decorations: { status: "idle", owned: [], achievements: [], vaultBestTier: 0 },
@@ -849,6 +861,117 @@ function ranchDiaryLines(herd) {
   return lines;
 }
 
+// わたしの牧場の順位（設計書18.6）: 先月の結果・収穫の棚・今月の順位。管理人カードのある人が契約の画面を開いた時に読む
+// （1分の間は読み直さない）。読めない時は、順位と収穫の棚が出ないだけで、牧場はふつうに出る。
+async function loadStanding() {
+  if (!state.profile?.card || state.ranch.standingLoading) return;
+  if (state.ranch.standing && Date.now() - state.ranch.standingAt < 60_000) return;
+  const generation = lifecycleGeneration;
+  const ranch = state.ranch;
+  ranch.standingLoading = true;
+  try {
+    const payload = await readOnce("ranch_standing");
+    if (!payload || !isCurrent(generation) || state.ranch !== ranch) return;
+    ranch.standing = payload;
+    ranch.standingAt = Date.now();
+    if (!ranch.standingDiary) ranch.standingDiary = standingDiaryLines(payload);
+    openRanchResult(payload);
+    if (state.screen === "hub") render();
+  } catch {
+    // 順位は牧場の飾りなので、読めなくても知らせない。
+  } finally {
+    ranch.standingLoading = false;
+  }
+}
+
+// 順位の日報は、最初に読んだ時に一度だけ作る（前に開いた時の順位は、この端末にだけ残す）。
+function standingDiaryLines(standing) {
+  const key = `tribute-ranch-standing:${state.uid}`;
+  let previous = null;
+  try {
+    previous = JSON.parse(window.localStorage.getItem(key) || "null");
+  } catch {
+    previous = null;
+  }
+  // 見本では、前に開いた時を少し前の順位にして、順位の日報の見え方を確かめる。
+  if (previewScreen) previous = { monthKey: standing.monthKey, gross: { rank: 3, above: [PREVIEW_MANAGER_CARD.publicManagerId] }, score: { rank: 1, above: [] } };
+  const lines = standingDiary(previous, standing);
+  try {
+    if (!previewScreen) window.localStorage.setItem(key, JSON.stringify(standingSnapshot(standing)));
+  } catch { /* 残せない時は、次に開いた時に順位の日報が出ないだけ。 */ }
+  return lines;
+}
+
+// 月替わりの結果発表。月が変わって初めて牧場を開いた時に1回だけ出す（出したことは、この端末に残す）。
+// 先月、財布から1度も貢がれていない管理人には出さない。
+function openRanchResult(standing) {
+  const last = standing?.lastMonth;
+  if (!last?.received || state.sheet || state.screen !== "hub") return;
+  const key = `tribute-ranch-result:${state.uid}`;
+  if (previewScreen) {
+    if (previewScreen !== "ranch-result") return;
+  } else {
+    try {
+      if (window.localStorage.getItem(key) === last.monthKey) return;
+      window.localStorage.setItem(key, last.monthKey);
+    } catch {
+      // 残せない端末では、この画面を開いている間だけ1回にする。
+      if (state.ranch.resultShown === last.monthKey) return;
+    }
+  }
+  state.ranch.resultShown = last.monthKey;
+  state.sheet = { type: "ranch-result", lastMonth: last, monthKey: standing.monthKey };
+  renderLayer();
+}
+
+function renderRanchResultSheet(sheet, wrap) {
+  const last = sheet.lastMonth;
+  const harvest = harvestFor(last);
+  const crowns = Object.keys(CROWN_BOARDS)
+    .filter((board) => Number(last[board]) >= 1 && Number(last[board]) <= CROWNS.crownTop)
+    .map((board) => ({ monthKey: last.monthKey, board, rank: Number(last[board]) }));
+  const best = [...crowns].sort((left, right) => left.rank - right.rank)[0];
+  const month = monthLabel(sheet.monthKey);
+  const privileges = [
+    Number(last.gross) === 1 || Number(last.score) === 1 ? "掲示板のいちばん上の「先月の首位」の欄に、番付のひとことを勝ち名乗りにして載ります。" : "",
+    best ? `受付カードに「${crownLabel(best)}」の帯が入ります。` : "",
+  ].filter(Boolean);
+  return wrap(`${monthLabel(last.monthKey)}の結果`, `<div class="tribute-ranch-result">
+    <div class="tribute-ranch-result-harvest is-${escapeHtml(harvest.id)}">
+      <img src="${escapeHtml(ranchImage(`harvest-${harvest.id}`))}" alt="" width="256" height="256" draggable="false" />
+      <span><small>${escapeHtml(monthLabel(last.monthKey))}の収穫</small><strong>${escapeHtml(harvest.label)}</strong><small>${escapeHtml(harvest.rule)}</small></span>
+    </div>
+    <dl class="tribute-facts">${Object.entries(CROWN_BOARDS).map(([board, label]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(rankText(last[board]))}</dd></div>`).join("")}</dl>
+    ${crowns.length
+    ? `<div class="tribute-ranch-result-crowns"><p>取った冠（消えません）</p><ul>${crowns.map((crown) => `<li>${escapeHtml(crownLabel(crown, { year: true }))}</li>`).join("")}</ul></div>`
+    : '<p class="tribute-note">冠は、どちらかの番付で5位以内に入ると付きます（財布3人以上から貢がれた管理人で数えます）。</p>'}
+    ${privileges.length ? `<div class="tribute-ranch-result-privileges"><p>${escapeHtml(month)}のあいだの特権</p><ul>${privileges.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul></div>` : ""}
+    <button class="button button-primary" type="button" data-t="sheet-close">棚に置く</button>
+  </div>`);
+}
+
+// 収穫の棚（設計書18.6）。月ごとの収穫を古い順に並べる（直近12か月）。期限はなく、Pay は付かない。
+function renderRanchShelf() {
+  const standing = state.ranch.standing;
+  if (!standing) return "";
+  const items = (Array.isArray(standing.shelf) ? standing.shelf : []).slice(0, 12).reverse();
+  const live = Object.entries(CROWN_BOARDS)
+    .map(([board, label]) => `${label} ${rankText(standing.live?.[board]?.rank)}`)
+    .join("・");
+  return `<div class="tribute-ranch-shelf">
+    <h3>収穫の棚</h3>
+    <p class="tribute-ranch-standing">今月の順位：${escapeHtml(live)}</p>
+    ${items.length
+    ? `<ul>${items.map((entry) => {
+      const harvest = harvestFor(entry);
+      const ranks = Object.entries(CROWN_BOARDS).filter(([board]) => Number(entry[board]) > 0).map(([board, label]) => `${label} ${rankText(entry[board])}`).join("・");
+      return `<li class="is-${escapeHtml(harvest.id)}" title="${escapeHtml(`${monthLabel(entry.monthKey, { year: true })}：${harvest.label}${ranks ? `（${ranks}）` : ""}`)}"><img src="${escapeHtml(ranchImage(`harvest-${harvest.id}`))}" alt="" draggable="false" /><b>${escapeHtml(monthLabel(entry.monthKey))}</b><small>${escapeHtml(harvest.label)}</small></li>`;
+    }).join("")}</ul>`
+    : "<p>月が変わると、その月の収穫がここに並びます。</p>"}
+    <small class="tribute-ranch-rule">収穫は先月の順位で決まります（首位は金の卵、2〜3位は銀の卵、4〜10位は大きな卵、番付の外でも財布から貢がれた月は牛乳）。Pay は付きません。</small>
+  </div>`;
+}
+
 function renderRanchAnimal(entry, index) {
   const { contract, mood, spot } = entry;
   const name = entry.name || ranchName(contract);
@@ -952,7 +1075,8 @@ function renderRanch(open, profile) {
   const name = String(profile.ranch?.name || "");
   const selected = placed.find((entry) => entry.contract.contractId === state.ranch.selected)
     || (away.find((contract) => contract.contractId === state.ranch.selected) ? { contract: away.find((contract) => contract.contractId === state.ranch.selected), mood: { mood: "away", line: "{name}は出稼ぎに出ている。" } } : null);
-  const diary = ranchDiaryLines(herd);
+  // 順位の動き（設計書18.6）を先に、留守の間の出来事を後に並べる。
+  const diary = [...(state.ranch.standingDiary || []), ...ranchDiaryLines(herd)];
   const upcoming = RANCH_FACILITIES.find((facility) => facility.level > progress.level);
   const stake = staked ? `<img class="tribute-ranch-prop is-stake" style="--x1:${ranchPercent(RANCH_LAYOUT.stake[0])};--y1:${ranchPercent(RANCH_LAYOUT.stake[1])};z-index:${Math.round(RANCH_LAYOUT.stake[1] * 100)}" src="${escapeHtml(ranchImage(`prop-stake-${light}`))}" alt="" draggable="false" />` : "";
   const card = selected ? (() => {
@@ -993,6 +1117,7 @@ function renderRanch(open, profile) {
     ${away.length ? `<p class="tribute-ranch-away">出稼ぎに出ている：${away.map((contract) => `<button type="button" class="tribute-link" data-t="ranch-animal" data-contract="${escapeHtml(contract.contractId)}">${escapeHtml(ranchName(contract))}</button>`).join("・")}</p>` : ""}
     ${herd.length ? "" : '<p class="tribute-note">放牧に同意した財布が、ここで暮らします。財布は申し込みとスレッドの設定で選べます。</p>'}
     <div class="tribute-ranch-diary"><h3>日報</h3>${diary.length ? `<ul>${diary.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : '<p>前に見た時から、変わったことはありません。</p>'}</div>
+    ${renderRanchShelf()}
     <small class="tribute-ranch-rule">牧場は、財布を迎える・仕えた日・受け取り・確認・願い出への返事・延長で育ちます。Pay の額では上がらず、来なくても何も減りません。${upcoming ? ` 次は Lv.${upcoming.level} で「${escapeHtml(upcoming.label)}」。` : " Lv30 から先は、施設は増えずにレベルの数字だけ上がり続けます。"}動物は、その財布が仕えた日数（7日・30日・100日・365日）で飾りが増えます。吹き出しの「」は、その財布が自分で書いた鳴き声です。動物を押すと、1日1回なでられます（財布の「牧場をのぞく」に、なでた日が出ます）。</small>
   </section>`;
 }
@@ -1756,13 +1881,30 @@ function rankHeart(rank, extra = "") {
   return `<span class="tribute-rank-heart is-rank-${value}${extra}" title="貢がれ総額 今月${value}位">${rankHeartSvg(value)}<b>${value}位</b></span>`;
 }
 
-function renderManagerCard(card, { compact = false, preview = false } = {}) {
+// 歴代の冠の札（設計書18.4）。先月の冠があれば「先月 首位」、なければいちばん良い冠と回数。
+function crownTag(crowns, extra = "") {
+  const text = crownTagText(crowns);
+  if (!text) return "";
+  const title = crowns.last ? crownLabel(crowns.last, { year: true }) : `歴代の冠：${crowns.list.map((crown) => crownLabel(crown, { year: true })).join("、")}`;
+  return `<span class="tribute-tag is-crown${crowns.last ? " is-last" : ""}${extra}" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
+}
+
+// 先月の首位の欄（設計書18.5）。どの番付の首位かを帯にし、番付のひとことを勝ち名乗りとして添える。
+function championRibbon(card) {
+  const month = card.crowns?.last?.monthKey || "";
+  const boards = (Array.isArray(card.pinnedBoards) ? card.pinnedBoards : []).filter((board) => CROWN_BOARDS[board]);
+  return `<span class="tribute-card-champion">${escapeHtml(`${monthLabel(month)} ${boards.map((board) => CROWN_BOARDS[board]).join("・")} 首位`.trim())}</span>`;
+}
+
+function renderManagerCard(card, { compact = false, preview = false, champion = false } = {}) {
   const face = preview
     ? `<div class="tribute-card-face"${frameAttr(card.frame, card.frameColor)}>`
     : `<button type="button" class="tribute-card-face" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}"${frameAttr(card.frame, card.frameColor)}>`;
-  return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${sigilColor(card)}">
+  return `<article class="tribute-card${compact ? " is-compact" : ""}${champion ? " is-champion" : ""}" style="--sigil:${sigilColor(card)}">
+    ${champion ? championRibbon(card) : ""}
     ${face}
-      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${rankHeart(card.grossRank)}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${ranchTag(card)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      <span class="tribute-card-head">${sigil(card, compact ? "" : "is-card")}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${rankHeart(card.grossRank)}${crownTag(card.crowns)}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${ranchTag(card)}${declarationTags(card)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      ${champion && card.rankingWord ? `<span class="tribute-card-victory"><small>勝ち名乗り</small>${escapeHtml(card.rankingWord)}</span>` : ""}
       ${cardAchievementsMarkup(card.achievements)}
       ${wordBubble(card.word)}
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
@@ -1791,14 +1933,18 @@ function styleReselectNotice(profile) {
 function renderBoard() {
   const board = state.board;
   // 入場料0のみ・管理の型: 読み込んだ掲示板を画面の上で絞る（入場料0は、Payが0の財布でも受理される管理人）。
-  const managers = board.managers
+  const shown = (cards) => cards
     .filter((card) => !board.feeZeroOnly || !Number(card.entryFee))
     .filter((card) => !board.style || normalizeStyles(card.styles).includes(board.style));
+  const managers = shown(board.managers);
+  // 先月の首位（設計書18.5）。絞り込みは下の一覧と同じにする。
+  const champions = shown(board.pinned || []);
   const emptyText = board.style
     ? `「${STYLE_LABELS[board.style] || ""}」の管理人は、いま受付していません。型を「すべて」にすると、ほかの管理人も見られます。`
     : board.feeZeroOnly
       ? "入場料0の管理人は、いま受付していません。「入場料0のみ」を外すと、ほかの管理人も見られます。"
-      : board.nekamaOnly ? "ネカマ開示の管理人は、いま受付していません。" : "いま受付中の管理人はいません。";
+      : champions.length ? "ほかに受付中の管理人はいません。"
+        : board.nekamaOnly ? "ネカマ開示の管理人は、いま受付していません。" : "いま受付中の管理人はいません。";
   const body = board.status === "loading" && !board.managers.length
     ? `<p class="tribute-empty">掲示板を読み込んでいます…</p>`
     : board.status === "error"
@@ -1814,6 +1960,7 @@ function renderBoard() {
       <small>性別で絞る機能はありません。中の人の札は、分かって渡すための札です。</small>
       ${isNewWallet() ? '<button class="tribute-link" type="button" data-t="open-demo">初めてなら、見本の契約を見学できます</button>' : ""}
     </div>
+    ${champions.length && board.status !== "error" ? `<section class="tribute-champions"><h2 class="tribute-section-title">先月の首位</h2><div class="tribute-card-grid">${champions.map((card) => renderManagerCard(card, { champion: true })).join("")}</div></section>` : ""}
     <section><h2 class="tribute-section-title">受付中の管理人</h2>${body}</section>
   </div>`, { title: "掲示板" });
 }
@@ -1851,7 +1998,8 @@ function renderManagerDetail() {
   return frame(`<div class="tribute-manager-detail">
     ${welcome}
     <section class="tribute-panel tribute-profile" style="--sigil:${sigilColor(card)}"${frameAttr(card.frame, card.frameColor)}>
-      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${rankHeart(card.grossRank, " is-large")}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${ranchTag(card)}${declarationTags(card)}</div></div></div>
+      <div class="tribute-profile-head">${sigil(card, "is-large")}<div><h1>${escapeHtml(card.personaName)}</h1><div class="tribute-card-tags">${rankHeart(card.grossRank, " is-large")}${crownTag(card.crowns)}${disclosureTag(card.disclosure)}${styleTag(card)}${vaultTag(card.vault)}${ranchTag(card)}${declarationTags(card)}</div></div></div>
+      ${renderCrownList(card.crowns)}
       ${cardAchievementsMarkup(card.achievements, " is-large")}
       ${wordBubble(card.word, " is-large")}
       <p class="tribute-profile-intro">${escapeHtml(card.intro || "（紹介文なし）")}</p>
@@ -1884,6 +2032,13 @@ function renderManagerDetail() {
       </div>
     </section>` : ""}
   </div>`, { title: card.personaName });
+}
+
+// 管理人の詳細の「歴代の冠」（設計書18.4）。各番付の1〜5位を、新しい順にすべて並べる。
+function renderCrownList(crowns) {
+  const list = Array.isArray(crowns?.list) ? crowns.list : [];
+  if (!list.length) return "";
+  return `<div class="tribute-crown-list"><h2>歴代の冠</h2><ul>${list.map((crown) => `<li class="${crown.rank === 1 ? "is-first" : ""}">${escapeHtml(crownLabel(crown, { year: true }))}</li>`).join("")}</ul></div>`;
 }
 
 // 応援欄。今月この管理人に貢いだ財布だけが書け、新しい順に並ぶ（額の順にはしない。設計書15.1）。
@@ -3455,6 +3610,7 @@ function renderSheet() {
   if (sheet.type === "share") return renderShareSheet(sheet, wrap);
   if (sheet.type === "recruit") return renderRecruitSheet(sheet, wrap);
   if (sheet.type === "ranch-photo") return renderRanchPhotoSheet(sheet, wrap);
+  if (sheet.type === "ranch-result") return renderRanchResultSheet(sheet, wrap);
   if (!view) return "";
   const amountChips = (maximum, name = "amount") => {
     const chips = [10, 30, 50, 100, 300, 500, 1_000].filter((value) => value <= maximum);
@@ -4098,6 +4254,8 @@ function recruitData(card, month) {
       styleLabel: stylesLabel(card),
     },
     vaultLabel: vaultTierInfo(card.vault?.level)?.label || "",
+    // 先月の冠（設計書18.5）。先月の1〜5位だけ、受付カードに冠の帯が入る（月が変わると外れる）。
+    crownLabel: card.crowns?.last ? crownLabel(card.crowns.last) : "",
     ignoreUnpaid: card.ignoreUnpaid === true,
     postsScreenshots: card.postsScreenshots === true,
     highRequest: card.highRequest === true,
@@ -4272,8 +4430,9 @@ function renderLedger() {
 
 function renderRanking() {
   const ranking = state.ranking;
-  const tabs = `<div class="tribute-role-switch tribute-ranking-tabs" role="group" aria-label="番付の種類">${[["score", "番付加算"], ["gross", "貢がれ総額"]].map(([kind, label]) => `<button type="button" data-t="ranking-kind" data-kind="${kind}" aria-pressed="${ranking.kind === kind ? "true" : "false"}">${label}</button>`).join("")}</div>`;
+  const tabs = `<div class="tribute-role-switch tribute-ranking-tabs" role="group" aria-label="番付の種類">${[["score", "番付加算"], ["gross", "貢がれ総額"], ["hall", "殿堂"]].map(([kind, label]) => `<button type="button" data-t="ranking-kind" data-kind="${kind}" aria-pressed="${ranking.kind === kind ? "true" : "false"}">${label}</button>`).join("")}</div>`;
   if (ranking.kind === "gross") return frame(`<div class="tribute-ranking">${tabs}${renderGrossRanking(ranking)}</div>`, { title: "番付" });
+  if (ranking.kind === "hall") return frame(`<div class="tribute-ranking">${tabs}${renderHall(ranking)}</div>`, { title: "番付" });
   return frame(`<div class="tribute-ranking">
     ${tabs}
     <p class="tribute-note">管理人番付：今月の番付加算（同じ財布から1日500 Payまで）の多い順、同じなら財布の人数で並べます。毎日満額を貢ぐ財布を多く抱える管理人が上に来ます。実際の献上額とレシートは制限しません。</p>
@@ -4283,6 +4442,26 @@ function renderRanking() {
         <em>${escapeHtml(formatPay(row.rankScore))} ・ 財布${row.payers}人</em></li>`).join("")}</ol>`
     : `<p class="tribute-empty">今月の番付はまだありません。</p>`}
   </div>`, { title: "番付" });
+}
+
+// 殿堂（設計書18.4）。締めた月ごとに、2つの番付の1〜3位（直近12か月）。名前とアイコンは締めた時のまま。
+function renderHall(ranking) {
+  const note = `<p class="tribute-note">殿堂：月が変わると、その月の番付が残ります。各番付の1〜${CROWNS.crownTop}位は冠になり、管理人カードに消えずに残ります（財布${GROSS_RANKING.minPayers}人以上から貢がれた管理人で数えます）。先月の首位は、掲示板のいちばん上に載ります。</p>`;
+  if (ranking.status === "loading") return `${note}<p class="tribute-empty">殿堂を読み込んでいます…</p>`;
+  const months = (ranking.months || []).filter((month) => month.gross?.length || month.score?.length);
+  if (!months.length) return `${note}<p class="tribute-empty">まだ殿堂に残った月はありません。月が変わると、先月の番付がここに残ります。</p>`;
+  const column = (rows, kind) => rows?.length
+    ? `<ol class="tribute-manager-ranking tribute-hall-list">${rows.map((row) => `<li class="${row.mine ? "is-mine" : ""}${Number(row.rank) === 1 ? " is-first" : ""}"><b>${escapeHtml(rankText(row.rank))}</b>
+        ${row.publicManagerId ? `<button type="button" data-t="open-manager" data-id="${escapeHtml(row.publicManagerId)}">${sigil(row)}<span><strong>${escapeHtml(row.personaName)}</strong>${disclosureTag(row.disclosure)}</span></button>` : `<span>${sigil(row)}<span><strong>${escapeHtml(row.personaName)}</strong></span></span>`}
+        <em>${escapeHtml(formatPay(row.value))}<small>財布${Number(row.payers || 0)}人</small></em></li>`).join("")}</ol>`
+    : `<p class="tribute-empty">${kind === "score" ? "財布3人以上の管理人がいませんでした。" : "載った管理人はいません。"}</p>`;
+  return `${note}${months.map((month) => `<section class="tribute-panel tribute-hall-month">
+      <h2>${escapeHtml(monthLabel(month.monthKey, { year: true }))}</h2>
+      <div class="tribute-two-col">
+        <div><h3>${escapeHtml(CROWN_BOARDS.gross)}</h3>${column(month.gross, "gross")}</div>
+        <div><h3>${escapeHtml(CROWN_BOARDS.score)}</h3>${column(month.score, "score")}</div>
+      </div>
+    </section>`).join("")}`;
 }
 
 // 貢がれ総額の番付（当月）。財布3人以上から貢がれた管理人だけ、上位10まで。10位以内は X のプロフィールと番付のひとこと、
@@ -4510,7 +4689,10 @@ async function refreshState() {
   try {
     const payload = await requestState();
     if (!payload || !isCurrent(generation) || state !== targetState) return;
-    if (["hub"].includes(state.screen)) render();
+    if (["hub"].includes(state.screen)) {
+      render();
+      loadStanding();
+    }
   } catch (error) {
     if (isCurrent(generation)) showToast(friendlyError(error));
   }
@@ -4523,7 +4705,7 @@ async function loadBoard() {
   try {
     const payload = await readOnce("board", { nekamaOnly: state.board.nekamaOnly });
     if (!payload || !isCurrent(generation) || state.board !== target) return;
-    state.board = { ...state.board, status: "ready", managers: payload.managers || [] };
+    state.board = { ...state.board, status: "ready", managers: payload.managers || [], pinned: payload.pinned || [] };
   } catch (error) {
     if (!isCurrent(generation) || state.board !== target) return;
     state.board.status = "error";
@@ -4566,10 +4748,10 @@ async function loadList(key, action, mapper, payload = {}) {
   if (state.screen === key) render();
 }
 
-// 番付は「番付加算」と「貢がれ総額」を切り替える。読み込む間は、もう一方の行を出さない。
+// 番付は「番付加算」「貢がれ総額」「殿堂」を切り替える。読み込む間は、ほかの欄の行を出さない。
 function loadRanking(kind = state.ranking.kind || "score") {
-  state.ranking = { ...state.ranking, kind, managers: [] };
-  loadList("ranking", "rankings", (payload) => ({ managers: payload.managers || [], monthKey: payload.monthKey || "" }), kind === "gross" ? { kind } : {});
+  state.ranking = { ...state.ranking, kind, managers: [], months: [] };
+  loadList("ranking", "rankings", (payload) => ({ managers: payload.managers || [], months: payload.months || [], monthKey: payload.monthKey || "" }), kind === "gross" || kind === "hall" ? { kind } : {});
 }
 
 function navigate(requested, { refresh = true } = {}) {
@@ -4589,6 +4771,8 @@ function navigate(requested, { refresh = true } = {}) {
   else {
     render();
     if (screen === "hub" && refresh) refreshState();
+    // 読み直さずに開いた時（入った直後）は、ここで牧場の順位を読む（読み直す時は、読み終わってから）。
+    else if (screen === "hub") loadStanding();
     if (screen === "card") loadDecorations();
   }
 }
@@ -5674,7 +5858,7 @@ async function handleClick(target) {
       return;
     }
     case "ranking-kind": {
-      const kind = target.dataset.kind === "gross" ? "gross" : "score";
+      const kind = ["gross", "hall"].includes(target.dataset.kind) ? target.dataset.kind : "score";
       if (kind !== state.ranking.kind) loadRanking(kind);
       return;
     }
@@ -6765,9 +6949,23 @@ function previewHerd(now, total = 6) {
   ];
 }
 
+// 見本の冠（設計書18.4）。back は何か月前か。
+function previewMonthBefore(monthKey, count) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const index = year * 12 + (month - 1) - count;
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+}
+
+function previewCrowns(monthKey, entries) {
+  const list = entries.map(([back, board, rank]) => ({ monthKey: previewMonthBefore(monthKey, back), board, rank }));
+  const best = Math.min(...list.map((crown) => crown.rank));
+  return { best, count: list.filter((crown) => crown.rank === best).length, last: list.filter((crown) => crown.monthKey === previewMonthBefore(monthKey, 1)).sort((left, right) => left.rank - right.rank)[0] || null, list };
+}
+
 function previewCall(action, payload) {
   const now = previewNow();
   const monthKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit" }).format(new Date(now));
+  const lastMonthKey = previewMonthBefore(monthKey, 1);
   switch (action) {
     case "state":
       return Promise.resolve({
@@ -6775,7 +6973,7 @@ function previewCall(action, payload) {
         ageConfirmed: previewScreen !== "age",
         profile: previewSavedProfile || {
           walletName: "ポチ財布",
-          card: { ...PREVIEW_MANAGER_CARD, personaName: "レイ", disclosure: "as_is", styles: ["manage"], sigil: 2, avatar: 5, frame: "kurokawa", frameColor: "navy", sealShape: "heart", sealInk: "sakura", seals: ["yoku", "word:よく貢いだ", "kakunin"], achievements: ["tribute_manager_10"], mine: true },
+          card: { ...PREVIEW_MANAGER_CARD, personaName: "レイ", disclosure: "as_is", styles: ["manage"], sigil: 2, avatar: 5, frame: "kurokawa", frameColor: "navy", sealShape: "heart", sealInk: "sakura", seals: ["yoku", "word:よく貢いだ", "kakunin"], achievements: ["tribute_manager_10"], crowns: previewCrowns(monthKey, [[1, "gross", 2], [1, "score", 1], [2, "gross", 4]]), mine: true },
           ownWords: { lines: [{ text: "跪いて差し出しな。", tone: "harsh" }, { text: "今日もちゃんと来たね。", tone: "sweet" }], rewards: [{ text: "上出来", tone: "normal" }, { text: "イっていいよ", tone: "harsh" }] },
           accepting: true,
           publicManagerId: "f".repeat(24),
@@ -6811,16 +7009,20 @@ function previewCall(action, payload) {
               ...(previewScreen === "newcomer" ? [] : [viewContract(previewRaw("payer"), "preview-me", now)]),
               viewContract(previewRaw("manager"), "preview-me", now),
               viewContract(previewRaw("manager", "pending"), "preview-me", now),
-              ...(["hub", "ranch", "ranch-crowd"].includes(previewScreen) ? previewHerd(now, previewScreen === "ranch-crowd" ? 20 : 6).map((raw) => viewContract(raw, "preview-me", now)) : []),
+              ...(["hub", "ranch", "ranch-crowd", "ranch-result"].includes(previewScreen) ? previewHerd(now, previewScreen === "ranch-crowd" ? 20 : 6).map((raw) => viewContract(raw, "preview-me", now)) : []),
             ].map((contract) => (contract.role === "manager" ? { ...contract, nickname: previewNicknames.get(contract.contractId) || "" } : contract)),
       });
     case "board":
       return Promise.resolve({
         ok: true,
+        // 先月の首位（設計書18.5）。下の一覧には重ねて出さない。
+        pinned: [
+          { ...PREVIEW_MANAGER_CARD, grossRank: 1, crowns: previewCrowns(monthKey, [[1, "gross", 1], [2, "gross", 1], [2, "score", 2]]), pinnedBoards: ["gross"], rankingWord: "今月も首位。覚悟して貢ぎな。" },
+        ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
         managers: [
-          { ...PREVIEW_MANAGER_CARD, grossRank: 1 },
           { ...PREVIEW_MANAGER_CARD, grossRank: 5, publicManagerId: "b".repeat(24), personaName: "サキ", disclosure: "undisclosed", styles: ["aloof"], entryFee: 0, sigil: 1, avatar: 0, word: null, vault: { level: 2 }, intro: "事務的に管理します。報告は毎日。", frame: "kinbuchi", frameColor: "silver", achievements: ["tribute_manager_3"], showsActivity: false, lastActiveAt: 0 },
-          { ...PREVIEW_MANAGER_CARD, grossRank: 2, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", styles: ["pamper"], entryFee: 5, sigil: 3, avatar: 38, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], lastActiveAt: now - 5 * 3_600_000 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 2, publicManagerId: "c".repeat(24), personaName: "ユナ", disclosure: "as_is", styles: ["pamper"], entryFee: 5, sigil: 3, avatar: 38, word: { text: "甘やかし受付中。無理はさせないよ。", at: now - 30 * 60_000 }, vault: { level: 5 }, intro: "甘やかし担当。無理はさせない。", frame: "kinjo", frameColor: "pink", achievements: [], crowns: previewCrowns(monthKey, [[1, "score", 1]]), lastActiveAt: now - 5 * 3_600_000 },
+          { ...PREVIEW_MANAGER_CARD, grossRank: 0, publicManagerId: "a".repeat(23) + "b", personaName: "ルカ", disclosure: "as_is", styles: ["tease"], entryFee: 0, sigil: 4, avatar: 3, word: null, vault: null, intro: "からかい担当。", frame: "", frameColor: "", achievements: [], crowns: previewCrowns(monthKey, [[3, "gross", 3], [4, "score", 3]]), lastActiveAt: now - 2 * 3_600_000 },
           { ...PREVIEW_MANAGER_CARD, grossRank: 3, publicManagerId: "d".repeat(24), personaName: "カイ", disclosure: "as_is", styles: ["insight"], entryFee: 50, sigil: 2, avatar: 11, word: null, vault: { level: 4 }, intro: "逃げられると思うな。解約ボタンはお前の手にあるけどな。", frame: "houmotsu", frameColor: "ruby", achievements: [], showsActivity: false, lastActiveAt: 0 },
           { ...PREVIEW_MANAGER_CARD, grossRank: 4, publicManagerId: "e".repeat(24), personaName: "ゆず", disclosure: "nekama", styles: ["manage", "pamper"], entryFee: 5, sigil: 3, avatar: 2, word: null, vault: { level: 3 }, intro: "毎日決まった額を、決まった時間に。", frame: "kura", frameColor: "pink", sealShape: "senryo", sealInk: "kogane", achievements: ["battle_total_1"] },
         ].filter((card) => !payload?.nekamaOnly || card.disclosure === "nekama"),
@@ -6829,7 +7031,7 @@ function previewCall(action, payload) {
       const mine = payload.publicManagerId === PREVIEW_OWN_MANAGER_ID;
       return Promise.resolve({
         ok: true,
-        card: mine ? { ...(state.profile?.card || PREVIEW_MANAGER_CARD), publicManagerId: PREVIEW_OWN_MANAGER_ID, grossRank: 2, mine: true } : { ...PREVIEW_MANAGER_CARD, grossRank: 1 },
+        card: mine ? { ...(state.profile?.card || PREVIEW_MANAGER_CARD), publicManagerId: PREVIEW_OWN_MANAGER_ID, grossRank: 2, mine: true } : { ...PREVIEW_MANAGER_CARD, grossRank: 1, crowns: previewCrowns(monthKey, [[1, "gross", 1], [2, "gross", 1], [2, "score", 2], [3, "score", 5]]) },
         cheers: previewCheerView(mine),
         myCheer: mine ? null : { canWrite: true, text: previewCheers.find((cheer) => cheer.mine)?.text || "", hidden: false, leftToday: 2 },
         month: { payers: 4, tributeCount: 12 },
@@ -6885,6 +7087,21 @@ function previewCall(action, payload) {
         asManager: [{ counterpartName: "しもべ3号", total: 1_200, count: 9, firstAt: now - 9 * 86_400_000, lastAt: now - 3_600_000, openContractId: "2".repeat(40) }],
       });
     case "rankings":
+      if (payload.kind === "hall") {
+        const row = (rank, card, value, payers, extra = {}) => ({ rank, publicManagerId: card.publicManagerId, personaName: card.personaName, avatar: card.avatar, sigil: card.sigil, disclosure: card.disclosure, value, payers, ...extra });
+        const mio = { publicManagerId: PREVIEW_MANAGER_CARD.publicManagerId, personaName: "ミオ様", avatar: 7, sigil: 0, disclosure: "nekama" };
+        const rei = { publicManagerId: PREVIEW_OWN_MANAGER_ID, personaName: "レイ", avatar: 5, sigil: 2, disclosure: "as_is" };
+        const yuna = { publicManagerId: "c".repeat(24), personaName: "ユナ", avatar: 38, sigil: 3, disclosure: "as_is" };
+        const kai = { publicManagerId: "d".repeat(24), personaName: "カイ", avatar: 11, sigil: 2, disclosure: "as_is" };
+        return Promise.resolve({
+          ok: true,
+          kind: "hall",
+          months: [
+            { monthKey: lastMonthKey, gross: [row(1, mio, 14_200, 7), row(2, rei, 9_100, 4, { mine: true }), row(3, kai, 5_400, 5)], score: [row(1, yuna, 9_800, 5), row(2, mio, 8_600, 7), row(3, rei, 6_100, 4, { mine: true })] },
+            { monthKey: previewMonthBefore(monthKey, 2), gross: [row(1, mio, 11_000, 6), row(2, yuna, 7_400, 4), row(3, kai, 3_900, 3)], score: [row(1, kai, 7_000, 3), row(2, mio, 6_800, 6), row(3, yuna, 5_200, 4)] },
+          ],
+        });
+      }
       if (payload.kind === "gross") {
         return Promise.resolve({
           ok: true,
@@ -7285,6 +7502,21 @@ function previewCall(action, payload) {
       const row = state.contracts.find((contract) => contract.contractId === payload.contractId);
       return Promise.resolve({ ok: true, contract: { ...(row || {}), pattedAt: now } });
     }
+    case "ranch_standing":
+      return Promise.resolve({
+        ok: true,
+        monthKey,
+        lastMonth: { monthKey: lastMonthKey, gross: 2, score: 1, received: true },
+        shelf: [
+          { monthKey: lastMonthKey, gross: 2, score: 1 },
+          { monthKey: previewMonthBefore(monthKey, 2), gross: 4, score: 0 },
+          { monthKey: previewMonthBefore(monthKey, 3), gross: 0, score: 0 },
+        ],
+        live: {
+          gross: { rank: 2, above: [{ id: PREVIEW_MANAGER_CARD.publicManagerId, name: "ミオ様" }] },
+          score: { rank: 2, above: [{ id: "b".repeat(24), name: "サキ" }] },
+        },
+      });
     case "ranch_peek":
       return Promise.resolve({ ok: true, contractId: payload.contractId, ranchLevel: payload.contractId === DEMO_CONTRACT_ID ? 3 : 18, ranchName: payload.contractId === DEMO_CONTRACT_ID ? "" : "ひだまり" });
     case "set_ranch_name": {
@@ -7518,8 +7750,14 @@ function startPreview(screen) {
       openRanchPhoto();
     },
     "ranch-crowd": () => navigate("hub"),
+    // 月替わりの結果発表（設計書18.6）。見本では、開くたびに出す。
+    "ranch-result": () => navigate("hub"),
     "ranking-gross": () => {
       state.ranking.kind = "gross";
+      navigate("ranking");
+    },
+    "ranking-hall": () => {
+      state.ranking.kind = "hall";
       navigate("ranking");
     },
     vault: () => navigate("vault"),

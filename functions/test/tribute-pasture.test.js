@@ -180,7 +180,7 @@ async function ranchRenderer(storage = new Map()) {
   vm.runInContext([
     /const RANCH_ASSET_KEY = [^\n]*\n/.exec(client)[0],
     /const RANCH_WANDER = [^\n]*\n/.exec(client)[0],
-    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "ranchPlacements", "renderRanch"].map((name) => extract(client, name)),
+    ...["managerNickname", "ranchImage", "ranchName", "ranchHerd", "ranchPercent", "ranchDiaryLines", "renderRanchAnimal", "renderRanchWeather", "ranchBubbleStyle", "ranchPlacements", "renderRanchShelf", "renderRanch"].map((name) => extract(client, name)),
   ].join("\n"), context);
   return context;
 }
@@ -258,6 +258,8 @@ test("client and server wiring, assets, privacy of the art scripts, cache keys a
     }
     for (const prop of ["letter", "hay", "stake"]) names.push(`prop-${prop}-${time}.webp`);
   }
+  // 月の収穫（ranch-crowns-v1）は、昼の光だけ。
+  for (const harvest of ["gold", "silver", "egg", "milk"]) names.push(`harvest-${harvest}.webp`);
   let total = 0;
   for (const name of names) {
     const file = path.join(dir, name);

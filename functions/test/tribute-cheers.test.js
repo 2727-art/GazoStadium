@@ -99,13 +99,14 @@ test("the server ranks gross receipts monthly with the 3-wallet floor and caches
 test("the ranking screen switches between 番付加算 and 貢がれ総額, and the top 10 shows X and the ranking word", () => {
   const ranking = sourceBlock(client, "function renderRanking()", "function renderGrossRanking");
   assert.match(ranking, /data-t="ranking-kind" data-kind="\$\{kind\}"/);
-  assert.match(ranking, /\[\["score", "番付加算"\], \["gross", "貢がれ総額"\]\]/);
+  // 殿堂（ranch-crowns-v1）を3つ目に足した。
+  assert.match(ranking, /\[\["score", "番付加算"\], \["gross", "貢がれ総額"\], \["hall", "殿堂"\]\]/);
   const gross = sourceBlock(client, "function renderGrossRanking", "// ───────────── 金庫");
   assert.match(gross, /財布\$\{GROSS_RANKING\.minPayers\}人以上から貢がれた管理人だけ/);
   assert.match(gross, /\$\{row\.rankingWord \? `<span class="tribute-gross-word">\$\{escapeHtml\(row\.rankingWord\)\}<\/span>` : ""\}/);
   assert.match(gross, /\$\{xProfileButton\(row\)\}/);
-  assert.match(client, /ranking: \{ status: "idle", managers: \[\], monthKey: "", kind: "score" \},/);
-  assert.match(sourceBlock(client, "function loadRanking", "function navigate"), /kind === "gross" \? \{ kind \} : \{\}/);
+  assert.match(client, /ranking: \{ status: "idle", managers: \[\], months: \[\], monthKey: "", kind: "score" \},/);
+  assert.match(sourceBlock(client, "function loadRanking", "function navigate"), /kind === "gross" \|\| kind === "hall" \? \{ kind \} : \{\}/);
   assert.match(sourceBlock(client, 'case "ranking-kind": {', 'case "clear-cheer":'), /if \(kind !== state\.ranking\.kind\) loadRanking\(kind\);/);
   // 番付のひとことはカードの編集で書き、送る前に画面でも確かめる。
   const editor = sourceBlock(client, "function renderCardEditor", "function updateCardPreview");

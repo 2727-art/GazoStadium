@@ -7,6 +7,7 @@
 #   ranch-lv{1..30}-{時間帯}.webp   芝の島と、そのレベルまでの施設（背景は透明。空は画面側で描く）
 #   {cow|pig|sheep|goat|chicken|rabbit}-{stand|walk1|walk2|eat|sleep}[-t{1..4}]-{時間帯}.webp   動物（足元が絵の決まった位置に来る）。-t は、なつきの飾り
 #   prop-{letter|hay|stake}-{時間帯}.webp   小物
+#   harvest-{gold|silver|egg|milk}.webp   月の収穫（昼の光だけ。設計書18.6）
 # layout を渡すと、何も描かずに、動物の立ち位置と足元の位置を画面の割合で書き出す（tribute-core.mjs に写す）。
 import json
 import math
@@ -45,7 +46,7 @@ for engine in ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"):
 MATS = {}
 
 
-def mat(name, color, rough=0.55, sheen=0.0, noise=None, emission=0.0):
+def mat(name, color, rough=0.55, sheen=0.0, noise=None, emission=0.0, metal=0.0):
     if name in MATS:
         return MATS[name]
     m = bpy.data.materials.new(name)
@@ -55,6 +56,8 @@ def mat(name, color, rough=0.55, sheen=0.0, noise=None, emission=0.0):
     bsdf = nodes.get("Principled BSDF")
     bsdf.inputs["Base Color"].default_value = (*color, 1)
     bsdf.inputs["Roughness"].default_value = rough
+    if metal:
+        bsdf.inputs["Metallic"].default_value = metal
     if sheen:
         bsdf.inputs["Sheen Weight"].default_value = sheen
     if emission:
@@ -441,6 +444,52 @@ def prop_stake(group):
 
 
 PROPS = {"letter": prop_letter, "hay": prop_hay, "stake": prop_stake}
+
+
+# ───────────── 収穫（設計書18.6。牧場の収穫の棚と月替わりの結果発表） ─────────────
+# 順位で決まる月の収穫。棚に並べるので、昼の光だけで、寄った絵にする。
+
+def nest(group, root):
+    hay = mat("hay", (0.98, 0.84, 0.42), 0.8, noise=((0.9, 0.74, 0.34), 14))
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.3, minor_radius=0.11, location=(0, 0, 0.1))
+    ring = link(finish(bpy.context.active_object, hay), root, group)
+    ring.scale = (1, 1, 0.8)
+    for angle in range(0, 360, 45):
+        x, y = math.cos(math.radians(angle)) * 0.3, math.sin(math.radians(angle)) * 0.3
+        sphere((x, y, 0.16), (0.09, 0.09, 0.06), hay, root, group, seg=12)
+
+
+def egg(group, material, size=1.0):
+    root = empty((0, 0, 0), group=group)
+    nest(group, root)
+    sphere((0, 0, 0.4 * size), (0.25 * size, 0.25 * size, 0.33 * size), material, root, group)
+    return root
+
+
+def harvest_gold(group):
+    return egg(group, mat("egg_gold", (1.0, 0.7, 0.12), 0.28, emission=0.18, metal=1.0))
+
+
+def harvest_silver(group):
+    return egg(group, mat("egg_silver", (0.9, 0.92, 0.97), 0.3, emission=0.08, metal=1.0))
+
+
+def harvest_egg(group):
+    # 大きな卵（そばかすのある生成り）。
+    return egg(group, mat("egg_big", (1.0, 0.95, 0.86), 0.45, noise=((0.92, 0.8, 0.66), 22)), size=1.12)
+
+
+def harvest_milk(group):
+    # 牛乳びん（水色のふたと桃色の帯）。
+    root = empty((0, 0, 0), group=group)
+    rcyl((0, 0, 0.3), 0.22, 0.6, mat("milk", (0.99, 0.99, 0.97), 0.3), parent=root, group=group, round_ratio=0.3)
+    rcyl((0, 0, 0.32), 0.226, 0.16, mat("milk_band", (0.98, 0.62, 0.74), 0.45), parent=root, group=group, round_ratio=0.1)
+    rcyl((0, 0, 0.66), 0.14, 0.18, mat("milk", (0.99, 0.99, 0.97), 0.3), parent=root, group=group, round_ratio=0.3)
+    rcyl((0, 0, 0.76), 0.16, 0.07, mat("milk_cap", (0.56, 0.76, 1.0), 0.4), parent=root, group=group, round_ratio=0.3)
+    return root
+
+
+HARVESTS = {"gold": harvest_gold, "silver": harvest_silver, "egg": harvest_egg, "milk": harvest_milk}
 
 
 # ───────────── 芝の島と施設 ─────────────
@@ -1022,3 +1071,15 @@ for name, build in PROPS.items():
     build(group)
     render(f"{OUT}/prop-{name}-{TIME}.webp", sprite_cam, SPRITE_PX, SPRITE_PX)
     set_visible(group, False)
+
+# 収穫は昼の光だけ（時間帯で描き分けない）。RANCH_SPRITES="harvest" で収穫だけを描ける。
+if TIME == "day":
+    harvest_cam = camera("harvest", Vector((0, 0, 0.42)), 1.45, SPRITE_PX, SPRITE_PX)
+    for name, build in HARVESTS.items():
+        if ONLY_SPRITES and "harvest" not in ONLY_SPRITES and f"harvest-{name}" not in ONLY_SPRITES:
+            continue
+        group = []
+        root = build(group)
+        root.rotation_euler[2] = math.radians(-30)
+        render(f"{OUT}/harvest-{name}.webp", harvest_cam, SPRITE_PX, SPRITE_PX)
+        set_visible(group, False)

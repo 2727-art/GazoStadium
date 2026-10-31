@@ -1703,7 +1703,9 @@ export async function renderRecruitImage(data) {
   const SHOT = "スクショを載せる";
   const HIGH = "高額請求";
   const tags = [manager.disclosureLabel, data.ignoreUnpaid ? OATH : "", data.postsScreenshots ? SHOT : "", data.highRequest ? HIGH : "", manager.styleLabel, vaultLabel].filter(Boolean);
-  await loadFonts([manager.personaName, word, intro, tags.join(""), achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布受付中入場料管理中今月の財布人アプリ内ポイントだけ現金なし#募集ACCEPTING WALLETS"].join(""));
+  // 先月の冠（設計書18.5）。先月の1〜5位だけ「10月 貢がれ総額 首位」の帯が入る。
+  const crown = String(data.crownLabel || "");
+  await loadFonts([manager.personaName, word, intro, tags.join(""), crown, achievements.map((entry) => `${entry.icon}${entry.name}`).join(""), "財布受付中入場料管理中今月の財布人アプリ内ポイントだけ現金なし#募集ACCEPTING WALLETS"].join(""));
   const image = await loadImage(manager.avatarUrl);
   const canvas = canvasFor();
   const ctx = canvas.getContext("2d");
@@ -1732,6 +1734,34 @@ export async function renderRecruitImage(data) {
 
   const box = RECRUIT_CARD;
   paintFrame(ctx, look.frame, box, manager.color, look.frameColor);
+  // 冠の帯は、カードの上の辺に掛ける（枠の飾りより手前、印と名前には重ねない）。
+  if (crown) {
+    ctx.save();
+    ctx.font = `800 34px ${SANS}`;
+    spacing(ctx, 2);
+    const width = Math.min(box.width - 160, ctx.measureText(crown).width + 104);
+    const x = SHARE_WIDTH / 2 - width / 2;
+    const y = box.y - 34;
+    ctx.shadowColor = "rgba(232, 194, 122, 0.6)";
+    ctx.shadowBlur = 30;
+    const fill = ctx.createLinearGradient(x, y, x + width, y + 68);
+    fill.addColorStop(0, "#f6e3a3");
+    fill.addColorStop(0.5, GOLD);
+    fill.addColorStop(1, "#c79a3a");
+    ctx.fillStyle = fill;
+    roundRectPath(ctx, x, y, width, 68, 34);
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
+    ctx.stroke();
+    ctx.fillStyle = "#2a1a00";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    fitFont(ctx, crown, width - 72, 34, SANS, 800, 22);
+    ctx.fillText(crown, SHARE_WIDTH / 2, y + 36);
+    ctx.restore();
+  }
   const left = box.x + 64;
   const right = box.x + box.width - 64;
   const innerWidth = right - left;

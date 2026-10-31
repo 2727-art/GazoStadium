@@ -398,6 +398,13 @@ const LIMITS = Object.freeze({
   cheer: 40,
   cheersPerDay: 3,
   cheersLimit: 30,
+  // 番付の冠と月替わり（設計書18）。月が変わって10分たってから前の月を締め、2つの番付の上位10を残す。
+  // 1〜5位が冠。殿堂は直近12か月の1〜3位。
+  monthCloseGraceMs: 10 * 60 * 1_000,
+  monthRankTop: 10,
+  crownTop: 5,
+  hallMonths: 12,
+  hallTop: 3,
 });
 
 // 管理人の金庫の段階。いま金庫にある額で決まり、外には段階だけを見せる（額は本人だけ）。
@@ -1019,6 +1026,48 @@ function jstMonthKey(timestamp = Date.now()) {
   return jstDateKey(timestamp).slice(0, 7);
 }
 
+const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+// 前の月（"2026-01" → "2025-12"）。
+function previousMonthKey(monthKey) {
+  const [year, month] = String(monthKey).split("-").map(Number);
+  return month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, "0")}`;
+}
+
+// その月が日本時間で始まる時刻。
+function jstMonthStart(monthKey) {
+  const [year, month] = String(monthKey).split("-").map(Number);
+  return Date.UTC(year, month - 1, 1) - 9 * 60 * 60 * 1_000;
+}
+
+// 管理人のプロフィールの、締めた月ごとの順位（10位以内の月だけ。0 は番付の外）。
+function normalizeMonthRanks(value) {
+  const rank = (entry) => {
+    const number = Number(entry);
+    return Number.isInteger(number) && number >= 1 && number <= LIMITS.monthRankTop ? number : 0;
+  };
+  return Object.fromEntries(Object.entries(value && typeof value === "object" ? value : {})
+    .filter(([monthKey]) => MONTH_KEY_PATTERN.test(monthKey))
+    .map(([monthKey, entry]) => [monthKey, { gross: rank(entry?.gross), score: rank(entry?.score) }])
+    .filter(([, entry]) => entry.gross || entry.score)
+    .sort(([left], [right]) => (left < right ? -1 : 1)));
+}
+
+// 冠（各番付の1〜5位）。best はいちばん良い順位、count はその順位の冠の数、last は先月の冠（翌月の特権）、list は新しい順。
+// 同じ月の同じ順位は、貢がれ総額を先にする。
+function crownsOf(monthRanks, monthKey) {
+  const list = Object.entries(normalizeMonthRanks(monthRanks))
+    .flatMap(([month, entry]) => ["gross", "score"]
+      .filter((board) => entry[board] >= 1 && entry[board] <= LIMITS.crownTop)
+      .map((board) => ({ monthKey: month, board, rank: entry[board] })))
+    .sort((left, right) => (left.monthKey === right.monthKey ? left.rank - right.rank || (left.board === "gross" ? -1 : 1) : left.monthKey < right.monthKey ? 1 : -1));
+  if (!list.length) return null;
+  const best = Math.min(...list.map((crown) => crown.rank));
+  const previous = previousMonthKey(monthKey);
+  const last = list.filter((crown) => crown.monthKey === previous).sort((left, right) => left.rank - right.rank)[0] || null;
+  return { best, count: list.filter((crown) => crown.rank === best).length, last, list };
+}
+
 function nextJstDateKey(timestamp = Date.now()) {
   return jstDateKey(Number(timestamp) + 24 * 60 * 60 * 1_000);
 }
@@ -1203,6 +1252,10 @@ module.exports = {
   vaultQualification,
   jstDateKey,
   jstMonthKey,
+  previousMonthKey,
+  jstMonthStart,
+  normalizeMonthRanks,
+  crownsOf,
   nextJstDateKey,
   effectiveCaps,
   todayUsed,

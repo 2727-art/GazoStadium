@@ -66,6 +66,10 @@ const {
   vaultQualification,
   jstDateKey,
   jstMonthKey,
+  previousMonthKey,
+  jstMonthStart,
+  normalizeMonthRanks,
+  crownsOf,
   nextJstDateKey,
   effectiveCaps,
   todayUsed,
@@ -169,6 +173,7 @@ const TRIBUTE_ACTIONS = Object.freeze([
   "set_ranch_animal",
   "set_moo",
   "ranch_peek",
+  "ranch_standing",
   "ranch_pat",
   "set_ranch_name",
   "receive",
@@ -361,6 +366,8 @@ function readProfile(snapshot) {
     },
     // 管理人の自分の言葉（定型文・ご褒美）。管理人にだけ返し、カードには入れない（掲示板に出ない）。
     ownWords: normalizeOwnWords(object(data.ownWords)).ownWords || { lines: [], rewards: [] },
+    // 締めた月ごとの2つの番付の順位（10位以内の月だけ、設計書18）。1〜5位が冠。
+    monthRanks: normalizeMonthRanks(data.monthRanks),
   };
 }
 
@@ -423,6 +430,8 @@ function publicCard(profile, monthKey, now) {
     // 牧場レベルの札（設計書16.3）。額ではなく、関係の積み重ねで上がる。
     ranchLevel: ranchLevelFor(profile.ranchXp),
     ranchName: profile.ranchName,
+    // 歴代の冠（各番付の1〜5位、設計書18.4）。先月の冠（last）は、掲示板の札と受付カードの帯になる。
+    crowns: crownsOf(profile.monthRanks, monthKey),
     activeContracts: profile.counts.managerActive,
     // 最後に動いた時は、管理人が出すと選んだカードだけ相手に渡す。出さないカードも、掲示板は動いた順に並ぶ。
     showsActivity: card.showsActivity === true,
@@ -2161,6 +2170,8 @@ function createTributeService(deps) {
     requireAge(own);
     const now = currentTime();
     const monthKey = jstMonthKey(now);
+    // 月が変わった直後は、先に前の月を締める（カードの冠と、先月の首位の欄に入る）。
+    const hall = await closePreviousMonth(now);
     // 直近7日に動いた管理人だけを読む。放置されたカードは条件で外れ、読み込みにも数えない。
     const activeSince = now - LIMITS.boardActiveWindowMs;
     const boardSnapshot = await firestore.collection("tributeProfiles")
@@ -2169,19 +2180,40 @@ function createTributeService(deps) {
       .orderBy("lastActiveAt", "desc")
       .limit(LIMITS.boardLimit * 2)
       .get();
-    const toRows = (snapshot) => snapshot.docs
-      .map((document) => ({ uid: document.id, profile: readProfile(document) }))
-      .filter((row) => row.profile.accepting
-        && row.profile.publicManagerId
-        && row.profile.ageConfirmedVersion === TRIBUTE_AGE_VERSION
-        && !profileIsHidden(row.profile, monthKey));
     const nekamaOnly = data?.nekamaOnly === true;
+    const listed = (row) => row.profile.accepting
+      && row.profile.publicManagerId
+      && row.profile.ageConfirmedVersion === TRIBUTE_AGE_VERSION
+      && !profileIsHidden(row.profile, monthKey)
+      && row.profile.lastActiveAt >= activeSince
+      && (!nekamaOnly || row.profile.card?.disclosure === "nekama");
+    const toRows = (documents) => documents.map((document) => ({ uid: document.id, profile: readProfile(document) })).filter(listed);
     const badges = await rankBadges(monthKey, now);
-    const board = (await visibleRows(uid, toRows(boardSnapshot).filter((row) => row.profile.lastActiveAt >= activeSince)))
-      .filter((row) => !nekamaOnly || row.profile.card?.disclosure === "nekama")
+    const rows = await visibleRows(uid, toRows(boardSnapshot.docs));
+    // 先月の首位（設計書18.5）。ふだん掲示板に載る条件を満たす時だけ、いちばん上の欄に出す（下の一覧には重ねない）。
+    const champions = new Map();
+    for (const kind of ["gross", "score"]) {
+      const top = hall?.[kind]?.[0];
+      if (top?.rank === 1) champions.set(top.managerUid, [...(champions.get(top.managerUid) || []), kind]);
+    }
+    const pinnedRows = [];
+    for (const [championUid, boards] of champions) {
+      let row = rows.find((entry) => entry.uid === championUid);
+      if (!row) {
+        const candidates = toRows([await profileRef(championUid).get()].filter((document) => document.exists));
+        row = (await visibleRows(uid, candidates))[0];
+      }
+      if (row) pinnedRows.push({ row, boards });
+    }
+    const pinnedUids = new Set(pinnedRows.map((entry) => entry.row.uid));
+    const card = (row) => ({ ...publicCard(row.profile, monthKey, now), grossRank: badges.get(row.uid) || 0, mine: row.uid === uid });
+    const board = rows
+      .filter((row) => !pinnedUids.has(row.uid))
       .slice(0, LIMITS.boardLimit)
-      .map((row) => ({ ...publicCard(row.profile, monthKey, now), grossRank: badges.get(row.uid) || 0, mine: row.uid === uid }));
-    return { ok: true, nekamaOnly, managers: board };
+      .map(card);
+    // 勝ち名乗りは番付のひとこと（保存した時に、今日のひとことと同じ確認を通してある）。
+    const pinned = pinnedRows.map(({ row, boards }) => ({ ...card(row), pinnedBoards: boards, rankingWord: cleanLine(row.profile.card?.rankingWord, LIMITS.rankingWord) }));
+    return { ok: true, nekamaOnly, managers: board, pinned };
   }
 
   // 管理人ごとの番付（設計書15.1）。財布どうしを額で比べないよう、見せるのは仕えた日数の順だけにする。
@@ -2234,18 +2266,22 @@ function createTributeService(deps) {
     const now = currentTime();
     const monthKey = jstMonthKey(now);
     if (managerUid !== uid && profileIsHidden(profile, monthKey)) fail("not-found", "この管理人は見つかりません。");
-    const [monthSnapshot, pairSnapshot, ranking, badges, cheers] = await Promise.all([
+    // 月が変わった直後に開かれた時は、先に前の月を締める（歴代の冠に先月の分が入る）。締めた時は、プロフィールを読み直す。
+    const closing = closedMonths.has(previousMonthKey(monthKey)) ? null : closePreviousMonth(now);
+    const [monthSnapshot, pairSnapshot, ranking, badges, cheers, hall] = await Promise.all([
       managerMonthRef(monthKey, managerUid).get(),
       managerUid === uid ? Promise.resolve(null) : pairRef(managerUid, uid).get(),
       managerRanking(managerUid, monthKey, uid),
       rankBadges(monthKey, now),
       cheerList(managerUid, monthKey, uid),
+      closing,
     ]);
+    const shown = hall ? readProfile(await profileRef(managerUid).get()) : profile;
     const month = object(monthSnapshot.data());
     const pair = pairSnapshot?.exists ? object(pairSnapshot.data()) : {};
     return {
       ok: true,
-      card: { ...publicCard(profile, monthKey, now), grossRank: badges.get(managerUid) || 0, mine: managerUid === uid },
+      card: { ...publicCard(shown, monthKey, now), grossRank: badges.get(managerUid) || 0, mine: managerUid === uid },
       cheers,
       myCheer: managerUid === uid ? null : myCheerView(pair, monthKey, now),
       month: {
@@ -4038,12 +4074,51 @@ function createTributeService(deps) {
       .map((row, index) => ({ ...row, rank: index + 1 }));
   }
 
+  // 番付加算の並び（見る人のブロックで詰める前）。隠された管理人と、公開IDのない管理人を除く。
+  // 同じなら財布の人数。毎日満額を貢ぐ財布を多く抱える管理人が上に来る。
+  async function scoreRanking(monthKey) {
+    const snapshot = await firestore.collection("tributeManagerMonths")
+      .where("monthKey", "==", monthKey)
+      .orderBy("rankScore", "desc")
+      .orderBy("payers", "desc")
+      .limit(LIMITS.rankingLimit * 2)
+      .get();
+    const rows = snapshot.docs
+      .map((document) => ({ uid: String(document.get("managerUid") || ""), value: object(document.data()) }))
+      .filter((row) => row.uid);
+    const profiles = await Promise.all(rows.map((row) => profileRef(row.uid).get()));
+    return rows
+      .map((row, index) => ({ ...row, profile: readProfile(profiles[index]) }))
+      .filter((row) => !profileIsHidden(row.profile, monthKey) && row.profile.publicManagerId);
+  }
+
   const rankCacheRef = (monthKey) => firestore.collection("tributeRankCache").doc(`gross-${monthKey}`);
+  const scoreCacheRef = (monthKey) => firestore.collection("tributeRankCache").doc(`score-${monthKey}`);
+  const rankName = (row) => cleanLine(row.profile.card?.personaName || row.value.personaName, LIMITS.personaName) || "管理人";
+  // 牧場の日報の順位に使う写し（管理人の UID はサーバーの中だけ）。
+  const cachedRankRows = (rows) => rows.map((row) => ({ managerUid: row.uid, rank: row.rank, publicManagerId: row.profile.publicManagerId, personaName: rankName(row) }));
 
   async function saveRankBadges(monthKey, now, rows) {
     const top = rows.filter((row) => row.rank <= LIMITS.rankBadgeTop).map((row) => ({ managerUid: row.uid, rank: row.rank }));
-    await rankCacheRef(monthKey).set({ monthKey, computedAt: now, top });
+    await rankCacheRef(monthKey).set({ monthKey, computedAt: now, top, rows: cachedRankRows(rows) });
     return new Map(top.map((entry) => [entry.managerUid, entry.rank]));
+  }
+
+  // 今月の順位（牧場の日報、設計書18.6）。番付を毎回数えると重いので、10分まで前の写しを使う。
+  async function liveRanks(kind, monthKey, now) {
+    const reference = kind === "gross" ? rankCacheRef(monthKey) : scoreCacheRef(monthKey);
+    const cached = object((await reference.get()).data());
+    if (cached.monthKey === monthKey && Array.isArray(cached.rows) && now - integer(cached.computedAt, 0, Number.MAX_SAFE_INTEGER, 0) < LIMITS.rankBadgeCacheMs) {
+      return cached.rows.map((entry) => object(entry)).filter((entry) => entry.managerUid && integer(entry.rank, 0, 1_000, 0) > 0);
+    }
+    if (kind === "gross") {
+      const rows = await grossRanking(monthKey);
+      await saveRankBadges(monthKey, now, rows);
+      return cachedRankRows(rows);
+    }
+    const rows = cachedRankRows((await scoreRanking(monthKey)).slice(0, LIMITS.rankingLimit).map((row, index) => ({ ...row, rank: index + 1 })));
+    await scoreCacheRef(monthKey).set({ monthKey, computedAt: now, rows });
+    return rows;
   }
 
   // 掲示板と管理人の詳細の札。毎回数えると重いので、10分まで前の順位を使う（番付を開くと数え直す）。
@@ -4244,20 +4319,12 @@ function createTributeService(deps) {
     requireAge(await readOwnProfile(uid));
     const now = currentTime();
     const monthKey = jstMonthKey(now);
+    // 月が変わった直後は、先に前の月を締める（殿堂に先月の分が入る）。
+    await closePreviousMonth(now);
+    if (data?.kind === "hall") return hallAction(uid);
     if (data?.kind === "gross") return grossRankingsAction(uid, monthKey, now);
     // 番付加算（同じ組で1日500 Payまで）の多い順、同じなら財布の人数。毎日満額を貢ぐ財布を多く抱える管理人が上に来る。
-    const snapshot = await firestore.collection("tributeManagerMonths")
-      .where("monthKey", "==", monthKey)
-      .orderBy("rankScore", "desc")
-      .orderBy("payers", "desc")
-      .limit(LIMITS.rankingLimit * 2)
-      .get();
-    const rows = snapshot.docs.map((document) => ({ uid: String(document.get("managerUid") || ""), value: object(document.data()) }));
-    const profileSnapshots = rows.length
-      ? await Promise.all(rows.map((row) => profileRef(row.uid).get()))
-      : [];
-    const visible = (await visibleRows(uid, rows.map((row, index) => ({ ...row, profile: readProfile(profileSnapshots[index]) }))))
-      .filter((row) => row.uid && !profileIsHidden(row.profile, monthKey) && row.profile.publicManagerId)
+    const visible = (await visibleRows(uid, await scoreRanking(monthKey)))
       .slice(0, LIMITS.rankingLimit)
       .map((row, index) => ({
         rank: index + 1,
@@ -4277,6 +4344,148 @@ function createTributeService(deps) {
       managerBoard = await managerRanking(managerUid, monthKey, uid);
     }
     return { ok: true, kind: "score", monthKey, managers: visible, managerBoard };
+  }
+
+  // ───────────── 月の締め・殿堂・牧場の順位（設計書18） ─────────────
+  // 月が変わって10分たってから、最初に掲示板・番付・管理人の詳細・牧場の順位を開いた時に、前の月を1回だけ締める。
+  // 2つの番付の上位10を、締めた時の名前・アイコンごと残し、10位以内の管理人のプロフィールに順位を足す（1〜5位が冠）。
+  const hallRef = (monthKey) => firestore.collection("tributeHallOfFame").doc(monthKey);
+  // このインスタンスで締めを確かめた月（締めた後は、読み直さない）。
+  const closedMonths = new Map();
+  const closingMonths = new Map();
+
+  function hallRow(row) {
+    const card = object(row.profile.card);
+    return {
+      managerUid: row.uid,
+      publicManagerId: row.profile.publicManagerId,
+      personaName: rankName(row),
+      avatar: normalizeAvatar(card.avatar ?? row.value.avatar),
+      sigil: integer(card.sigil ?? row.value.sigil, 0, 5, 0),
+      disclosure: String(card.disclosure || row.value.disclosure || "undisclosed"),
+      rank: row.rank,
+      value: integer(row.kind === "gross" ? row.value.receivedGross : row.value.rankScore, 0, Number.MAX_SAFE_INTEGER, 0),
+      payers: integer(row.value.payers, 0, Number.MAX_SAFE_INTEGER, 0),
+    };
+  }
+
+  function readHall(value) {
+    const data = object(value);
+    const rows = (list) => (Array.isArray(list) ? list : []).map((entry) => object(entry))
+      .filter((entry) => entry.managerUid && integer(entry.rank, 0, LIMITS.monthRankTop, 0) > 0)
+      .map((entry) => ({
+        managerUid: String(entry.managerUid),
+        publicManagerId: PUBLIC_MANAGER_ID_PATTERN.test(String(entry.publicManagerId || "")) ? entry.publicManagerId : "",
+        personaName: cleanLine(entry.personaName, LIMITS.personaName) || "管理人",
+        avatar: normalizeAvatar(entry.avatar),
+        sigil: integer(entry.sigil, 0, 5, 0),
+        disclosure: String(entry.disclosure || "undisclosed"),
+        rank: integer(entry.rank, 0, LIMITS.monthRankTop, 0),
+        value: integer(entry.value, 0, Number.MAX_SAFE_INTEGER, 0),
+        payers: integer(entry.payers, 0, Number.MAX_SAFE_INTEGER, 0),
+      }));
+    return { monthKey: String(data.monthKey || ""), closedAt: integer(data.closedAt, 0, Number.MAX_SAFE_INTEGER, 0), gross: rows(data.gross), score: rows(data.score) };
+  }
+
+  async function closeMonth(monthKey, now) {
+    const existing = await hallRef(monthKey).get();
+    if (existing.exists) return readHall(existing.data());
+    const [grossRows, scoreRows] = await Promise.all([grossRanking(monthKey), scoreRanking(monthKey)]);
+    const gross = grossRows.slice(0, LIMITS.monthRankTop).map((row) => hallRow({ ...row, kind: "gross" }));
+    // 番付加算の冠も、財布3人以上から貢がれた管理人だけで数える（貢がれ総額の番付と同じ水増し対策）。
+    const score = scoreRows
+      .filter((row) => integer(row.value.payers, 0, Number.MAX_SAFE_INTEGER, 0) >= LIMITS.grossRankingMinPayers
+        && integer(row.value.rankScore, 0, Number.MAX_SAFE_INTEGER, 0) > 0)
+      .slice(0, LIMITS.monthRankTop)
+      .map((row, index) => hallRow({ ...row, rank: index + 1, kind: "score" }));
+    const ranks = new Map();
+    for (const [kind, rows] of [["gross", gross], ["score", score]]) {
+      for (const row of rows) ranks.set(row.managerUid, { gross: 0, score: 0, ...ranks.get(row.managerUid), [kind]: row.rank });
+    }
+    await firestore.runTransaction(async (transaction) => {
+      if ((await transaction.get(hallRef(monthKey))).exists) return;
+      transaction.set(hallRef(monthKey), { monthKey, closedAt: now, gross, score });
+      for (const [managerUid, entry] of ranks) transaction.set(profileRef(managerUid), { monthRanks: { [monthKey]: entry } }, { merge: true });
+    });
+    return readHall((await hallRef(monthKey).get()).data());
+  }
+
+  // 前の月を締めて、その月の殿堂を返す。月が変わって10分の間と、締められなかった時は null（画面は止めない）。
+  async function closePreviousMonth(now) {
+    const currentMonth = jstMonthKey(now);
+    if (now - jstMonthStart(currentMonth) < LIMITS.monthCloseGraceMs) return null;
+    const monthKey = previousMonthKey(currentMonth);
+    if (closedMonths.has(monthKey)) return closedMonths.get(monthKey);
+    if (!closingMonths.has(monthKey)) closingMonths.set(monthKey, closeMonth(monthKey, now));
+    const closing = closingMonths.get(monthKey);
+    try {
+      const hall = await closing;
+      closedMonths.set(monthKey, hall);
+      return hall;
+    } catch (error) {
+      console.error("tribute month close failed", error);
+      return null;
+    } finally {
+      if (closingMonths.get(monthKey) === closing) closingMonths.delete(monthKey);
+    }
+  }
+
+  // 殿堂: 締めた月ごとに、2つの番付の1〜3位（直近12か月）。名前とアイコンは締めた時のまま。見る人のブロックは外す。
+  async function hallAction(uid) {
+    const snapshot = await firestore.collection("tributeHallOfFame").orderBy("monthKey", "desc").limit(LIMITS.hallMonths).get();
+    const halls = snapshot.docs.map((document) => readHall(document.data())).filter((hall) => hall.monthKey);
+    const entries = halls.flatMap((hall) => ["gross", "score"].flatMap((kind) => hall[kind]
+      .filter((row) => row.rank <= LIMITS.hallTop)
+      .map((row) => ({ ...row, uid: row.managerUid, monthKey: hall.monthKey, kind }))));
+    const visible = new Set(await visibleRows(uid, entries));
+    const months = halls.map((hall) => {
+      const pick = (kind) => entries.filter((entry) => entry.monthKey === hall.monthKey && entry.kind === kind && visible.has(entry)).map((entry) => ({
+        rank: entry.rank,
+        publicManagerId: entry.publicManagerId,
+        personaName: entry.personaName,
+        avatar: entry.avatar,
+        sigil: entry.sigil,
+        disclosure: entry.disclosure,
+        value: entry.value,
+        payers: entry.payers,
+        mine: entry.managerUid === uid,
+      }));
+      return { monthKey: hall.monthKey, gross: pick("gross"), score: pick("score") };
+    });
+    return { ok: true, kind: "hall", months };
+  }
+
+  // わたしの牧場の順位（設計書18.6）: 先月の結果・収穫の棚・今月の順位。管理人カードを作った本人だけ。
+  async function ranchStandingAction(uid) {
+    requireAge(await readOwnProfile(uid));
+    const now = currentTime();
+    const monthKey = jstMonthKey(now);
+    const lastMonthKey = previousMonthKey(monthKey);
+    const hall = await closePreviousMonth(now);
+    const [profileSnapshot, monthsSnapshot, gross, score] = await Promise.all([
+      profileRef(uid).get(),
+      firestore.collection("tributeManagerMonths").where("managerUid", "==", uid).get(),
+      liveRanks("gross", monthKey, now).catch((error) => { console.error("tribute live gross ranks failed", error); return null; }),
+      liveRanks("score", monthKey, now).catch((error) => { console.error("tribute live score ranks failed", error); return null; }),
+    ]);
+    const profile = readProfile(profileSnapshot);
+    if (!profile.card) fail("failed-precondition", "管理人カードを作ると、牧場の順位が見られます。");
+    const received = new Map(monthsSnapshot.docs.map((document) => object(document.data()))
+      .map((month) => [String(month.monthKey || ""), integer(month.receivedGross, 0, Number.MAX_SAFE_INTEGER, 0)]));
+    const ranksOf = (month) => profile.monthRanks[month] || { gross: 0, score: 0 };
+    // 収穫の棚: 締めた月のうち、財布から貢がれた月（新しい順）。締めていない前の月（月が変わって10分の間）は、まだ出さない。
+    const shelf = [...received.entries()]
+      .filter(([month, total]) => /^\d{4}-\d{2}$/.test(month) && month < monthKey && total > 0 && (month !== lastMonthKey || hall))
+      .sort(([left], [right]) => (left < right ? 1 : -1))
+      .map(([month]) => ({ monthKey: month, ...ranksOf(month) }));
+    const lastMonth = hall ? { monthKey: lastMonthKey, ...ranksOf(lastMonthKey), received: (received.get(lastMonthKey) || 0) > 0 } : null;
+    const live = async (rows) => {
+      if (!rows) return null;
+      const mine = rows.find((row) => row.managerUid === uid);
+      const above = mine ? rows.filter((row) => row.rank < mine.rank).map((row) => ({ ...row, uid: row.managerUid })) : [];
+      return { rank: mine ? integer(mine.rank, 0, 1_000, 0) : 0, above: (await visibleRows(uid, above)).map((row) => ({ id: row.publicManagerId, name: row.personaName })) };
+    };
+    return { ok: true, monthKey, lastMonth, shelf, live: { gross: await live(gross), score: await live(score) } };
   }
 
   // ───────────── 金庫 ─────────────
@@ -4553,6 +4762,7 @@ function createTributeService(deps) {
       case "receipts": return receiptsAction(uid, data);
       case "share_info": return shareInfoAction(uid, data);
       case "ranch_peek": return ranchPeekAction(uid, data);
+      case "ranch_standing": return ranchStandingAction(uid);
       case "set_ranch_name": return setRanchNameAction(uid, data);
       case "set_word": return setWordAction(uid, data);
       case "set_own_words": return setOwnWordsAction(uid, data);
