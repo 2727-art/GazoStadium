@@ -1,0 +1,94 @@
+{
+  "checkedAt": "2026-10-31T07:46:39.097Z",
+  "status": "verified",
+  "project": "gazostadium",
+  "sourceCommit": "87cb0bf",
+  "baseCommit": "6bbdefb",
+  "decisions": {
+    "requests": [
+      "お貢牧場の番付報酬システム実装の相談（確率で毎日の生産物、売却で Pay）",
+      "生産物売却でPAY獲得はなくしましょう",
+      "保存すると貼り合いスタジアム自体のシステムを疑われる恐れがあるので保存方式はやめます",
+      "１，２，３を一緒に入れます。画像P2Pの案は見送ります。"
+    ],
+    "dropped": ["Pay from produce", "daily random produce", "images in the wallet threads (stored or P2P)"],
+    "defaultsChosenByClaude": [
+      "score-ranking crowns also count only managers tributed by 3+ wallets",
+      "last month's champions are pinned only when they would be listed on the board anyway",
+      "the monthly result shows once per device"
+    ],
+    "decidedBy": "user, 2026-10-31 JST"
+  },
+  "scope": {
+    "functions": ["tributeAction"],
+    "newActions": ["ranch_standing", "rankings kind hall"],
+    "newCollections": { "tributeHallOfFame": "server only, closed by the final /{document=**} rule" },
+    "profileFields": ["monthRanks"],
+    "firestoreIndexes": false,
+    "firestoreRules": false,
+    "realtimeDatabaseRules": false,
+    "hosting": true,
+    "changedPublicFiles": ["index.html", "tribute.js", "tribute.css", "tribute-core.mjs", "tribute-share.mjs"],
+    "newImages": ["harvest-gold.webp", "harvest-silver.webp", "harvest-egg.webp", "harvest-milk.webp"],
+    "cacheKey": "ranch-crowns-v1",
+    "productionDataWritten": false
+  },
+  "tests": {
+    "total": 2417,
+    "passed": 2383,
+    "failed": 0,
+    "skipped": 34,
+    "newFiles": ["functions/test/tribute-crowns.test.js"]
+  },
+  "preview": {
+    "checked": ["board: last month's champion with ribbon and ranking word", "ranking hall", "ranch result, harvest shelf and rank news", "manager detail crown list", "reception card crown ribbon"],
+    "consoleErrors": 0,
+    "horizontalOverflow": false
+  },
+  "preRelease": {
+    "routesDifferOnlyIn": ["index.html", "tribute.js", "tribute.css", "tribute-core.mjs", "tribute-share.mjs", "harvest images (new, 404)"],
+    "unchangedMatched": ["online.js", "account.js", "app.js", "achievements.js", "tribute-deco.mjs", "avatar-01..51", "549 ranch images"],
+    "functionsList": { "tributeAction": "857acea2d1974309800a18d20e63ac87e430f007" }
+  },
+  "release": {
+    "ranBy": "user (PowerShell, guarded one-liners: HEAD 87cb0bf and origin/main contained)",
+    "order": ["functions:tributeAction", "git push origin HEAD:main (6bbdefb..87cb0bf)", "hosting"],
+    "functionsList": {
+      "count": 37,
+      "allActive": true,
+      "changed": { "tributeAction": { "before": "857acea2d1974309800a18d20e63ac87e430f007", "after": "a1bd53d1ac434183d602143e1496704fa8bdb8b3" } },
+      "unchanged": "economyAction on 857acea, 31 functions on 43db9e7, 4 secret-bound functions on their previous hashes"
+    },
+    "workersBuild": { "commit": "87cb0bf", "conclusion": "success", "completedAt": "2026-10-31T07:37:12Z" },
+    "deliveryCheck": {
+      "script": "functions/scripts/verify-tribute-crowns-release.cjs",
+      "checkedAt": "2026-10-31T07:46:39.097Z",
+      "readOnly": true,
+      "routes": {
+        "https://gazostadium.web.app": "ok",
+        "https://gazostadium.firebaseapp.com": "ok",
+        "https://gazostadium.anjugames.workers.dev": "ok",
+        "https://hariaistadium.com": "ok"
+      },
+      "avatarsPerRoute": 51,
+      "ranchImagesPerRoute": 553,
+      "previousMarkers": true,
+      "privateFiles404": true
+    },
+    "browser": {
+      "origin": "https://gazostadium.web.app",
+      "pageLoadOnly": true,
+      "ranchOpened": false,
+      "cacheKeys": "ranch-crowns-v1 on tribute.js, tribute.css and tribute-core.mjs",
+      "coreChecks": { "crownLabel": "10月 貢がれ総額 首位", "harvestFor(gross 2)": "銀の卵" },
+      "harvestImage": "200 image/webp",
+      "consoleErrors": [],
+      "signedInUsers": 0
+    }
+  },
+  "remaining": [
+    "October closes on the first board, ranking, detail or ranch open after 2026-11-01 00:10 JST; crowns, the champion slot, the hall and the monthly result appear from then; checking needs a signed-in user",
+    "the monthly result and the reception card ribbon were checked by tests and previews only",
+    "the live score ranking has no wallet-count condition, so it can differ from the crown ranks"
+  ]
+}
