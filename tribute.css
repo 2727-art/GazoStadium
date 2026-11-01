@@ -168,7 +168,8 @@
 .tribute-note { color: var(--tr-mist); font-size: 0.82rem; }
 .tribute-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .tribute-link { padding: 0; border: 0; background: none; color: var(--tr-accent); font: inherit; text-decoration: underline; cursor: pointer; }
-.tribute-loading { place-items: center; min-height: 50vh; text-align: center; }
+/* 接続待ちでもフッターを画面の下へ保ち、牧場の表示時に大きく跳ねないようにする。 */
+.tribute-loading { place-items: center; min-height: 100vh; min-height: 100svh; text-align: center; }
 
 .tribute-sigil {
   display: inline-grid;
