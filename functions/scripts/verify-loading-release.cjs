@@ -27,6 +27,7 @@ function add(raw,base='https://local.example/'){
 for(const m of html.matchAll(/(?:src|href|data-src)="([^"]+\.(?:m?js|css)\?v=[^"]+)"/g))add(m[1]);
 for(const m of html.matchAll(/(?:src|href|data-src)="(assets\/ranch\/[^"?]+\.(?:js|css))"/g))add(m[1]);
 for(const value of Object.values(manifest)){if(value.module)add(value.module);for(const script of value.classic||[])add(script);}
+for(const file of JSON.parse(source('assets/ranch/manifest.json')).files)add(file.file);
 const excluded=['/market.js','/market.css','/market-transfer.mjs','/flea-market.js','/flea-market.css','/danwaku-note.js','/danwaku-note.css','/free-table.js','/free-table.css','/scripts/market-records-shell.js','/database.rules.json','/functions/creator-card-refund.js'];
 async function request(origin,url){const r=await fetch(origin+url,{cache:'no-store',signal:AbortSignal.timeout(20000)});return {status:r.status,body:await r.text(),cacheControl:r.headers.get('cache-control')};}
 (async()=>{

@@ -6,8 +6,18 @@
     "tribute.js": "56da92aa2ae3fae1a93dce44439f2c114bc28b70fa1a942e81d0c8f387cba0f5",
     "tribute-core.mjs": "1cc3cf7172cc6c018e07880909b7678e4a62c89858d5c917b0a9264162350b3f",
     "tribute.css": "c1798604a39f254ad681b2c45c8bf9e73f80c8083beff5c8c8a5da82b0d7f7c1",
-    "scripts/build-ranch-client.cjs": "c12d6a9f4f8904558582a7b1407ebe2b7acf74ab4b495b50c3bd53dcb4cbf17d"
+    "scripts/build-ranch-client.cjs": "3bc837807aadfd2d2376bfa87602d62173f1dac76583f23f41f49013982e4dff"
   },
+  "currentFiles": [
+    "assets/ranch/tribute-WNSGSXMI.js",
+    "assets/ranch/ranch-IMUPCMEV.js",
+    "assets/ranch/base-5608abf0b302e5ea.css",
+    "assets/ranch/details-ac8f12cc44949036.css"
+  ],
+  "retainedFiles": [
+    "assets/ranch/tribute-QMYLLACU.js",
+    "assets/ranch/base-6dd671dda2060fa0.css"
+  ],
   "files": [
     {
       "file": "assets/ranch/tribute-WNSGSXMI.js",
@@ -28,6 +38,16 @@
       "file": "assets/ranch/details-ac8f12cc44949036.css",
       "bytes": 8275,
       "sha256": "ac8f12cc449490360470f92c4a805b0f562d19e3b22fe6770b945791318a3e55"
+    },
+    {
+      "file": "assets/ranch/tribute-QMYLLACU.js",
+      "bytes": 451456,
+      "sha256": "5dff79715f9160bacaa3f3e8c3c6433c9a2b3a1d9560b2d4c503eb1a3b0dd94b"
+    },
+    {
+      "file": "assets/ranch/base-6dd671dda2060fa0.css",
+      "bytes": 102001,
+      "sha256": "6dd671dda2060fa0cae20fd846144b9af2b7fa9bf58a22528c8eb5a0e8944a3f"
     }
   ]
 }

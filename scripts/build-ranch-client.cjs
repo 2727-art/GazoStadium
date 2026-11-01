@@ -70,8 +70,19 @@ async function build() {
     const file=`assets/ranch/${name}-${hash(text)}.css`;outputs.push({file,body:Buffer.from(text)});cssNames.push(file);
   }
   const jsEntry=outputs.find(f=>/tribute-[^/]+\.js$/.test(f.file)).file;
+  // An already-open page may still hold the previous feature manifest. Retain one release, without loading it from new pages.
+  const previous=fs.existsSync(path.join(root,"assets/ranch/manifest.json"))?JSON.parse(read("assets/ranch/manifest.json")):null;
+  const currentFiles=outputs.map(f=>f.file);
+  const previousCurrent=previous?.currentFiles||previous?.files.map(f=>f.file)||[];
+  const unchanged=JSON.stringify(currentFiles)===JSON.stringify(previousCurrent);
+  const retainedFiles=(unchanged?(previous?.retainedFiles||[]):previousCurrent).filter(file=>!currentFiles.includes(file));
+  for(const file of retainedFiles){
+    const absolute=path.resolve(root,file);
+    if(path.dirname(absolute)!==path.join(root,"assets/ranch")||!/^(tribute-|ranch-|base-|details-)[a-zA-Z0-9-]+\.(js|css)$/.test(path.basename(absolute)))throw Error("Unexpected retained ranch path");
+    outputs.push({file,body:Buffer.from(read(file))});
+  }
   const inputs=Object.fromEntries(["tribute.js","tribute-core.mjs","tribute.css","scripts/build-ranch-client.cjs"].map(file=>[file,crypto.createHash("sha256").update(read(file)).digest("hex")]));
-  const manifest={entry:jsEntry,baseCss:cssNames[0],detailCss:cssNames[1],inputs,files:outputs.map(f=>({file:f.file,bytes:f.body.length,sha256:crypto.createHash("sha256").update(f.body).digest("hex")}))};
+  const manifest={entry:jsEntry,baseCss:cssNames[0],detailCss:cssNames[1],inputs,currentFiles,retainedFiles,files:outputs.map(f=>({file:f.file,bytes:f.body.length,sha256:crypto.createHash("sha256").update(f.body).digest("hex")}))};
   let html=read("index.html");
   html=html.replace(/(data-feature-style="tribute\.css" data-src=")[^"]+("\s*\/?>)/,`$1${cssNames[0]}$2`);
   const detailLink=`    <link data-feature-style="tribute-details.css" data-src="${cssNames[1]}" />`;

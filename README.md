@@ -773,4 +773,6 @@ Authは `getAuth()` と同じ保存領域の探索順序で `initializeAuth()` �
 
 牧場の編集元は `tribute.js` / `tribute-core.mjs` / `tribute.css` です。変更後は `npm --prefix functions run build:client` を実行し、`assets/ranch/`、`index.html`、両ホストのキャッシュ設定も一緒にコミットします。`scripts/build-ranch-client.cjs` は本体とコアを圧縮し、見学・プレビュー用のデータを動的importへ、契約・カード編集用CSSを画面表示時の読み込みへ分けます。プレビュー区間内の招待URL処理は本体に残します。生成元の区間や画面構成を変更した時はビルドとスマホ幅の見学・契約・カード画面を確認してください。生成物の内容指紋と入力ハッシュはテストで照合し、古い生成物のままの配信を検出します。
 
+更新前から開いているタブへの互換性のため、牧場の指紋付きファイルは直前の1世代も配信します。新規ページは最新版だけを参照します。`assets/ranch/manifest.json` の `currentFiles` と `retainedFiles` で区別し、再ビルドだけでは世代を進めません。2世代以上古いタブで読み込めなくなった場合はページの再読み込みが必要です。
+
 `functions/test/fixtures/mobile-sdk-session.html` は、ローカルエミュレーター専用のブラウザ検証画面です。旧CDN版が保存したlocalStorage・IndexedDB・sessionStorageのユーザーを新しい配信コードで復元し、UID維持、ウォレット・契約履歴の購読、他人のデータの拒否、AuthとApp Checkのヘッダー伝達を確認します。本番には配信しません。
