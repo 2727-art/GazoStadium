@@ -172,7 +172,7 @@
         ]
       },
       {
-        "source": "/assets/ranch/tribute-BXEA7FQE.js",
+        "source": "/assets/ranch/tribute-4RCF3FCG.js",
         "headers": [
           {
             "key": "Cache-Control",
@@ -208,16 +208,7 @@
         ]
       },
       {
-        "source": "/assets/ranch/tribute-WNSGSXMI.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "public, max-age=31536000, immutable"
-          }
-        ]
-      },
-      {
-        "source": "/assets/ranch/base-5608abf0b302e5ea.css",
+        "source": "/assets/ranch/tribute-BXEA7FQE.js",
         "headers": [
           {
             "key": "Cache-Control",

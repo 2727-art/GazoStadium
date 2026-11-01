@@ -1,28 +1,27 @@
 {
-  "entry": "assets/ranch/tribute-BXEA7FQE.js",
+  "entry": "assets/ranch/tribute-4RCF3FCG.js",
   "baseCss": "assets/ranch/base-57844f772301836d.css",
   "detailCss": "assets/ranch/details-ac8f12cc44949036.css",
   "inputs": {
     "tribute.js": "716c92935fe029401f77c0983e587a22188636874ab477b270446758ec01c68a",
-    "tribute-core.mjs": "1cc3cf7172cc6c018e07880909b7678e4a62c89858d5c917b0a9264162350b3f",
+    "tribute-core.mjs": "9dbd9186629cbbfb64b978a645b6d2e5d0d59a2b550682f40f7fd609e45dd68c",
     "tribute.css": "ad267e42034cd4afcab30de01031dd3ff8468e692a6e477b54262539a95a02ba",
     "scripts/build-ranch-client.cjs": "3bc837807aadfd2d2376bfa87602d62173f1dac76583f23f41f49013982e4dff"
   },
   "currentFiles": [
-    "assets/ranch/tribute-BXEA7FQE.js",
+    "assets/ranch/tribute-4RCF3FCG.js",
     "assets/ranch/ranch-IMUPCMEV.js",
     "assets/ranch/base-57844f772301836d.css",
     "assets/ranch/details-ac8f12cc44949036.css"
   ],
   "retainedFiles": [
-    "assets/ranch/tribute-WNSGSXMI.js",
-    "assets/ranch/base-5608abf0b302e5ea.css"
+    "assets/ranch/tribute-BXEA7FQE.js"
   ],
   "files": [
     {
-      "file": "assets/ranch/tribute-BXEA7FQE.js",
-      "bytes": 450409,
-      "sha256": "55b228298f7cd8d57abf4ee395bac824f3448bc4b19b60d0de85e4b4fc0e34a0"
+      "file": "assets/ranch/tribute-4RCF3FCG.js",
+      "bytes": 450408,
+      "sha256": "2211514b26c227cf0919d2d0d890154ba245891d7817460fcf543a814644c675"
     },
     {
       "file": "assets/ranch/ranch-IMUPCMEV.js",
@@ -40,14 +39,9 @@
       "sha256": "ac8f12cc449490360470f92c4a805b0f562d19e3b22fe6770b945791318a3e55"
     },
     {
-      "file": "assets/ranch/tribute-WNSGSXMI.js",
-      "bytes": 451241,
-      "sha256": "299692a50f6f433dcc2f8fe3a42c31e42c84cbc88418b0348e08bee93918ffdb"
-    },
-    {
-      "file": "assets/ranch/base-5608abf0b302e5ea.css",
-      "bytes": 102020,
-      "sha256": "5608abf0b302e5ea6d24333648fe0defe4a43fb5d8b5a135cd399b360fe13581"
+      "file": "assets/ranch/tribute-BXEA7FQE.js",
+      "bytes": 450409,
+      "sha256": "55b228298f7cd8d57abf4ee395bac824f3448bc4b19b60d0de85e4b4fc0e34a0"
     }
   ]
 }

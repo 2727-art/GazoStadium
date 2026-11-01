@@ -14,3 +14,20 @@ test("the built entry keeps demo payloads and detail styles out of the initial s
   assert.ok(source.includes("pendingInvite")===false,"production minification is active");
   assert.ok(manifest.files.find(f=>f.file===manifest.entry).bytes < 470000);
 });
+
+test("every shipped manager avatar resolves to an existing public image after bundling", async () => {
+  const { pathToFileURL } = require("node:url");
+  const { AVATARS, avatarId } = await import(pathToFileURL(path.join(root, "tribute-core.mjs")).href);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "assets/ranch/manifest.json"), "utf8"));
+  const source = fs.readFileSync(path.join(root, manifest.entry), "utf8");
+  for (const origin of ["https://hariaistadium.com", "https://gazostadium.anjugames.workers.dev", "https://gazostadium.web.app", "https://gazostadium.firebaseapp.com", "http://127.0.0.1:8766"]) {
+    const urlFor = require("./helpers/ranch-built-avatars.cjs").builtAvatarUrl(source, `${origin}/${manifest.entry}`, avatarId);
+    for (const { id } of AVATARS) {
+      const url = new URL(urlFor(id));
+      const publicPath = `/assets/tribute-avatars/avatar-${String(id).padStart(2, "0")}.webp`;
+      assert.equal(url.href, origin + publicPath);
+      assert.ok(fs.existsSync(path.join(root, publicPath.slice(1))), url.pathname);
+    }
+    for (const value of [0, -1, 52, null, "../avatar-01.webp"]) assert.equal(urlFor(value), "");
+  }
+});
