@@ -80,7 +80,8 @@ test("the server ranks gross receipts monthly with the 3-wallet floor and caches
   assert.match(ranking, /field: "receivedGross", minPayers: LIMITS\.grossRankingMinPayers/);
   assert.match(ranking, /!profileIsHidden\(row\.profile, monthKey\)/);
   const badges = sourceBlock(service, "async function rankBadges", "async function grossRankingsAction");
-  assert.match(badges, /now - integer\(cached\.computedAt, 0, Number\.MAX_SAFE_INTEGER, 0\) < LIMITS\.rankBadgeCacheMs/);
+  assert.match(service, /now - integer\(cached\.computedAt, 0, Number\.MAX_SAFE_INTEGER, 0\) < LIMITS\.rankBadgeCacheMs/);
+  assert.match(badges, /await liveRanks\("gross", monthKey, now\)/);
   assert.match(badges, /catch \(error\) \{\s*console\.error\("tribute rank badges failed", error\);\s*return new Map\(\);/);
   assert.match(service, /if \(data\?\.kind === "gross"\) return grossRankingsAction\(uid, monthKey, now\);/);
   assert.match(service, /grossRank: badges\.get\(row\.uid\) \|\| 0, mine: row\.uid === uid/);
