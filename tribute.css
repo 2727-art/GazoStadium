@@ -425,7 +425,6 @@
 .tribute-contract-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; min-width: 0; }
 .tribute-contract-line .tribute-chip { margin-left: 0; }
 .tribute-ended summary { cursor: pointer; color: var(--tr-mist); }
-.tribute-legacy p { color: var(--tr-mist); font-size: 0.82rem; }
 
 /* 掲示板 */
 .tribute-board { display: grid; gap: 16px; }

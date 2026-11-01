@@ -567,13 +567,6 @@ function renderHub() {
     ${hasContracts ? `${renderTodo(open, profile)}${lists}${me}` : `${me}${lists}`}
     ${endedPanel}
     ${renderAchievementPanel()}
-    <section class="tribute-panel tribute-legacy">
-      <h2>旧推し値市場</h2>
-      <p>推し値市場は2026年10月に終了し、お貢ぎ牧場へ置き換わりました。ランキング・永久実績・購入済みの推し値証書は、旧市場の記録から閲覧できます。</p>
-      <div class="tribute-row">
-        <button class="button button-ghost button-small" type="button" data-t="legacy-market">旧推し値市場の記録</button>
-      </div>
-    </section>
   </div>`, { title: "契約" });
 }
 
@@ -6236,11 +6229,6 @@ async function handleClick(target) {
       requestHome();
       window.setTimeout(() => window.HariaiApp.openOnlineFeature("openAchievements"), 0);
       return;
-    case "legacy-market": {
-      requestHome();
-      window.setTimeout(() => window.HariaiApp.openMarketRecords(), 0);
-      return;
-    }
     default:
   }
 }
