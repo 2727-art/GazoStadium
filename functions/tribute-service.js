@@ -4054,6 +4054,17 @@ function createTributeService(deps) {
   // ───────────── 貢がれ総額の番付と、1〜5位の札 ─────────────
   // 当月に貢がれた額（手数料を引く前）の多い順。財布3人以上から貢がれた管理人だけ（別アカウントでの水増しを避ける）。
   // 順位は見る人のブロックで詰めない（掲示板の札と同じ順位にする）。
+  // 両方の番付が同時に読むプロフィールだけ共有する。完了後は残さず、設定変更を次の集計で反映する。
+  const rankProfileRequests = new Map();
+  function rankingProfile(uid) {
+    if (rankProfileRequests.has(uid)) return rankProfileRequests.get(uid);
+    const request = profileRef(uid).get().finally(() => {
+      if (rankProfileRequests.get(uid) === request) rankProfileRequests.delete(uid);
+    });
+    rankProfileRequests.set(uid, request);
+    return request;
+  }
+
   // 読み取り件数は1ページの大きさ。条件を満たす人数が揃うまで続ける。
   // 同点でも次のページを飛ばさないよう、既存インデックスと同じ文書ID降順を末尾に指定する。
   async function rankedManagers(monthKey, { field, minPayers = 0, count, pageSize }) {
@@ -4072,7 +4083,7 @@ function createTributeService(deps) {
       while (offset < candidates.length && result.length < count) {
         const part = candidates.slice(offset, offset + count - result.length);
         offset += part.length;
-        const profiles = await Promise.all(part.map((row) => profileRef(row.uid).get()));
+        const profiles = await Promise.all(part.map((row) => rankingProfile(row.uid)));
         result.push(...part.map((row, index) => ({ ...row, profile: readProfile(profiles[index]) }))
           .filter((row) => row.profile.publicManagerId && !profileIsHidden(row.profile, monthKey)));
       }
@@ -4108,50 +4119,59 @@ function createTributeService(deps) {
     return new Map(top.map((entry) => [entry.managerUid, entry.rank]));
   }
 
-  // 今月の順位（牧場の日報、設計書18.6）。番付を毎回数えると重いので、10分まで前の写しを使う。
-  async function liveRanks(kind, monthKey, now) {
+  // 番付を開いた時は数え直し、牧場・掲示板にも同じ結果を渡す。共有するのはブロック判定前の行だけ。
+  const freshRankRequests = new Map();
+  function freshRanking(kind, monthKey, now) {
+    const key = `${kind}:${monthKey}`;
+    if (freshRankRequests.has(key)) return freshRankRequests.get(key);
+    const request = (async () => {
+      const rows = await (kind === "gross" ? grossRanking(monthKey) : scoreRanking(monthKey));
+      try {
+        if (kind === "gross") await saveRankBadges(monthKey, now, rows);
+        else await scoreCacheRef(monthKey).set({ monthKey, computedAt: now, rows: cachedRankRows(rows.slice(0, LIMITS.rankingLimit)) });
+      } catch (error) { console.error("tribute rank cache failed", error); }
+      return rows;
+    })().finally(() => { if (freshRankRequests.get(key) === request) freshRankRequests.delete(key); });
+    freshRankRequests.set(key, request);
+    return request;
+  }
+
+  const liveRankRequests = new Map();
+  function liveRanks(kind, monthKey, now) {
+    const key = `${kind}:${monthKey}`;
+    if (liveRankRequests.has(key)) return liveRankRequests.get(key);
+    const request = readLiveRanks(kind, monthKey, now)
+      .finally(() => { if (liveRankRequests.get(key) === request) liveRankRequests.delete(key); });
+    liveRankRequests.set(key, request);
+    return request;
+  }
+
+  // 今月の順位（牧場の日報、設計書18.6）。10分まで前の写しを使い、期限切れの再集計も共有する。
+  async function readLiveRanks(kind, monthKey, now) {
+    const pending = freshRankRequests.get(`${kind}:${monthKey}`);
+    if (pending) return cachedRankRows((await pending).slice(0, kind === "gross" ? LIMITS.grossRankingLimit : LIMITS.rankingLimit));
     const reference = kind === "gross" ? rankCacheRef(monthKey) : scoreCacheRef(monthKey);
     const cached = object((await reference.get()).data());
     if (cached.monthKey === monthKey && Array.isArray(cached.rows) && now - integer(cached.computedAt, 0, Number.MAX_SAFE_INTEGER, 0) < LIMITS.rankBadgeCacheMs) {
       return cached.rows.map((entry) => object(entry)).filter((entry) => entry.managerUid && integer(entry.rank, 0, 1_000, 0) > 0);
     }
-    if (kind === "gross") {
-      const rows = await grossRanking(monthKey);
-      await saveRankBadges(monthKey, now, rows);
-      return cachedRankRows(rows);
-    }
-    const rows = cachedRankRows((await scoreRanking(monthKey)).slice(0, LIMITS.rankingLimit).map((row, index) => ({ ...row, rank: index + 1 })));
-    await scoreCacheRef(monthKey).set({ monthKey, computedAt: now, rows });
-    return rows;
+    return cachedRankRows((await freshRanking(kind, monthKey, now)).slice(0, kind === "gross" ? LIMITS.grossRankingLimit : LIMITS.rankingLimit));
   }
 
   // 掲示板と管理人の詳細の札。毎回数えると重いので、10分まで前の順位を使う（番付を開くと数え直す）。
   // 数えられない時（インデックスの作成中など）は札を出さず、掲示板は止めない。
-  const rankBadgeRequests = new Map();
   async function rankBadges(monthKey, now) {
-    if (rankBadgeRequests.has(monthKey)) return rankBadgeRequests.get(monthKey);
-    const request = (async () => {
     try {
-      const cached = object((await rankCacheRef(monthKey).get()).data());
-      if (cached.monthKey === monthKey && now - integer(cached.computedAt, 0, Number.MAX_SAFE_INTEGER, 0) < LIMITS.rankBadgeCacheMs) {
-        return new Map((Array.isArray(cached.top) ? cached.top : [])
-          .map((entry) => [String(object(entry).managerUid || ""), integer(object(entry).rank, 0, LIMITS.rankBadgeTop, 0)])
-          .filter(([managerUid, rank]) => managerUid && rank > 0));
-      }
-      return await saveRankBadges(monthKey, now, await grossRanking(monthKey));
+      const rows = await liveRanks("gross", monthKey, now);
+      return new Map(rows.filter(row => row.rank <= LIMITS.rankBadgeTop).map(row => [row.managerUid, row.rank]));
     } catch (error) {
       console.error("tribute rank badges failed", error);
       return new Map();
     }
-    })();
-    rankBadgeRequests.set(monthKey, request);
-    try { return await request; }
-    finally { if (rankBadgeRequests.get(monthKey) === request) rankBadgeRequests.delete(monthKey); }
   }
 
   async function grossRankingsAction(uid, monthKey, now) {
-    const rows = await grossRanking(monthKey);
-    await saveRankBadges(monthKey, now, rows).catch((error) => console.error("tribute rank badge cache failed", error));
+    const rows = await freshRanking("gross", monthKey, now);
     const managers = (await visibleRows(uid, rows)).map((row) => {
       const card = object(row.profile.card);
       return {
@@ -4328,7 +4348,7 @@ function createTributeService(deps) {
     if (data?.kind === "hall") return hallAction(uid);
     if (data?.kind === "gross") return grossRankingsAction(uid, monthKey, now);
     // 番付加算（同じ組で1日500 Payまで）の多い順、同じなら財布の人数。毎日満額を貢ぐ財布を多く抱える管理人が上に来る。
-    const visible = (await visibleRows(uid, await scoreRanking(monthKey)))
+    const visible = (await visibleRows(uid, await freshRanking("score", monthKey, now)))
       .slice(0, LIMITS.rankingLimit)
       .map((row, index) => ({
         rank: index + 1,
