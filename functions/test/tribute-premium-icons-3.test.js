@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // お貢ぎ牧場の有料アイコンの3回目（49 キャラメル・50 漆黒・51 バニラ、2026-10-30）。1枚 500 Pay、四角に印の色の縁とホログラム。
 // 続けて渡された4枚のうち、制服が見える3枚は入れていない。そのうち2枚は、ユーザーが服と背景を変えて作り直した
@@ -65,6 +66,7 @@ test("icons 49-51 are made like the others, without sparkles, and recorded with 
 test("cache keys: the ranch, the store and the account page load the product list with icons 49-51 as one module", () => {
   const html = read("index.html");
   for (const name of ["tribute.js", "online.js", "account.js"]) {
+    if (["tribute.js", "tribute.css"].includes(name)) { assertRanchRelease(html); continue; }
     assert.ok(new RegExp(`"module": "${name.replace(".", "\\.")}\\?v=[^"]*${MARKER}[^"]*"`).test(html), name);
   }
   const specifier = (source, name) => source.match(new RegExp(`(?:from |import\\()"\\./${name.replace(".", "\\.")}\\?v=([^"]+)"`))?.[1] || "";

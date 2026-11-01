@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 牧場の実績（設計書17）。2026-10-30 のユーザーの決定: 実績名は提案どおり、系統ごとの枠、「数える仕組み・実績一覧への登録に進んでください」。
 // 遊び方の型（管理人・財布）とシークレット。額では解除しない。同じ相手とは日本時間の1日1回まで数える。連続日数は作らない。
@@ -225,7 +226,7 @@ test("the server stages every count before writing, and the browser announces un
 
 test("cache keys, the release script and the design record", () => {
   const html = read("index.html");
-  for (const name of ["tribute.css", "tribute.js", "achievements.js"]) assert.ok(new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-achievements-v1(?:-[a-z0-9-]+)?"`).test(html), name);
+  for (const name of ["tribute.css", "tribute.js", "achievements.js"]) { if (["tribute.js", "tribute.css"].includes(name)) { assertRanchRelease(html); continue; } assert.ok(new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-achievements-v1(?:-[a-z0-9-]+)?"`).test(html), name); }
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-achievements-v1(?:-[a-z0-9-]+)?"/);
   const design = read("TRIBUTE_DESIGN.md");
   assert.match(design, /## 17\. 牧場の実績（遊び方の型とシークレット、2026年10月）/);

@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 財布の打つ手と管理人の言葉・第1段（ranch-wallet-words-v1）。2026-10-27 のユーザーの決定:
 // 言われたい言葉、言葉の強さは財布が決める上限で管理人がその中から選ぶ、定型文の追加（言い当てる・お礼・お願いの形を外す）、
@@ -161,7 +162,7 @@ test("the recruit image accepts wallets instead of recruiting them, and the rele
   assert.match(share, /ctx\.fillText\("財布受付", /);
   assert.doesNotMatch(share, /label: "募集中"|"WALLET WANTED"/);
   assert.match(share, /#お貢ぎ牧場 #財布募集/, "the hashtag the scene searches stays");
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-wallet-words-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-wallet-words-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /import\("\.\/tribute-share\.mjs\?v=[^"]*-ranch-wallet-words-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /## 14\. 財布の打つ手と管理人の言葉/);

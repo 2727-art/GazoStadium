@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // スクショの掲載（ranch-screenshot-v1）: 財布の許可は契約の設定で、管理人には札で見せる。管理人はカードで宣言できる。
 const assert = require("node:assert/strict");
@@ -79,7 +80,7 @@ test("the safety page, design note and cache keys record the rule", () => {
   assert.match(design, /`allowScreenshots`/);
   assert.match(design, /`card\.postsScreenshots`/);
   // 後の公開の印が後ろに付いても、この公開の印が残っていればよい。
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-screenshot-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-screenshot-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /import\("\.\/tribute-share\.mjs\?v=ranch-vault-v1-ranch-screenshot-v1(?:-[a-z0-9-]+)?"/);
 });

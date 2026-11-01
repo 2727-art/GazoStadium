@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 貢ぎオセロ（ranch-othello-v1、設計書15.2）。2026-10-28 のユーザーの決定:
 // 財布は契約で受けるかを選び、その中で始めるか・1枚あたりの額・ハンデ・先手は管理人だけが決める。
@@ -262,6 +263,7 @@ test("cache keys and the design record", () => {
   assert.match(client, /import\("\.\/tribute-share\.mjs\?v=[^"]*ranch-othello-v1(?:-[a-z0-9-]+)?"/);
   const index = read("index.html");
   for (const name of ["tribute.css", "tribute.js"]) {
+    if (["tribute.js", "tribute.css"].includes(name)) { assertRanchRelease(index); continue; }
     assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-othello-v1(?:-[a-z0-9-]+)?"`), name);
   }
   assert.match(design, /第2段（貢ぎオセロ）を実装した/);

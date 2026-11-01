@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 牧場を長く育てる（ranch-growth-v1、設計書16.3・16.12）。2026-10-28 のユーザーの決定:
 // 公開してすぐ Lv4 の管理人がいて、Lv10 が天井では育てる楽しみがすぐなくなる。そこで、
@@ -164,7 +165,7 @@ test("art, cache keys and the design record", () => {
   assert.match(art, /REPLACED_BY = \{3: 14, 1: 28, 8: 29\}/);
   assert.equal((/FACILITIES = \[([\s\S]*?)\]\n/.exec(art)[1].match(/[a-z_]+|None/g) || []).length, 30);
   const index = read("index.html");
-  for (const name of ["tribute.css", "tribute.js"]) assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-growth-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(index);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-growth-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /### 16\.12 なつき/);
   assert.match(design, /Lv30 まで/);

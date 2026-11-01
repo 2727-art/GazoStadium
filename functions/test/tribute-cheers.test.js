@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 貢がれ総額の番付・ハートの札・応援欄（ranch-cheers-v1）。2026-10-27 のユーザーの決定:
 // 貢がれ総額は当月で財布3人以上の水増し対策付き、10位以内は X と番付のひとこと。1〜5位はカードにハートの札（上ほど豪華）。
@@ -131,7 +132,7 @@ test("the cheer column: wallets write only after tributing this month, managers 
 });
 
 test("cache keys and the design note record the release", () => {
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-cheers-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /### 貢がれ総額・ハートの札・応援欄（2026年10月、ユーザー決定）/);
   assert.match(design, /`tributeRankCache\/gross-\{monthKey\}`/);

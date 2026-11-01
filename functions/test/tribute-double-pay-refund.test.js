@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 請求の二重払いの返金（ranch-double-pay-refund-v1）。ユーザー決定: 運営から財布へ返す（管理人の残高はそのまま）。
 const assert = require("node:assert/strict");
@@ -82,5 +83,5 @@ test("the hub explains the operator refund and the wallet history labels it", ()
   assert.match(client, /const refund = escrowRefund \+ operatorRefund > 0 \?/);
   assert.match(account, /tribute_operator_refund: "お貢ぎ牧場：運営からの返金（請求の二重払い）"/);
   assert.match(account, /if \(key\.includes\("tribute_operator_refund"\)\) return ANJU_PAY_LABELS\.tribute_operator_refund;/);
-  for (const name of ["tribute.js", "account.js"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-double-pay-refund-v1(?:-[a-z0-9-]+)?"`), name);
+  for (const name of ["tribute.js", "account.js"]) { if (["tribute.js", "tribute.css"].includes(name)) { assertRanchRelease(html); continue; } assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-double-pay-refund-v1(?:-[a-z0-9-]+)?"`), name); }
 });

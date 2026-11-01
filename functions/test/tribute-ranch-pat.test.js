@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 牧場: 管理人が動物を「なでる」と、小さな直し（ranch-pat-v1、設計書16.14）。2026-10-28 のユーザーの決定（おすすめのとおり）:
 // 言葉を書かずに、ひと押しで「見ている」を伝える。財布の「牧場をのぞく」に、最後になでてもらった日が出る。
@@ -203,7 +204,7 @@ test("client wiring, preview, cache keys and the design record", () => {
   assert.match(client, /case "ranch_pat": \{/);
   assert.match(client, /"ranch-crowd": \(\) => navigate\("hub"\),/);
   const index = read("index.html");
-  for (const name of ["tribute.css", "tribute.js"]) assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-pat-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(index);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-pat-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /### 16\.14 なでる/);
   assert.match(design, /`ranch_pat`/);

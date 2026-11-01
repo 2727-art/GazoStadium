@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 財布の打つ手・第2段（ranch-hold-v1）。2026-10-27 のユーザーの決定:
 // お預け（財布から勝手に差し出せなくし、願い出て許されると1回だけ差し出せる。既定は受ける）、抵抗する（未払いの請求に渋る一言を3回まで）。
@@ -149,7 +150,7 @@ test("the server never takes a tribute back and keeps limits from managers", () 
 });
 
 test("cache keys and the design note record the release", () => {
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-hold-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-hold-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /第2段を実装/);
   assert.match(design, /お預けを受ける/);

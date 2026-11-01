@@ -1,0 +1,33 @@
+{
+  "entry": "assets/ranch/tribute-QMYLLACU.js",
+  "baseCss": "assets/ranch/base-6dd671dda2060fa0.css",
+  "detailCss": "assets/ranch/details-ac8f12cc44949036.css",
+  "inputs": {
+    "tribute.js": "f2a91b6103e14435d6804e1f7ff0821c52cf05c7cf97680894a19336e7de1f77",
+    "tribute-core.mjs": "1cc3cf7172cc6c018e07880909b7678e4a62c89858d5c917b0a9264162350b3f",
+    "tribute.css": "0d63aa76ee303eb7b60892317a38edc5631962ee02bee4ccdc1b15ccda6fe645",
+    "scripts/build-ranch-client.cjs": "c12d6a9f4f8904558582a7b1407ebe2b7acf74ab4b495b50c3bd53dcb4cbf17d"
+  },
+  "files": [
+    {
+      "file": "assets/ranch/tribute-QMYLLACU.js",
+      "bytes": 451456,
+      "sha256": "5dff79715f9160bacaa3f3e8c3c6433c9a2b3a1d9560b2d4c503eb1a3b0dd94b"
+    },
+    {
+      "file": "assets/ranch/ranch-IMUPCMEV.js",
+      "bytes": 48544,
+      "sha256": "bcb05f9322ad57ef0a0ba248957ac766d88842134e101c49599c30b632f8149e"
+    },
+    {
+      "file": "assets/ranch/base-6dd671dda2060fa0.css",
+      "bytes": 102001,
+      "sha256": "6dd671dda2060fa0cae20fd846144b9af2b7fa9bf58a22528c8eb5a0e8944a3f"
+    },
+    {
+      "file": "assets/ranch/details-ac8f12cc44949036.css",
+      "bytes": 8275,
+      "sha256": "ac8f12cc449490360470f92c4a805b0f562d19e3b22fe6770b945791318a3e55"
+    }
+  ]
+}

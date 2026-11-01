@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // お貢ぎ牧場の導線（ranch-nav-v1）: トップの近道・牧場を直接開くURL・契約の画面の並び・やること・スレッドの「次へ」。
 const assert = require("node:assert/strict");
@@ -154,7 +155,7 @@ test("a manager's active row no longer reads 終了 because the payer's limits a
 });
 
 test("cache keys and the design note record the navigation release", () => {
-  for (const name of ["app.js", "tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-nav-v1(?:-[a-z0-9-]+)?"`), name);
+  for (const name of ["app.js", "tribute.js", "tribute.css"]) { if (["tribute.js", "tribute.css"].includes(name)) { assertRanchRelease(html); continue; } assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-nav-v1(?:-[a-z0-9-]+)?"`), name); }
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-nav-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /やること/);
   assert.match(design, /\?open=ranch/);

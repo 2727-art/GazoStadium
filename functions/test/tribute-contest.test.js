@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 出稼ぎ命令の勝負の型（ranch-contest-v1、設計書15.3）。2026-10-28 のユーザーの決定:
 // 出稼ぎ命令は置き換えず、「完走」に「勝負」を足す。「○日以内に1on1で○勝しろ。負けたら罰金 ○Pay」。
@@ -315,6 +316,7 @@ test("cache keys and the design record", () => {
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*ranch-contest-v1(?:-[a-z0-9-]+)?"/);
   const index = read("index.html");
   for (const name of ["tribute.css", "tribute.js"]) {
+    if (["tribute.js", "tribute.css"].includes(name)) { assertRanchRelease(index); continue; }
     assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-contest-v1(?:-[a-z0-9-]+)?"`), name);
   }
   assert.match(design, /第3段（出稼ぎ命令の勝負の型）を実装した/);

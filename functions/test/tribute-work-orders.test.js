@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 出稼ぎ命令（ranch-work-orders-v1）: 管理人が「1on1を○回完走してこい」と命じ、財布が完走して報告し、管理人が確かめる。
 // Payは動かさず、命令の後の正式完走だけを数える。命令した時の完走数は、財布だけが読める private/work に置く。
@@ -361,7 +362,7 @@ test("payers opt in on applying and can change it from the thread; sheets, notes
     assert.match(sourceBlock(clientSource, "function previewCall", "function previewBoardUntil"), new RegExp(`case "${action}": \\{`), action);
   }
   const html = read("index.html");
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-work-orders-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(clientSource, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-work-orders-v1(?:-[a-z0-9-]+)?"/);
   assert.match(read("tribute.css"), /\.tribute-thread-screen\.is-shot #tributeWorkOrder,/, "hidden in the screenshot view");
   const design = read("TRIBUTE_DESIGN.md");

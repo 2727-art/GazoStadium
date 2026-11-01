@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 牧場経営の第2段（ranch-peek-v1、設計書16.11）。2026-10-28 のユーザーの指示「第2段の実装に入ってください」:
 // 財布の「牧場をのぞく」（自分の動物だけ）、財布の鳴き声（20文字 × 3つ、応援欄と同じ確認）、
@@ -295,7 +296,7 @@ test("client wiring, preview, styles, art, cache keys and the design record", ()
   }
 
   const index = read("index.html");
-  for (const name of ["tribute.css", "tribute.js"]) assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-peek-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(index);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-peek-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /第2段（財布の「牧場をのぞく」・財布の鳴き声・天気と季節・動物を増やす）を実装した（キャッシュキー `ranch-peek-v1`、16\.13）/);
   assert.match(design, /`set_moo`/);

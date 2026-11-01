@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 牧場の記念写真・財布の飼育記録・牧場の名前（ranch-photo-v1、設計書16.15）。2026-10-28 のユーザーの決定「１，２，３のみ実装をお願いします」:
 // 記念写真は、動物をスクショ掲載を許した財布の分だけ名前なしで写す。飼育記録は財布の「牧場をのぞく」に、自分の動物の分だけ。
@@ -251,7 +252,7 @@ test("the share module draws the photo with the required footer and no URL; the 
 
 test("cache keys and the design record", () => {
   const index = read("index.html");
-  for (const name of ["tribute.css", "tribute.js"]) assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-photo-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(index);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-photo-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /import\("\.\/tribute-share\.mjs\?v=[^"]*-ranch-photo-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /### 16\.15 記念写真・飼育記録・牧場の名前/);
