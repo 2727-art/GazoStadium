@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 牧場経営 第1段（ranch-pasture-v1、設計書16）。2026-10-28 のユーザーの決定:
 // 牧場レベルは関係の積み重ねで上げ、額では上げない。放牧は財布の同意（契約ごと）で、見られるのは管理人と本人だけ。
@@ -277,7 +278,7 @@ test("client and server wiring, assets, privacy of the art scripts, cache keys a
   for (const selector of [".tribute-ranch {", ".tribute-ranch-scene {", ".tribute-ranch-animal", ".tribute-ranch-bubble {", ".tribute-ranch.is-night .tribute-ranch-scene", ".tribute-tag.is-ranch", "@keyframes ranch-wander"]) assert.ok(styles.includes(selector), selector);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{\n  \.tribute-ranch-animal,/);
   const index = read("index.html");
-  for (const name of ["tribute.css", "tribute.js"]) assert.match(index, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-pasture-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(index);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-pasture-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /第1段（牧場経営）を実装した/);
 });

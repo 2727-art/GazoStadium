@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 管理人の「動き」は任意（ranch-activity-optin-v1）。2026-10-27 のユーザーの決定: 最後に動いた時は、管理人がカードで
 // 選んだ時だけ出し、初期は出さない。出さないカードは相手に時刻も渡さない。掲示板は、これまでどおり動いた順に並ぶ。
@@ -76,6 +77,6 @@ test("newcomer hints point at the board order instead of a time most cards do no
 });
 
 test("cache key and the design note record the release", () => {
-  assert.match(html, /tribute\.js\?v=[^"]*-ranch-activity-optin-v1(?:-[a-z0-9-]+)?"/);
+  assertRanchRelease(html);
   assert.match(design, /`card\.showsActivity`、初期は出さない/);
 });

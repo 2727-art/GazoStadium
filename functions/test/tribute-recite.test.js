@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 財布の打つ手と管理人の言葉・第3段（ranch-recite-v1）。2026-10-27 のユーザーの決定:
 // 言葉の献上（Pay 0）と復唱、管理人の自分の言葉（定型文・ご褒美・受取印の言葉）、延長（財布だけが申し込む）。
@@ -134,7 +135,7 @@ test("sheets, handlers, the card editor and the server actions", () => {
 });
 
 test("cache keys and the design note record the release", () => {
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-recite-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-recite-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /第3段を実装/);
   assert.match(design, /言葉の献上/);

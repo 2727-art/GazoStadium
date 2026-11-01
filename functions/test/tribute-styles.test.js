@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 管理の型（ranch-styles-v1）。2026-10-27 のユーザーの決定:
 // 型は5つ（見透かす・管理する・煽る・甘やかす・突き放す）。管理人は1つか2つ選び、主と副（ギャップ）はカードで伝えない。
@@ -71,7 +72,7 @@ test("the server keeps only the new list on cards, the board, contract snapshots
 });
 
 test("cache keys and the design note record the release", () => {
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-styles-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-styles-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /管理の型（`styles`/);
   assert.match(design, /見透かす・管理する・煽る・甘やかす・突き放す/);
@@ -130,7 +131,7 @@ test("the thread shows the type stock lines and type rewards only to the manager
   assert.match(chips, /reward\.style \? ' class="is-style"' : ""/);
   assert.match(service, /styles: ctx\.profiles\.manager\.value\.card\?\.styles,/);
   for (const selector of [".tribute-template-group.is-style button {", ".tribute-reward-chips button.is-style {"]) assert.ok(styles.includes(selector), selector);
-  assert.match(html, /tribute\.js\?v=[^"]*-ranch-style-words-v1[^"]*"/);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-style-words-v1[^"]*"/);
   assert.match(design, /型の定型文/);
 });

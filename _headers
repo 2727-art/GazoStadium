@@ -34,3 +34,17 @@
 
 /assets/fonts/dela-landing.34071422ca2b.woff2
   Cache-Control: public, max-age=31536000, immutable
+
+# BEGIN GENERATED RANCH CACHE
+/assets/ranch/tribute-QMYLLACU.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/ranch/ranch-IMUPCMEV.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/ranch/base-6dd671dda2060fa0.css
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/ranch/details-ac8f12cc44949036.css
+  Cache-Control: public, max-age=31536000, immutable
+# END GENERATED RANCH CACHE

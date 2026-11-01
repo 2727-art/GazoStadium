@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // お貢ぎ牧場の有料アイコンの2回目（43〜48、2026-10-30）。1枚 500 Pay。
 // 同じ日に、有料の印を金の縁から「印の色の縁＋縁寄せのホログラム」に変え、絵の白いきらめきを外した（ユーザー決定）。
@@ -108,9 +109,10 @@ test("paid icons are square with the owner's sigil border and a thin edge hologr
 test("cache keys: the ranch, the store and the account page load the new product list as one module", () => {
   const html = read("index.html");
   for (const name of ["tribute.js", "online.js", "account.js"]) {
+    if (["tribute.js", "tribute.css"].includes(name)) { assertRanchRelease(html); continue; }
     assert.ok(new RegExp(`"module": "${name.replace(".", "\\.")}\\?v=[^"]*${MARKER}[^"]*"`).test(html), name);
   }
-  assert.ok(new RegExp(`data-src="tribute\\.css\\?v=[^"]*${MARKER}[^"]*"`).test(html), "tribute.css");
+  assertRanchRelease(html);
   const specifier = (source, name) => source.match(new RegExp(`(?:from |import\\()"\\./${name.replace(".", "\\.")}\\?v=([^"]+)"`))?.[1] || "";
   const client = read("tribute.js");
   const online = read("online.js");

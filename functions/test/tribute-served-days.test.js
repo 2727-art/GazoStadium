@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 仕えた日数の番付と応援欄の並び（ranch-served-days-v1、設計書15.1）。2026-10-28 のユーザーの決定:
 // 財布どうしを献上額で比べない。管理人ごとの番付は仕えた日数の順、額の順位は管理人だけが見る、応援欄は新しい順。
@@ -69,6 +70,7 @@ test("the manager detail shows the days ranking, and the amount ranking only on 
 
 test("cache keys and the design note record the change", () => {
   for (const name of ["tribute.js", "tribute.css"]) {
+    if (["tribute.js", "tribute.css"].includes(name)) { assertRanchRelease(html); continue; }
     assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-served-days-v1(?:-[a-z0-9-]+)?"`), name);
   }
   assert.ok(design.includes("Status: 第1段を実装した（仕えた日数の番付と応援欄の並び、15.1）"));

@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // スレッドの使い勝手（ranch-thread-ux-v1）: 入力欄は会話のすぐ下、未払いの請求のタイムラインの印、
 // 管理人だけの呼び名、財布名の説明、会話だけを出す「スクショ表示」。
@@ -86,7 +87,7 @@ test("the screenshot view shows only the conversation; managers get it only wher
 });
 
 test("cache keys and the design note record the release", () => {
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-thread-ux-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-thread-ux-v1(?:-[a-z0-9-]+)?"/);
   assert.match(design, /### スレッドの使い勝手/);
   assert.match(design, /`payerNicknames`/);

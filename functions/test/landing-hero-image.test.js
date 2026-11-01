@@ -11,6 +11,7 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 const immutableRules = () => [imagePath,
   ...JSON.parse(read("assets/firebase/manifest.json")).files.filter(file => file.file.endsWith(".js")).map(file => file.file),
   "assets/fonts/" + JSON.parse(read("assets/fonts/landing-subset.json")).file,
+  ...JSON.parse(read("assets/ranch/manifest.json")).files.map(file => file.file),
 ].map(file => ({ source: `/${file}`, value: "public, max-age=31536000, immutable" }));
 const heroExample = () => {
   const app = read("app.js");

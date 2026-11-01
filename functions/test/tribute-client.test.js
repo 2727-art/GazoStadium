@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -31,8 +32,7 @@ function sourceBlock(source, startText, endText) {
 }
 
 test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-auth-session-v1-tribute-v1-tribute-ranch-v1-tribute-cost-guard-v1-retire-free-table-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-deco-v1-ranch-frame-color-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-rank-score-v1-ranch-vault-v1-ranch-manager-submit-v1-ranch-illustration-icons-v1-ranch-edge-fixes-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-request-fix-v1-ranch-double-pay-refund-v1-ranch-work-orders-v1-ranch-first-steps-v1-ranch-activity-optin-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
+  assertRanchRelease(html);
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1-ranch-avatar-v1-ranch-gohoubi-v1-ranch-collar-v1-ranch-word-v1-ranch-invite-v1-ranch-wallet-v1-ranch-kidoku-v1-ranch-board-fresh-v1-ranch-photo-icons-v1-ranch-vault-v1-ranch-illustration-icons-v1-ranch-nav-v1-ranch-free-talk-v1-ranch-screenshot-v1-ranch-thread-ux-v1-ranch-work-orders-v1-ranch-cheers-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /import\("\.\/tribute-share\.mjs\?v=ranch-vault-v1-ranch-screenshot-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /from "\.\/tribute-deco\.mjs\?v=ranch-vault-v1-ranch-premium-icons-v1(?:-[a-z0-9-]+)?"/);

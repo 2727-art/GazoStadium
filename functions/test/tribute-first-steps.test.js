@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 新規の立ち去りを減らす（ranch-first-steps-v1）。2026-10-26 の集計で、年齢確認をした人の68%が何もせず帰り、
 // 申し込みの多くが48時間で失効していた。はじめての方へ・入場料0の絞り込み・管理人の動き・入場料の知らせ・案内し直し。
@@ -82,7 +83,7 @@ test("applying warns when the entry fee is more than the wallet, and stalled app
 });
 
 test("cache keys and the design note record the release", () => {
-  for (const name of ["tribute.js", "tribute.css"]) assert.match(html, new RegExp(`${name.replace(".", "\\.")}\\?v=[^"]*-ranch-first-steps-v1(?:-[a-z0-9-]+)?"`), name);
+  assertRanchRelease(html);
   assert.match(design, /財布の始め方（はじめての方へ）/);
   assert.match(design, /report-tribute-newcomer-funnel\.cjs/);
 });

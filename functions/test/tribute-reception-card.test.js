@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 受付カード（ranch-reception-card-v1）。2026-10-28 のユーザーの決定: 「財布募集の画像」を「受付カード」に改名する。
 // 画像の中身（右上の「財布受付」・「受付中」の印・ACCEPTING WALLETS）はそのまま。界隈が探すハッシュタグ #財布募集 は残す。
@@ -39,7 +40,7 @@ test("the image and the post keep their words, including the hashtag the scene s
 });
 
 test("cache keys", () => {
-  assert.match(index, /"module": "tribute\.js\?v=[^"]*-ranch-reception-card-v1(?:-[a-z0-9-]+)?"/);
+  assertRanchRelease(index);
   assert.match(index, /"module": "online\.js\?v=[^"]*-ranch-reception-card-v1(?:-[a-z0-9-]+)?"/);
   assert.match(client, /import\("\.\/tribute-share\.mjs\?v=[^"]*-ranch-reception-card-v1(?:-[a-z0-9-]+)?"/);
 });

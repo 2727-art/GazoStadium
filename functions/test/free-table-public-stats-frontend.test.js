@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -35,6 +36,7 @@ test("HTML has no free-table loads or promotion and all changed active scripts h
   const html = read("index.html");
   assert.doesNotMatch(html, /(?:src|href)="free-table\.(?:js|css)|貼り合い自由卓/);
   for (const file of ["app.js", "online.js", "strategy.js", "ai-text-training.js", "roulette-training.js", "tribute.js"]) {
+    if (["tribute.js", "tribute.css"].includes(file)) { assertRanchRelease(html); continue; }
     const line = html.split("\n").find((entry) => entry.includes(file + "?v="));
     assert.match(line, /retire-free-table-v1/, file);
   }

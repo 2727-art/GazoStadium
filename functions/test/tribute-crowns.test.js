@@ -1,4 +1,5 @@
 "use strict";
+const { assertRanchRelease } = require("./helpers/ranch-release.cjs");
 
 // 番付の冠と月替わり（ranch-crowns-v1、設計書18）。2026-10-31 のユーザーの決定「１，２，３を一緒に入れます」:
 // 歴代の冠（各番付の1〜5位、消えない）・先月の首位の特権（掲示板のいちばん上と受付カードの帯）・月替わりの結果発表と収穫の棚。
@@ -243,8 +244,7 @@ test("the harvest art, the cache keys and the design record", () => {
     assert.ok(fs.statSync(file).size > 1_000 && fs.statSync(file).size < 20_000, name);
   }
   const html = read("index.html");
-  assert.match(html, /data-src="tribute\.css\?v=[^"]*-ranch-crowns-v1"/);
-  assert.match(html, /"module": "tribute\.js\?v=[^"]*-ranch-crowns-v1"/);
+  assertRanchRelease(html);
   const client = read("tribute.js");
   assert.match(client, /from "\.\/tribute-core\.mjs\?v=[^"]*-ranch-crowns-v1";/);
   assert.match(client, /import\("\.\/tribute-share\.mjs\?v=[^"]*-ranch-crowns-v1"\)/);
