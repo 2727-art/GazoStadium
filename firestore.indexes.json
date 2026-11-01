@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "tributeManagerMonths",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "managerUid", "order": "ASCENDING" },
+        { "fieldPath": "monthKey", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "tributeContracts",
       "queryScope": "COLLECTION",
       "fields": [

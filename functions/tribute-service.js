@@ -4479,6 +4479,29 @@ function createTributeService(deps) {
     return { ok: true, kind: "hall", months };
   }
 
+  // 棚に出す直近12回の収穫だけを読む。収穫のない月は飛ばすが、保存済みの月は削除しない。
+  async function harvestMonths(uid, beforeMonth) {
+    const received = new Map();
+    let cursor = null;
+    while (received.size < 12) {
+      const remaining = 12 - received.size;
+      let query = firestore.collection("tributeManagerMonths").where("managerUid", "==", uid)
+        .where("monthKey", "<", beforeMonth).orderBy("monthKey", "desc").orderBy("__name__", "desc").limit(remaining);
+      if (cursor) query = query.startAfter(...cursor);
+      const snapshot = await query.get();
+      for (const document of snapshot.docs) {
+        const month = object(document.data());
+        const key = String(month.monthKey || "");
+        const total = integer(month.receivedGross, 0, Number.MAX_SAFE_INTEGER, 0);
+        if (/^\d{4}-\d{2}$/.test(key) && total > 0) received.set(key, total);
+      }
+      if (snapshot.size < remaining) break;
+      const last = snapshot.docs.at(-1);
+      cursor = [last.get("monthKey"), last.id];
+    }
+    return received;
+  }
+
   // わたしの牧場の順位（設計書18.6）: 先月の結果・収穫の棚・今月の順位。管理人カードを作った本人だけ。
   async function ranchStandingAction(uid) {
     requireAge(await readOwnProfile(uid));
@@ -4486,16 +4509,14 @@ function createTributeService(deps) {
     const monthKey = jstMonthKey(now);
     const lastMonthKey = previousMonthKey(monthKey);
     const hall = await closePreviousMonth(now);
-    const [profileSnapshot, monthsSnapshot, gross, score] = await Promise.all([
+    const [profileSnapshot, received, gross, score] = await Promise.all([
       profileRef(uid).get(),
-      firestore.collection("tributeManagerMonths").where("managerUid", "==", uid).get(),
+      harvestMonths(uid, hall ? monthKey : lastMonthKey),
       liveRanks("gross", monthKey, now).catch((error) => { console.error("tribute live gross ranks failed", error); return null; }),
       liveRanks("score", monthKey, now).catch((error) => { console.error("tribute live score ranks failed", error); return null; }),
     ]);
     const profile = readProfile(profileSnapshot);
     if (!profile.card) fail("failed-precondition", "管理人カードを作ると、牧場の順位が見られます。");
-    const received = new Map(monthsSnapshot.docs.map((document) => object(document.data()))
-      .map((month) => [String(month.monthKey || ""), integer(month.receivedGross, 0, Number.MAX_SAFE_INTEGER, 0)]));
     const ranksOf = (month) => profile.monthRanks[month] || { gross: 0, score: 0 };
     // 収穫の棚: 締めた月のうち、財布から貢がれた月（新しい順）。締めていない前の月（月が変わって10分の間）は、まだ出さない。
     const shelf = [...received.entries()]
