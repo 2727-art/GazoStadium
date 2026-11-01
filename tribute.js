@@ -569,10 +569,9 @@ function renderHub() {
     ${renderAchievementPanel()}
     <section class="tribute-panel tribute-legacy">
       <h2>旧推し値市場</h2>
-      <p>推し値市場は2026年10月に終了し、お貢ぎ牧場へ置き換わりました。進行中の商談は完了・返還まで進み、ランキング・永久実績・推し値証書は閲覧できます。</p>
+      <p>推し値市場は2026年10月に終了し、お貢ぎ牧場へ置き換わりました。ランキング・永久実績・購入済みの推し値証書は、旧市場の記録から閲覧できます。</p>
       <div class="tribute-row">
-        <button class="button button-ghost button-small" type="button" data-t="legacy-market" data-dest="rankings">旧推し値市場の記録</button>
-        <button class="button button-ghost button-small" type="button" data-t="legacy-market" data-dest="setup">進行中の商談に戻る</button>
+        <button class="button button-ghost button-small" type="button" data-t="legacy-market">旧推し値市場の記録</button>
       </div>
     </section>
   </div>`, { title: "契約" });

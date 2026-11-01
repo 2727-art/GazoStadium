@@ -38,10 +38,9 @@ import{ensureHariaiUser as Bl}from"/auth-session.js?v=auth-session-v1-lazy-loadi
     ${Gi()}
     <section class="tribute-panel tribute-legacy">
       <h2>\u65E7\u63A8\u3057\u5024\u5E02\u5834</h2>
-      <p>\u63A8\u3057\u5024\u5E02\u5834\u306F2026\u5E7410\u6708\u306B\u7D42\u4E86\u3057\u3001\u304A\u8CA2\u304E\u7267\u5834\u3078\u7F6E\u304D\u63DB\u308F\u308A\u307E\u3057\u305F\u3002\u9032\u884C\u4E2D\u306E\u5546\u8AC7\u306F\u5B8C\u4E86\u30FB\u8FD4\u9084\u307E\u3067\u9032\u307F\u3001\u30E9\u30F3\u30AD\u30F3\u30B0\u30FB\u6C38\u4E45\u5B9F\u7E3E\u30FB\u63A8\u3057\u5024\u8A3C\u66F8\u306F\u95B2\u89A7\u3067\u304D\u307E\u3059\u3002</p>
+      <p>\u63A8\u3057\u5024\u5E02\u5834\u306F2026\u5E7410\u6708\u306B\u7D42\u4E86\u3057\u3001\u304A\u8CA2\u304E\u7267\u5834\u3078\u7F6E\u304D\u63DB\u308F\u308A\u307E\u3057\u305F\u3002\u30E9\u30F3\u30AD\u30F3\u30B0\u30FB\u6C38\u4E45\u5B9F\u7E3E\u30FB\u8CFC\u5165\u6E08\u307F\u306E\u63A8\u3057\u5024\u8A3C\u66F8\u306F\u3001\u65E7\u5E02\u5834\u306E\u8A18\u9332\u304B\u3089\u95B2\u89A7\u3067\u304D\u307E\u3059\u3002</p>
       <div class="tribute-row">
-        <button class="button button-ghost button-small" type="button" data-t="legacy-market" data-dest="rankings">\u65E7\u63A8\u3057\u5024\u5E02\u5834\u306E\u8A18\u9332</button>
-        <button class="button button-ghost button-small" type="button" data-t="legacy-market" data-dest="setup">\u9032\u884C\u4E2D\u306E\u5546\u8AC7\u306B\u623B\u308B</button>
+        <button class="button button-ghost button-small" type="button" data-t="legacy-market">\u65E7\u63A8\u3057\u5024\u5E02\u5834\u306E\u8A18\u9332</button>
       </div>
     </section>
   </div>`,{title:"\u5951\u7D04"})}function ui(e,t){let a=wa(e),r=Js(t),n=Number(t?.cheersUnseen||0)>0&&t?.publicManagerId?`<button type="button" class="tribute-todo-chip is-cheer" data-t="open-manager" data-id="${l(t.publicManagerId)}">\u5FDC\u63F4 <b>${Number(t.cheersUnseen)}</b></button>`:"";return`<section class="tribute-todo" aria-labelledby="tributeTodoTitle">
