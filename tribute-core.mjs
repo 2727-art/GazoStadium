@@ -574,7 +574,8 @@ export function avatarId(value) {
 
 export function avatarUrl(value) {
   const id = avatarId(value);
-  return id ? new URL(`./assets/tribute-avatars/avatar-${String(id).padStart(2, "0")}.webp`, import.meta.url).href : "";
+  // The bundled module lives under /assets/ranch/; images stay at the site's public asset root.
+  return id ? new URL(`/assets/tribute-avatars/avatar-${String(id).padStart(2, "0")}.webp`, import.meta.url).href : "";
 }
 // 請求と献上の名目。サーバーの PURPOSES と同じ。sexual の名目は、預ける側が契約で許した時だけ使え、表示もする。
 export const PURPOSES = Object.freeze([
