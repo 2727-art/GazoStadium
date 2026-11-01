@@ -4054,42 +4054,46 @@ function createTributeService(deps) {
   // ───────────── 貢がれ総額の番付と、1〜5位の札 ─────────────
   // 当月に貢がれた額（手数料を引く前）の多い順。財布3人以上から貢がれた管理人だけ（別アカウントでの水増しを避ける）。
   // 順位は見る人のブロックで詰めない（掲示板の札と同じ順位にする）。
+  // 読み取り件数は1ページの大きさ。条件を満たす人数が揃うまで続ける。
+  // 同点でも次のページを飛ばさないよう、既存インデックスと同じ文書ID降順を末尾に指定する。
+  async function rankedManagers(monthKey, { field, minPayers = 0, count, pageSize }) {
+    let base = firestore.collection("tributeManagerMonths").where("monthKey", "==", monthKey).orderBy(field, "desc");
+    if (field === "rankScore") base = base.orderBy("payers", "desc");
+    base = base.orderBy("__name__", "desc");
+    const result = [];
+    let cursor = null;
+    while (result.length < count) {
+      const snapshot = await (cursor ? base.startAfter(...cursor) : base).limit(pageSize).get();
+      const candidates = snapshot.docs
+        .map((document) => ({ uid: String(document.get("managerUid") || ""), value: object(document.data()) }))
+        .filter((row) => row.uid && integer(row.value.payers, 0, Number.MAX_SAFE_INTEGER, 0) >= minPayers
+          && (minPayers === 0 || integer(row.value[field], 0, Number.MAX_SAFE_INTEGER, 0) > 0));
+      let offset = 0;
+      while (offset < candidates.length && result.length < count) {
+        const part = candidates.slice(offset, offset + count - result.length);
+        offset += part.length;
+        const profiles = await Promise.all(part.map((row) => profileRef(row.uid).get()));
+        result.push(...part.map((row, index) => ({ ...row, profile: readProfile(profiles[index]) }))
+          .filter((row) => row.profile.publicManagerId && !profileIsHidden(row.profile, monthKey)));
+      }
+      if (snapshot.docs.length < pageSize) break;
+      const last = snapshot.docs.at(-1);
+      cursor = [last.get(field), ...(field === "rankScore" ? [last.get("payers")] : []), last.id];
+    }
+    return result.map((row, index) => ({ ...row, rank: index + 1 }));
+  }
+
   async function grossRanking(monthKey) {
-    const snapshot = await firestore.collection("tributeManagerMonths")
-      .where("monthKey", "==", monthKey)
-      .orderBy("receivedGross", "desc")
-      .limit(LIMITS.grossRankingScan)
-      .get();
-    const candidates = snapshot.docs
-      .map((document) => ({ uid: String(document.get("managerUid") || ""), value: object(document.data()) }))
-      .filter((row) => row.uid
-        && integer(row.value.payers, 0, Number.MAX_SAFE_INTEGER, 0) >= LIMITS.grossRankingMinPayers
-        && integer(row.value.receivedGross, 0, Number.MAX_SAFE_INTEGER, 0) > 0)
-      .slice(0, LIMITS.grossRankingLimit + 5);
-    const profiles = await Promise.all(candidates.map((row) => profileRef(row.uid).get()));
-    return candidates
-      .map((row, index) => ({ ...row, profile: readProfile(profiles[index]) }))
-      .filter((row) => row.profile.publicManagerId && !profileIsHidden(row.profile, monthKey))
-      .slice(0, LIMITS.grossRankingLimit)
-      .map((row, index) => ({ ...row, rank: index + 1 }));
+    return rankedManagers(monthKey, { field: "receivedGross", minPayers: LIMITS.grossRankingMinPayers,
+      count: LIMITS.grossRankingLimit, pageSize: LIMITS.grossRankingScan });
   }
 
   // 番付加算の並び（見る人のブロックで詰める前）。隠された管理人と、公開IDのない管理人を除く。
   // 同じなら財布の人数。毎日満額を貢ぐ財布を多く抱える管理人が上に来る。
-  async function scoreRanking(monthKey) {
-    const snapshot = await firestore.collection("tributeManagerMonths")
-      .where("monthKey", "==", monthKey)
-      .orderBy("rankScore", "desc")
-      .orderBy("payers", "desc")
-      .limit(LIMITS.rankingLimit * 2)
-      .get();
-    const rows = snapshot.docs
-      .map((document) => ({ uid: String(document.get("managerUid") || ""), value: object(document.data()) }))
-      .filter((row) => row.uid);
-    const profiles = await Promise.all(rows.map((row) => profileRef(row.uid).get()));
-    return rows
-      .map((row, index) => ({ ...row, profile: readProfile(profiles[index]) }))
-      .filter((row) => !profileIsHidden(row.profile, monthKey) && row.profile.publicManagerId);
+  async function scoreRanking(monthKey, { crownsOnly = false } = {}) {
+    return rankedManagers(monthKey, { field: "rankScore",
+      minPayers: crownsOnly ? LIMITS.grossRankingMinPayers : 0,
+      count: crownsOnly ? LIMITS.monthRankTop : LIMITS.rankingLimit * 2, pageSize: LIMITS.rankingLimit * 2 });
   }
 
   const rankCacheRef = (monthKey) => firestore.collection("tributeRankCache").doc(`gross-${monthKey}`);
@@ -4390,7 +4394,7 @@ function createTributeService(deps) {
   async function closeMonth(monthKey, now) {
     const existing = await hallRef(monthKey).get();
     if (existing.exists) return readHall(existing.data());
-    const [grossRows, scoreRows] = await Promise.all([grossRanking(monthKey), scoreRanking(monthKey)]);
+    const [grossRows, scoreRows] = await Promise.all([grossRanking(monthKey), scoreRanking(monthKey, { crownsOnly: true })]);
     const gross = grossRows.slice(0, LIMITS.monthRankTop).map((row) => hallRow({ ...row, kind: "gross" }));
     // 番付加算の冠も、財布3人以上から貢がれた管理人だけで数える（貢がれ総額の番付と同じ水増し対策）。
     const score = scoreRows

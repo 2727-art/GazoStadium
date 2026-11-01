@@ -75,9 +75,9 @@ test("hearts get richer toward first place and appear only for ranks 1 to 5", ()
 });
 
 test("the server ranks gross receipts monthly with the 3-wallet floor and caches the top 5 without breaking the board", () => {
-  const ranking = sourceBlock(service, "async function grossRanking", "const rankCacheRef");
-  assert.match(ranking, /\.where\("monthKey", "==", monthKey\)\s*\.orderBy\("receivedGross", "desc"\)/);
-  assert.match(ranking, />= LIMITS\.grossRankingMinPayers/);
+  const ranking = sourceBlock(service, "async function rankedManagers", "const rankCacheRef");
+  assert.match(ranking, /\.where\("monthKey", "==", monthKey\)\.orderBy\(field, "desc"\)/);
+  assert.match(ranking, /field: "receivedGross", minPayers: LIMITS\.grossRankingMinPayers/);
   assert.match(ranking, /!profileIsHidden\(row\.profile, monthKey\)/);
   const badges = sourceBlock(service, "async function rankBadges", "async function grossRankingsAction");
   assert.match(badges, /now - integer\(cached\.computedAt, 0, Number\.MAX_SAFE_INTEGER, 0\) < LIMITS\.rankBadgeCacheMs/);
