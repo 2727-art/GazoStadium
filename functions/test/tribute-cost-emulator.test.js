@@ -265,7 +265,9 @@ test("tribute cost guards preserve real Firestore transaction and lifecycle cont
       firstAt: START - 4 * DAY, lastAt: START - DAY,
     });
     const first = await f.act(f.payerUid, "state");
-    assert.deepEqual(first.achievements.stats, { managerPairDays: 0, walletPairDays: 2 });
+    assert.equal(first.achievements.stats.managerPairDays, 0);
+    assert.equal(first.achievements.stats.walletPairDays, 2);
+    assert.equal(first.achievements.stats.walServedTop, 5, "the ranch achievement migration preserves proven served days");
     assert.equal((await database.doc(`tributeAchievementStats/${f.payerUid}`).get()).get("historyBackfilled"), true);
     f.resetTrace();
     const again = await f.act(f.payerUid, "state");
