@@ -26,8 +26,8 @@ test("desktop landing keeps entrances and remaining tools centered after creator
   assert.doesNotMatch(desktop, /\.vl-board-list\s*\{/, "the open tables stay one timeline on desktop");
   assert.match(
     desktop,
-    /\.vl-others-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s,
-    "the three remaining other modes fill one desktop row",
+    /\.vl-others-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s,
+    "the internal modes keep two columns above the linked game",
   );
   assert.match(velvet, /\.vl-main-button\s*\{[^}]*grid-column:\s*1 \/ -1;/s, "normal 1on1 stays the widest entrance");
   // 左右の列は独立して上から積むので、隣の区画の高さで隙間ができない

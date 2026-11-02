@@ -1692,6 +1692,23 @@ a:focus-visible,
   --tile-icon: var(--vs-icon-stadium);
 }
 
+.vl-tile-mirage {
+  --tile-accent: 168, 139, 255;
+  --tile-icon: var(--vs-icon-medal);
+  grid-column: 1 / -1;
+  text-decoration: none;
+}
+
+.vl-tile-note {
+  position: absolute;
+  top: 15px;
+  right: 14px;
+  color: rgb(var(--tile-accent));
+  font-size: 0.65rem;
+  font-style: normal;
+  line-height: 1.5;
+}
+
 /* ランキングとAnjuPayの入口。スマホでは画面下のタブ、PCでは横並び。 */
 .vl-tabbar {
   display: grid;
@@ -1966,7 +1983,7 @@ a:focus-visible,
   }
 
   .vl-others-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .hero.vl-landing > .vl-tabbar {

@@ -655,6 +655,7 @@
           <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>AIと対戦しよう</small><span>文字コラトレーニング</span></button>
           <button class="vl-tile vl-tile-roulette" id="rouletteTrainingButton" type="button"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
           <button class="vl-tile vl-tile-stadium" id="stadiumButton" type="button"><small>完走した数だけ観客が増える</small><span>マイスタジアム</span></button>
+          <a class="vl-tile vl-tile-mirage" href="https://miragelabyrinth.anjugames.workers.dev/" target="_blank" rel="noopener"><small>クリア特典のコードで、貼り合いスタジアムの実績を解除</small><span>ミラージュラビリンス</span><em class="vl-tile-note">実績連動 · 別タブで開く ↗</em></a>
         </div>
       </section>
       <p class="vl-ranking-invite">ランキングに挑戦して、プレイの実績とあなたの名前を届けよう。</p>
