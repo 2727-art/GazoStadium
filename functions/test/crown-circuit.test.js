@@ -199,6 +199,8 @@ test("numbered seats produce transparent stars and population-aware award tiers"
   assert.equal(crownStarScore(10, 10), 20);
   assert.equal(crownStarScore(1, 1), 20);
   assert.equal(crownAwardTier("daily", 1, 1), "daily_opening");
+  assert.equal(crownAwardTier("weekly", 1, 1), "weekly_opening");
+  assert.equal(crownAwardTier("monthly", 1, 1), "monthly_champion");
   assert.equal(crownAwardTier("daily", 1, 8), "daily_champion");
   assert.equal(crownAwardTier("daily", 3, 8), "daily_top3");
   assert.equal(crownAwardTier("daily", 4, 8), "daily_seat");

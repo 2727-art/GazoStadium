@@ -16306,7 +16306,7 @@ async function commitCrownCircuitWrites(writes) {
   }
 }
 
-const CROWN_MONTHLY_ACHIEVEMENT_REVISION = 1;
+const CROWN_MONTHLY_ACHIEVEMENT_REVISION = 2;
 
 async function getCrownCircuitSnapshots(refs) {
   const snapshots = [];
@@ -16334,7 +16334,7 @@ function crownCircuitAwardLabel(period, rank, participantCount) {
   const periodLabel = period === "daily" ? "日間"
     : period === "weekly" ? "週間"
       : "月間";
-  if (participantCount < 2) return `${periodLabel} 開幕者`;
+  if (participantCount < 2 && period !== "monthly") return `${periodLabel} 開幕者`;
   if (rank === 1) return `${periodLabel} 王者`;
   if (rank <= 3) return `${periodLabel} 第${rank}席`;
   return `${periodLabel} 入賞 #${rank}`;
@@ -16391,13 +16391,22 @@ async function reconcileCrownMonthlyAchievements(key, sources, participantCount,
     await Promise.all(participants.slice(offset, offset + 100).map(({ uid, value }) => (
       firestore.runTransaction(async (transaction) => {
         const statsRef = crownMonthlyAchievementStatsRef(uid);
-        const statsSnapshot = await transaction.get(statsRef);
-        transaction.set(statsRef, finalizeCrownMonthlyAchievement(statsSnapshot.data(), {
+        const profileRef = achievementProfileRef(uid);
+        const [statsSnapshot, profileSnapshot] = await Promise.all([
+          transaction.get(statsRef),
+          transaction.get(profileRef),
+        ]);
+        const stats = finalizeCrownMonthlyAchievement(statsSnapshot.data(), {
           key,
           rank: integer(value?.rank, 0, 100_000, 0),
           participantCount,
           finalizedAt,
-        }));
+        });
+        transaction.set(statsRef, stats);
+        const eligibleIds = eligibleAchievementIds({ crownMonthlyStats: stats, scope: "battle" })
+          .filter((id) => id.startsWith("crown_monthly_"));
+        const unlocked = unlockAchievements(profileSnapshot.data(), eligibleIds);
+        if (unlocked.newlyUnlocked.length) transaction.set(profileRef, unlocked.profile);
       })
     )));
   }
@@ -16499,6 +16508,57 @@ async function aggregateFinalizedCrownEntries(period, sourceKey, rankedEntries, 
   return aggregated;
 }
 
+async function reconcileLoneCrownMonthlyChampion(key, sources, participantCount, finalizedAt) {
+  if (participantCount !== 1) return 0;
+  const champion = sources.find(({ value }) => (
+    Number(value.rank) === 1 && crownCircuitEntryEligible("monthly", value)
+  ));
+  if (!champion) return 0;
+  const { uid, ref, value } = champion;
+  const tier = crownAwardTier("monthly", 1, participantCount);
+  const endsAt = periodEndsAt("monthly", key);
+  const historicalAt = Number(value.finalizedAt || finalizedAt || endsAt);
+  await commitCrownCircuitWrites([
+    { ref, data: { awardTier: tier }, options: { merge: true } },
+    {
+      ref: serverRankingAwardRef(uid, "monthly", key),
+      data: {
+        source: "crown-circuit",
+        rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+        period: "monthly", key, rank: 1,
+        matches: value.qualifyingWeeks,
+        participantCount, tier,
+        label: crownCircuitAwardLabel("monthly", 1, participantCount),
+        starScore: value.starScore,
+        endsAt,
+        activeUntil: crownCircuitAwardActiveUntil("monthly", endsAt),
+        awardedAt: historicalAt,
+      },
+      options: { merge: true },
+    },
+  ]);
+  const historicalEntry = { ...value };
+  delete historicalEntry.xHandle;
+  const publicEntry = publicCrownCircuitEntry(historicalEntry);
+  const historicalSpotlight = {
+    ...publicEntry,
+    entryId: value.entryId,
+    period: "monthly", key, rank: 1, participantCount,
+    startsAt: historicalAt,
+    endsAt: historicalAt + (24 * 60 * 60 * 1000),
+  };
+  await realtime.ref().update({
+    [`online/crownCircuitSeatHistory/monthly/${key}/1`]: {
+      ...publicEntry, entryId: value.entryId, awardTier: tier,
+    },
+    [`online/rankingSpotlights/history/monthly/${key}`]: historicalSpotlight,
+    [`online/crownCircuitHallOfFame/monthly/${key}`]: {
+      ...historicalSpotlight, finalizedAt: historicalAt,
+    },
+  });
+  return 1;
+}
+
 async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
   if (!isCrownCircuitPeriod(period, key)) return { period, key, skipped: "cutover" };
   const endsAt = periodEndsAt(period, key);
@@ -16525,6 +16585,9 @@ async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
   if (alreadyFinalized) {
     const participantCount = Number(periodSnapshot.get("participantCount") || 0)
       || sources.filter(({ value }) => integer(value?.rank, 0, 100_000, 0) > 0).length;
+    const reconciledChampions = await reconcileLoneCrownMonthlyChampion(
+      key, sources, participantCount, periodSnapshot.get("finalizedAt") || endsAt,
+    );
     const reconciledAchievements = await reconcileCrownMonthlyAchievements(
       key,
       sources,
@@ -16542,6 +16605,7 @@ async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
       skipped: "finalized",
       participantCount,
       reconciledAchievements,
+      reconciledChampions,
     };
   }
   const ranked = sources
@@ -16697,7 +16761,7 @@ async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
         && spotlightSource.xHandle) {
       realtimeUpdates["online/rankingSpotlights/current"] = spotlight;
     }
-    if (period === "monthly" && participantCount >= 2) {
+    if (period === "monthly" && participantCount >= 1) {
       realtimeUpdates[`online/crownCircuitHallOfFame/monthly/${key}`] = {
         ...historicalSpotlight,
         finalizedAt: now,

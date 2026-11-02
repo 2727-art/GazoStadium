@@ -892,9 +892,9 @@ function normalizeCrownMonthlyStats(value) {
     periods,
     participations: records.length,
     qualifiedMonths: records.filter((record) => record.finalized && record.rank > 0).length,
-    top10Months: records.filter((record) => record.finalized && record.participantCount >= 2 && record.rank > 0 && record.rank <= 10).length,
-    top3Months: records.filter((record) => record.finalized && record.participantCount >= 2 && record.rank > 0 && record.rank <= 3).length,
-    championMonths: records.filter((record) => record.finalized && record.participantCount >= 2 && record.rank === 1).length,
+    top10Months: records.filter((record) => record.finalized && record.participantCount >= 1 && record.rank > 0 && record.rank <= 10).length,
+    top3Months: records.filter((record) => record.finalized && record.participantCount >= 1 && record.rank > 0 && record.rank <= 3).length,
+    championMonths: records.filter((record) => record.finalized && record.participantCount >= 1 && record.rank === 1).length,
     updatedAt: count(value?.updatedAt, Number.MAX_SAFE_INTEGER),
   };
 }
