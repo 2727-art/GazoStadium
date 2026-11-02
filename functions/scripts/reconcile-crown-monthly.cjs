@@ -4,7 +4,6 @@
 // to an explicitly selected, already-finalized month. Never prints player IDs.
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
 const crown = require("../crown-circuit");
 const achievements = require("../achievements");
 const { createMigrationRealtimeRest } = require("./player-safety-rtdb-rest");
@@ -18,24 +17,24 @@ function loadMonthlyFinalizer({ firestore, realtime }) {
   }
   const profileRef = uid => firestore.collection("serverRankingProfiles").doc(uid);
   const periodRef = (period, key) => firestore.collection("crownCircuitPeriods").doc(`${period}_${key}`);
-  const context = vm.createContext({
+  const context = {
     ...crown, ...achievements, firestore, realtime,
     serverRankingAwardRef: (uid, period, key) => profileRef(uid).collection("awards").doc(`${period}_${key}`),
     crownCircuitPeriodRef: periodRef,
     crownCircuitPeriodEntryRef: (uid, period, key) => periodRef(period, key).collection("entries").doc(uid),
     crownMonthlyAchievementStatsRef: uid => firestore.collection("crownMonthlyAchievementStats").doc(uid),
     achievementProfileRef: uid => firestore.collection("achievementProfiles").doc(uid),
-  });
-  vm.runInContext([
+  };
+  // Firestore requires transaction callbacks to return native Promises. Compile
+  // trusted repository functions in this realm, rather than a separate VM realm.
+  return new Function(...Object.keys(context), [
     between("function cleanText(", "function safeBalance("),
     between("function periodKey(", "function eventId("),
     between("function publicCrownCircuitEntry(", "async function mirrorServerRateFloorProfiles("),
     between("async function mirrorCrownCircuitEntries(", "async function mirrorServerRankingEntries("),
     between("async function commitCrownCircuitWrites(", "async function finalizeClosedCrownCircuitPeriods("),
-    "this.finalize = (key, now) => finalizeCrownCircuitPeriod('monthly', key, now);",
-    "this.revision = CROWN_MONTHLY_ACHIEVEMENT_REVISION;",
-  ].join("\n"), context, { timeout: 2000 });
-  return { finalize: context.finalize, revision: context.revision };
+    "return { finalize: (key, now) => finalizeCrownCircuitPeriod('monthly', key, now), revision: CROWN_MONTHLY_ACHIEVEMENT_REVISION };",
+  ].join("\n"))(...Object.values(context));
 }
 
 async function reconcile({ firestore, realtime, key, apply = false, now = Date.now() }) {

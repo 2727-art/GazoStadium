@@ -43,7 +43,9 @@ function harness({ historical = false, entries = [entry()] } = {}) {
     batch: () => { const queued=[]; return { set: (ref,v,o) => queued.push([ref.path,v,o]), commit: async () => queued.forEach(args => write(...args)) }; },
     runTransaction: async callback => {
       const queued=[];
-      const result=await callback({ get: ref => ref.get(), set: (ref,v,o) => queued.push([ref.path,v,o]) });
+      const pending=callback({ get: ref => ref.get(), set: (ref,v,o) => queued.push([ref.path,v,o]) });
+      assert.ok(pending instanceof Promise, "Firestore requires a native Promise from the transaction callback");
+      const result=await pending;
       queued.forEach(args => write(...args));
       return result;
     },
