@@ -446,7 +446,7 @@ function compareCrownCircuitEntries(first, second) {
 function crownAwardTier(period, rank, participantCount) {
   const normalizedRank = integer(rank, 1, 100_000, 100_000);
   const participants = integer(participantCount, 1, 100_000, 1);
-  if (participants < 2) return `${period}_opening`;
+  if (participants < 2 && period !== "monthly") return `${period}_opening`;
   if (normalizedRank === 1) return `${period}_champion`;
   if (normalizedRank <= 3) return `${period}_top3`;
   if (participants >= 8 && normalizedRank <= Math.max(1, Math.ceil(participants * 0.25))) {

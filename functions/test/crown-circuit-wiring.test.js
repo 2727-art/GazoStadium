@@ -195,7 +195,7 @@ test("period finalization keeps awards serializable and respects expiry boundari
   );
   assert.match(
     finalization,
-    /period === "monthly"\s*&&\s*participantCount >= 2/,
+    /period === "monthly"\s*&&\s*participantCount >= 1/,
   );
   assert.match(
     finalization,

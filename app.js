@@ -1274,10 +1274,10 @@
     const champions = records.slice(0, 6).map((record) => `<li>
       <span>${escapeHtml(record.key)}</span>
       <strong>${escapeHtml(record.name)}</strong>
-      <small>${record.crownCircuit ? `王座スコア ${Number(record.circuitScore || 0)}・BEST証明RATE ${Number(record.bestCrownPower || record.rating || 1000)}` : `${record.points}点・${record.wins}勝 ${record.losses}敗 ${record.draws}分`}・参加${record.participants}人</small>
+      <small>${record.crownCircuit ? `王座スコア ${Number(record.circuitScore || 0)}・BEST証明RATE ${Number(record.bestCrownPower || record.rating || 1000)}` : `${record.points}点・${record.wins}勝 ${record.losses}敗 ${record.draws}分`}・${record.crownCircuit ? "条件達成者" : "参加"}${record.participants}人</small>
     </li>`).join("");
     return `<section class="ranking-hall-of-fame" aria-labelledby="rankingHallTitle">
-      <div><span class="eyebrow">MONTHLY HALL OF FAME</span><h2 id="rankingHallTitle">歴代月間王者</h2></div>
+      <div><span class="eyebrow">MONTHLY HALL OF FAME</span><h2 id="rankingHallTitle">歴代月間王者</h2><p>成立ウィークリー2週以上で月間順位が確定します。条件達成者が1人でも月間王者として記録されます。</p></div>
       <ol>${champions}</ol>
     </section>`;
   }

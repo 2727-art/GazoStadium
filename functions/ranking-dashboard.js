@@ -63,7 +63,7 @@ function crownCustomizationOptions({
 } = {}) {
   const availableThemes = ["rose"];
   if (completedRun) availableThemes.push("aqua");
-  if (topThreeAward) availableThemes.push("violet");
+  if (topThreeAward || signatureIds.includes("monthly_champion")) availableThemes.push("violet");
   if (signatureIds.some((id) => [
     "daily_champion",
     "weekly_champion",

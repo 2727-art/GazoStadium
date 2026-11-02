@@ -102,7 +102,7 @@ test("monthly Crown achievements start in August and participation receipts are 
   );
 });
 
-test("a lone monthly opening qualifies without granting placement or champion achievements", () => {
+test("a lone monthly champion earns placement achievements once, including historical records", () => {
   let stats = finalizeCrownMonthlyAchievement(null, {
     key: "2026-08",
     rank: 1,
@@ -120,14 +120,14 @@ test("a lone monthly opening qualifies without granting placement or champion ac
   }, {
     participations: 2,
     qualifiedMonths: 1,
-    top10Months: 0,
-    top3Months: 0,
-    championMonths: 0,
+    top10Months: 1,
+    top3Months: 1,
+    championMonths: 1,
   });
   assert.deepEqual(
     eligibleAchievementIds({ crownMonthlyStats: stats, scope: "battle" })
       .filter((id) => id.startsWith("crown_monthly_")),
-    ["crown_monthly_participated_1", "crown_monthly_qualified_1"],
+    ["crown_monthly_participated_1", "crown_monthly_qualified_1", "crown_monthly_top10_1", "crown_monthly_top3_1", "crown_monthly_champion_1"],
   );
   assert.equal(stats.periods["2026-08"].finalized, true);
   assert.equal(stats.periods["2026-08"].rank, 1);
