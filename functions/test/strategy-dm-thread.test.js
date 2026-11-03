@@ -146,7 +146,9 @@ test("chat, video and reactions keep their existing wire format and limits", () 
 test("the new module, styles and design note ship with fresh cache keys and the note stays private", () => {
   const html = read("index.html");
   assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-thread-v1"/);
-  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-thread-v1"/);
+  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-thread-v1[^"]*"/);
+  // 画像が手の記録より先に着いた時の受信の書き込みを直した版（2026-11-03）。
+  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-media-ack-v1"/);
   const firebase = JSON.parse(read("firebase.json"));
   assert.ok(firebase.hosting.ignore.includes("STRATEGY_DM_THREAD_DESIGN.md"));
   assert.match(read(".assetsignore"), /^STRATEGY_DM_THREAD_DESIGN\.md$/m);

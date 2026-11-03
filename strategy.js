@@ -6463,7 +6463,7 @@ async function finishIncomingImage(kind, slot, index, ownerUid) {
   state.remoteImages.set(key, { blob, url: URL.createObjectURL(blob), awaitingAudio: transfer.hasAudio });
   state.incomingTransfer = null;
   state.transferProgress = 100;
-  if (!transfer.hasAudio) await acknowledgeStrategyMedia(transfer.kind, transfer.slot, transfer.index);
+  if (!transfer.hasAudio && strategyMediaAckReady(transfer.kind, transfer.slot)) await acknowledgeStrategyMedia(transfer.kind, transfer.slot, transfer.index);
   renderBattleIfChanged();
   return true;
 }
@@ -6483,8 +6483,18 @@ async function finishIncomingAudio(kind, slot, index, ownerUid) {
   item.awaitingAudio = false;
   state.incomingAudioTransfer = null;
   state.transferProgress = 100;
-  await acknowledgeStrategyMedia(kind, slot, index);
+  if (strategyMediaAckReady(kind, slot)) await acknowledgeStrategyMedia(kind, slot, index);
   renderBattleIfChanged();
+}
+
+/*
+  画像はP2P、手の記録はRealtime Databaseで届くので、画像のほうが先に着くことがある。
+  その時に受信を書くと、この端末の手元のデータに「手のないスロット」ができ、整合性の確認に失敗して対戦が無効になる。
+  手の記録（貼った・仕留め）がまだ届いていない時は書かずに待ち、届いた時の自動処理（performHariaiAutomaticSteps）で書く。
+*/
+function strategyMediaAckReady(kind, slot) {
+  const entry = state.roomData?.moves?.[slot];
+  return kind === "move" ? entry?.post != null : entry?.finish != null;
 }
 
 async function acknowledgeStrategyMedia(kind, slot, index = 0) {
