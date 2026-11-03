@@ -62,7 +62,8 @@ const senderHelpers = [
 ];
 const receiverFunctions = [
   "imageKey", "normalizeIncomingStrategyImageStart", "handleChannelMessage", "finishIncomingImage",
-  "finishIncomingAudio", "acknowledgeStrategyMedia", "finishIncomingProfileAvatar", "releaseRemoteAvatar",
+  "finishIncomingAudio", "strategyMediaAckReady", "acknowledgeStrategyMedia", "performHariaiAutomaticSteps",
+  "finishIncomingProfileAvatar", "releaseRemoteAvatar",
 ];
 
 function makeState(uid = "sender") {
@@ -147,6 +148,43 @@ for (const count of [1, 2, 3]) {
     assert.equal(f.wire.length, before, "completed batch is not resent");
   });
 }
+
+// 画像（P2P）が手の記録（Realtime Database）より先に着くと、受信を書いた瞬間に手元のデータへ
+// 「行動のないスロット」ができ、整合性の確認で対戦が無効になっていた（2026-11-03、Windows と Android の実対戦）。
+for (const audio of [false, true]) {
+  test(`a move image${audio ? " with audio" : ""} that beats its post is acknowledged only once the post arrives`, async () => {
+    const f = fixture({ count: 1, audio });
+    f.receiverState.roomData = { moves: {} };
+    await f.sender.sendImage(f.cards[0], "move", 2);
+    await f.receive();
+    const item = f.receiverState.remoteImages.get("move:2:0");
+    assert.ok(item, "the image is kept for later");
+    assert.equal(item.awaitingAudio, false);
+    assert.deepEqual(f.writes, [], "no received flag before the post reaches this device");
+    f.receiverState.roomData = { moves: { 2: { post: { by: "sender" } } } };
+    await f.receiver.performHariaiAutomaticSteps({ pending: { stage: "receive", slot: 2, actor: "receiver", attacker: "sender" } });
+    assert.deepEqual(f.writes, [{ key: "online/strategyRooms/room-1/moves/2/received/receiver", value: true }]);
+  });
+}
+
+test("a move image that arrives after its post is acknowledged at once", async () => {
+  const f = fixture({ count: 1 });
+  f.receiverState.roomData = { moves: { 2: { post: { by: "sender" } } } };
+  await f.sender.sendImage(f.cards[0], "move", 2);
+  await f.receive();
+  assert.deepEqual(f.writes, [{ key: "online/strategyRooms/room-1/moves/2/received/receiver", value: true }]);
+});
+
+test("a finish image that beats its finish record waits for it too", async () => {
+  const f = fixture({ count: 1 });
+  f.receiverState.roomData = { moves: { 1: { break: { by: "sender" } } } };
+  await f.send(f.cards[0], 0);
+  await f.receive();
+  assert.deepEqual(f.writes, []);
+  f.receiverState.roomData = { moves: { 1: { break: { by: "sender" }, finish: { count: 1 } } } };
+  await f.receiver.performHariaiAutomaticSteps({ pending: { stage: "finishReceive", slot: 1, actor: "receiver", attacker: "sender", finishCount: 1 } });
+  assert.deepEqual(f.writes, [{ key: "online/strategyRooms/room-1/moves/1/finishReceived/0", value: true }]);
+});
 
 test("different image keys cannot interleave their payloads", async () => {
   const f = fixture();
