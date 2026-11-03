@@ -232,6 +232,7 @@
       "TRIBUTE_DESIGN.md",
       "STADIUM_DESIGN.md",
       "NORMAL_DM_THREAD_DESIGN.md",
+      "STRATEGY_DM_THREAD_DESIGN.md",
       "tools",
       "tools/**",
       ".codex-remote-attachments",

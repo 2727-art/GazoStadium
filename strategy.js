@@ -55,6 +55,15 @@ import {
   strategyTypingText,
 } from "./strategy-chat.mjs?v=strategy-persona-chat-v1";
 import {
+  STRATEGY_THREAD_CHAT_LIMIT,
+  appendStrategyThreadEntries,
+  collectStrategyThreadKeys,
+  orderedStrategyThreadEntries,
+  slotEventKeys,
+  strategyThreadKey,
+  strategyThreadSignature,
+} from "./strategy-dm-thread.mjs?v=strategy-dm-thread-v1";
+import {
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
@@ -241,6 +250,13 @@ let hariaiMemoOpen = true;
 // スマホのチャット帯の開閉と既読数。描き直しても保つ。
 let strategyChatOpen = false;
 let strategyChatSeenCount = 0;
+// 対戦のDMスレッド：一番下を追っているか、読み返している位置、操作のシート・メモ・入力欄の道具の開閉。
+const STRATEGY_THREAD_FOLLOW_SLACK_PX = 80;
+let strategyThreadFollow = true;
+let strategyThreadScrollTop = 0;
+let strategySheetFor = "";
+let strategySideOpen = false;
+let strategyToolsOpen = false;
 
 const matchAchievementShowcaseCallable = httpsCallable(functions, "matchAchievementShowcase");
 
@@ -323,6 +339,9 @@ function createState() {
     hideOpponentAvatar: false,
     chatMessages: [],
     seenChatIds: new Set(),
+    chatDraft: "",
+    threadLog: [],
+    threadFreshKeys: new Set(),
     chatEffect: "",
     chatReactions: new Map(),
     chatFreshReactionKeys: new Set(),
@@ -1019,11 +1038,75 @@ const STRATEGY_PREVIEW_STEPS = [
   ["answer", "質問に答える"],
   ["wait", "相手の番"],
   ["finish", "看破成功・仕留め"],
+  ["video", "映像が届いた"],
 ];
-// プレビューでは、ルームへ書き込む操作とチャットを押しても実行しない。
-const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "#strategyAccept, #strategyWithdraw, #strategyBattleStart, [data-hariai-post], [data-hariai-break], [data-hariai-pass], [data-hariai-surrender], [data-hariai-score-submit], [data-hariai-right-skip], [data-hariai-right-submit], [data-hariai-answer], [data-hariai-finish-skip], [data-hariai-finish-submit], [data-hariai-penalty-submit], [data-hariai-penalty-done], .strategy-chat-panel button, .strategy-chat-panel input";
+// プレビューでは、ルームへ書き込む操作とチャット・映像の送信を押しても実行しない。
+const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "#strategyAccept, #strategyWithdraw, #strategyBattleStart, [data-hariai-post], [data-hariai-break], [data-hariai-pass], [data-hariai-surrender], [data-hariai-score-submit], [data-hariai-right-skip], [data-hariai-right-submit], [data-hariai-answer], [data-hariai-finish-skip], [data-hariai-finish-submit], [data-hariai-penalty-submit], [data-hariai-penalty-done], .strategy-chat-panel button, .strategy-chat-panel input, [data-strategy-chat-reaction], [data-strategy-chat-stamp], [data-strategy-video-open]";
 const STRATEGY_PREVIEW_SALT = "0123456789abcdef0123456789abcdef";
-const strategyPreview = { remote: [], scoutChat: [], battleChat: [] };
+const strategyPreview = { remote: [], scoutChat: [], battleChat: [], video: null };
+
+// 見本の短尺映像。端末の中で1.6秒の映像を作るだけで、送信はしない。
+async function paintStrategyPreviewVideo(ownerUid) {
+  if (typeof MediaRecorder !== "function" || typeof HTMLCanvasElement.prototype.captureStream !== "function") return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = 360;
+  canvas.height = 480;
+  const context = canvas.getContext("2d");
+  const stream = canvas.captureStream(24);
+  const recorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported("video/webm") ? { mimeType: "video/webm" } : {});
+  const chunks = [];
+  recorder.addEventListener("dataavailable", (event) => { if (event.data.size) chunks.push(event.data); });
+  const stopped = new Promise((resolve) => recorder.addEventListener("stop", resolve, { once: true }));
+  const seconds = 1.6;
+  const started = performance.now();
+  recorder.start(100);
+  await new Promise((resolve) => {
+    const timer = window.setInterval(() => {
+      const elapsed = (performance.now() - started) / 1000;
+      const gradient = context.createLinearGradient(0, 0, 360, 480);
+      gradient.addColorStop(0, `hsl(${320 + elapsed * 40}, 70%, 62%)`);
+      gradient.addColorStop(1, "hsl(280, 50%, 14%)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 360, 480);
+      context.fillStyle = "rgba(255,255,255,.9)";
+      context.font = "700 28px system-ui, sans-serif";
+      context.fillText("PREVIEW VIDEO", 40, 240 + Math.sin(elapsed * 4) * 30);
+      if (elapsed >= seconds) {
+        window.clearInterval(timer);
+        resolve();
+      }
+    }, 60);
+  });
+  recorder.stop();
+  await stopped;
+  stream.getTracks().forEach((track) => track.stop());
+  const blob = new Blob(chunks, { type: "video/webm" });
+  return { id: "preview-video-1", transferId: "preview-video-1", ownerUid, phase: "battle", round: 6, url: URL.createObjectURL(blob), duration: seconds, size: blob.size, released: false };
+}
+
+/*
+  見本のスレッドの並び。実際の対戦では届いた順に積むので、チャットと映像には「どの出来事の後に届いたか」（previewAfter）を持たせ、
+  その順に並べる。置き場所のない発言は見本に出さない。
+*/
+function strategyPreviewThread(slots, battleChat, clips) {
+  const extras = [...battleChat.map((message) => ({ key: strategyThreadKey("chat", message.id), after: message.previewAfter, message })),
+    ...clips.map((clip) => ({ key: strategyThreadKey("video", clip.id), after: clip.previewAfter, clip }))];
+  const keys = [...strategyPreview.scoutChat.map((message) => strategyThreadKey("chat", message.id)), strategyThreadKey("start")];
+  const placed = [];
+  const place = (key) => {
+    keys.push(key);
+    extras.filter((extra) => extra.after === key).forEach((extra) => {
+      placed.push(extra);
+      place(extra.key);
+    });
+  };
+  slots.forEach((slot) => slotEventKeys(slot).forEach(place));
+  return {
+    log: appendStrategyThreadEntries([], keys),
+    chats: placed.filter((extra) => extra.message).map((extra) => extra.message),
+    clips: placed.filter((extra) => extra.clip).map((extra) => extra.clip),
+  };
+}
 
 function paintStrategyPreviewArt(index) {
   const canvas = document.createElement("canvas");
@@ -1097,6 +1180,7 @@ async function startStrategyPreview() {
     firstUid: rival.uid,
     weaknessIndex: 1,
     channelReady: true,
+    videoChannelReady: true,
     opponentOnline: true,
     main: urls.slice(0, 5).map((url, index) => ({ id: `preview-main-${index}`, url, used: false })),
     reserve: urls.slice(5, 10).map((url, index) => ({ id: `preview-reserve-${index}`, url, used: false })),
@@ -1108,16 +1192,18 @@ async function startStrategyPreview() {
     { id: "preview-scout-2", authorUid: me.uid, text: "どうだろうね♡ 当ててみて", phase: "scout", round: 1, effect: "whisper" },
   ];
   strategyPreview.battleChat = [
-    { id: "preview-chat-1", authorUid: rival.uid, text: "その目線、ずるくない？", phase: "battle", round: 2, effect: "hearts" },
-    { id: "preview-chat-2", authorUid: me.uid, text: "ふーん、効いてるんだ？", phase: "battle", round: 3, effect: "emphasis" },
-    { id: "preview-chat-3", authorUid: rival.uid, text: "…べつに、効いてないし", phase: "battle", round: 4, effect: "tremble" },
+    { id: "preview-chat-1", authorUid: rival.uid, text: "その目線、ずるくない？", phase: "battle", round: 2, effect: "hearts", previewAfter: "post:2" },
+    { id: "preview-chat-2", authorUid: me.uid, text: "ふーん、効いてるんだ？", phase: "battle", round: 4, effect: "emphasis", previewAfter: "score:4" },
+    { id: "preview-chat-3", authorUid: rival.uid, text: "…べつに、効いてないし", phase: "battle", round: 4, effect: "tremble", previewAfter: "chat:preview-chat-2" },
+    { id: "preview-chat-4", authorUid: me.uid, text: "待って、それはずるい", phase: "battle", round: 5, previewAfter: "post:5" },
   ];
+  strategyPreview.video = null;
   strategyPreview.remote = urls.slice(10);
   mountStrategyPreviewBar();
   showStrategyPreviewStep("right");
 }
 
-function showStrategyPreviewStep(step) {
+async function showStrategyPreviewStep(step) {
   if (!active || !useOfflineStrategyPreview) return;
   if (step === "intro" || step === "identity") {
     state.chatMessages = strategyPreview.scoutChat.slice();
@@ -1125,9 +1211,13 @@ function showStrategyPreviewStep(step) {
     render();
     return;
   }
-  state.chatMessages = [...strategyPreview.scoutChat, ...strategyPreview.battleChat];
+  if (step === "video" && !strategyPreview.video) {
+    strategyPreview.video = await paintStrategyPreviewVideo("preview-rival").catch(() => null);
+    if (!active) return;
+    if (strategyPreview.video) strategyPreview.video.previewAfter = "answer:6";
+  }
   const [host, guest] = state.players;
-  const moves = strategyPreviewMoves(step);
+  const moves = strategyPreviewMoves(step === "video" ? "act" : step);
   const cards = [...state.main, ...state.reserve];
   cards.forEach((card) => { card.used = false; });
   state.drafts = emptyHariaiDrafts();
@@ -1154,6 +1244,15 @@ function showStrategyPreviewStep(step) {
   });
   state.roomData = { moves };
   state.replay = replayHariai({ hostUid: host.uid, guestUid: guest.uid, firstUid: state.firstUid, moves });
+  const clips = step === "video" && strategyPreview.video ? [strategyPreview.video] : [];
+  const thread = strategyPreviewThread(state.replay.slots, strategyPreview.battleChat, clips);
+  state.chatMessages = [...strategyPreview.scoutChat, ...thread.chats];
+  state.videoClips = thread.clips;
+  state.threadLog = thread.log;
+  state.threadFreshKeys = new Set(thread.clips.map((clip) => strategyThreadKey("video", clip.id)));
+  strategyThreadFollow = true;
+  // 自分の番の見本は、操作のシートを開いた状態で見せる（映像の見本は帯だけ）。
+  strategySheetFor = ["right", "act", "answer", "finish"].includes(step) ? strategySheetKey(state.replay.pending) : "";
   state.screen = "battle";
   render();
 }
@@ -1337,7 +1436,14 @@ function render() {
     noContest: renderNoContest,
     error: renderError,
   };
+  if (screenChanged && state.screen === "battle") {
+    strategyThreadFollow = true;
+    strategyToolsOpen = false;
+  }
+  const threadNodes = screenChanged ? new Map() : collectStrategyThreadNodes();
+  const keptScroll = screenChanged ? new Map() : captureStrategyKeptScroll();
   app.innerHTML = renderContactControls("strategy") + (renderers[state.screen] || renderProfile)();
+  reuseStrategyThreadNodes(threadNodes);
   app.querySelector(".screen")?.insertAdjacentHTML("afterbegin", renderStrategyIdleNotice());
   updateStrategyIdleNotice();
   lastRenderedScreen = state.screen;
@@ -1345,7 +1451,8 @@ function render() {
   if (!screenChanged) app.querySelector(".screen")?.classList.add("is-refresh");
   if (state.screen === "battle") state.battleViewKey = battleViewKey();
   // 画面の登場アニメーションが残す transform の中だと画面下に固定できないので、チャットは画面の直後に置く。
-  if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("afterend", renderStrategyChatDock());
+  // 対戦中は、チャットをDMスレッドと入力欄に置くので帯を出さない。
+  if (isStrategyChatVisible() && state.screen !== "battle") app.querySelector(".screen")?.insertAdjacentHTML("afterend", renderStrategyChatDock());
   bindScreenEvents();
   if (screenChanged) {
     window.scrollTo(0, 0);
@@ -1359,6 +1466,8 @@ function render() {
       }
     }
   }
+  if (state.screen === "battle") settleStrategyThreadLayout({ follow: screenChanged });
+  restoreStrategyKeptScroll(keptScroll);
 }
 
 function renderProfile() {
@@ -1830,14 +1939,417 @@ function refreshHariaiTransferProgress() {
   if (output) output.textContent = state.channelReady ? `転送状況 ${state.transferProgress}%` : "P2P接続を待っています…";
 }
 
+/*
+  対戦はXのDMと同じ骨組みで進める。上から DMヘッダー → スレッド（手・点数・権利・看破とチャット・映像を起きた順に）
+  → その時の段階の帯 → 自分の番の操作シート → チャットの入力欄。読みメモと自分の秘密は、PCでは右の列、スマホでは「メモ」から開く。
+  何をどの順に積むかは strategy-dm-thread.mjs が決める。
+*/
 function renderBattle() {
   const replay = state.replay;
   if (!replay) return renderWaiting("HARIAI", "貼り合いを準備しています", "先攻と手札を確認しています。");
-  return `<section class="screen strategy-screen hariai-battle">${renderBattleHud()}
-    <div class="hariai-layout">${renderHariaiReadingMemo()}<div class="hariai-main">${renderHariaiDmHead()}
-      <ol class="hariai-thread" aria-label="貼り合いのやりとり">${renderHariaiThread()}</ol>
-      <section class="hariai-console" id="hariaiConsole" aria-live="polite">${renderHariaiConsole()}</section>
-    </div><aside class="hariai-side">${renderHariaiSelfCard()}${renderHariaiRuleCard()}</aside></div></section>`;
+  syncStrategyThreadLog();
+  const typing = activeStrategyRemoteTyping();
+  // 操作シートは、スマホではスレッドの下（入力欄の上）、PCでは右の列の上に出す。PCでスレッドの下に出すと、画面の低いノートPCでスレッドがほぼ見えなくなる。
+  const sheetInSide = strategyWideLayout();
+  const sheetInThread = strategySheetIsOpen() && !sheetInSide;
+  const sheet = renderStrategySheet();
+  return `<section class="screen strategy-screen hariai-battle sd-battle" data-sd-battle>
+    <div class="vb-dm sd-dm${sheetInThread ? " has-sheet" : ""}">${renderStrategyDmHead()}
+      <div class="vb-dm-thread sd-thread" data-sd-thread>
+        <ol class="vb-dm-items hariai-thread sd-items" id="strategyThreadItems" role="log" aria-live="polite" aria-label="${escapeHtml(getOpponent()?.name || "相手")}とのやりとり">${renderStrategyThreadItems()}</ol>
+        <p class="chat-typing vb-dm-typing" id="strategyChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderStrategyTypingContent(typing) : ""}</p>
+        <button type="button" class="vb-dm-jump" data-sd-jump hidden>新しいメッセージ ↓</button>
+      </div>
+      ${sheetInThread ? "" : renderStrategyBand()}${sheetInSide ? "" : sheet}${renderStrategyComposer()}
+    </div>
+    <aside class="sd-side${strategySideOpen ? " is-open" : ""}" id="strategySide" data-sd-side data-keep-scroll="side" aria-label="あなたの番の操作・読みメモ・あなたの秘密">
+      ${sheetInSide ? sheet : ""}
+      <div class="sd-side-head"><strong>メモ</strong><button type="button" class="button button-ghost button-small" data-sd-side-toggle>閉じる</button></div>
+      ${renderHariaiReadingMemo()}${renderHariaiSelfCard()}${renderHariaiRuleCard()}
+    </aside></section>`;
+}
+
+// strategy.css の PC の切り替え幅（901px 以上）と同じ。
+function strategyWideLayout() {
+  return Boolean(window.matchMedia?.("(min-width: 901px)").matches);
+}
+
+/* ---------- 対戦のDMスレッド ---------- */
+
+function strategyThreadChats() {
+  return state.chatMessages.filter((message) => message?.id && (message.phase === "scout" || message.phase === "battle"));
+}
+
+function strategyThreadVideos() {
+  return state.videoClips.filter((clip) => clip.phase === "battle" && !clip.released && clip.url && clip.id);
+}
+
+// 状態から分かる出来事のうち、まだスレッドに積んでいないものを末尾へ足す。最初に積む時は登場の動きを付けない。
+function syncStrategyThreadLog() {
+  const previous = state.threadLog;
+  const next = appendStrategyThreadEntries(previous, collectStrategyThreadKeys({
+    slots: state.replay?.slots || [],
+    chats: strategyThreadChats(),
+    videoIds: strategyThreadVideos().map((clip) => clip.id),
+    outcome: Boolean(state.replay?.outcome),
+  }));
+  if (next === previous) return;
+  if (previous.length) next.slice(previous.length).forEach((entry) => state.threadFreshKeys.add(entry.key));
+  state.threadLog = next;
+}
+
+function renderStrategyThreadItems() {
+  const chats = new Map(strategyThreadChats().map((message) => [String(message.id), message]));
+  const videos = new Map(strategyThreadVideos().map((clip) => [String(clip.id), clip]));
+  const slotList = state.replay?.slots || [];
+  const slots = new Map(slotList.map((slot) => [slot.slot, slot]));
+  const hearts = hariaiHeartBadges(slotList);
+  let scoutShown = false;
+  return orderedStrategyThreadEntries(state.threadLog, { chatIds: [...chats.keys()], videoIds: [...videos.keys()] }).map((entry) => {
+    let html = "";
+    if (entry.kind === "chat") {
+      const message = chats.get(entry.id);
+      const scout = message.phase === "scout";
+      html = `${scout && !scoutShown ? '<p class="ha-divider sd-scout-divider">匿名のころ（ヴェール越し）</p>' : ""}${renderStrategyChatMessage(message, scout)}`;
+      if (scout) scoutShown = true;
+    } else if (entry.kind === "video") {
+      html = renderStrategyThreadVideo(videos.get(entry.id));
+    } else if (entry.kind === "start") {
+      html = renderStrategyThreadStart();
+    } else if (entry.kind === "outcome") {
+      html = state.replay?.outcome ? `<p class="ha-divider sd-outcome">決着：${escapeHtml(hariaiOutcomeText(state.replay.outcome))}</p>` : "";
+    } else {
+      html = renderStrategySlotEvent(entry.kind, slots.get(entry.slot), hearts);
+    }
+    if (!html) return "";
+    const arriving = state.threadFreshKeys.delete(entry.key);
+    return `<li class="sd-item is-${entry.kind}${arriving ? " is-arriving" : ""}" data-thread-key="${escapeHtml(entry.key)}" data-thread-sig="${strategyThreadSignature(html)}">${html}</li>`;
+  }).join("");
+}
+
+function renderStrategyThreadStart() {
+  const opponent = getOpponent();
+  const first = playerByUid(state.firstUid);
+  return `<p class="ha-divider sd-reveal">ヴェールが外れました：${hariaiNameWithMark(opponent)}（${escapeHtml(personaLabel(opponent))}）</p>
+    <p class="hariai-thread-empty sd-start">${first ? `先攻は${escapeHtml(first.uid === state.uid ? "あなた" : first.name)}。` : ""}1手＝画像＋言葉＋狙い。会話も読み合いの手掛かりです。</p>`;
+}
+
+function renderStrategySlotEvent(kind, slot, hearts) {
+  if (!slot) return "";
+  const attacker = playerByUid(slot.by);
+  const receiver = playerByUid(slot.receiver);
+  if (kind === "post") return renderHariaiPostEvent(slot, attacker, receiver, hearts);
+  if (kind === "score") return renderHariaiScoreBlock(slot, receiver, hearts);
+  if (kind === "right") return renderHariaiRightAsk(slot, attacker);
+  if (kind === "answer") return renderHariaiAnswerBubble(slot, attacker, receiver, hearts);
+  if (kind === "break") return renderHariaiBreakCall(slot, attacker);
+  if (kind === "breakResult") return `<div class="hariai-break-body is-${slot.breakResult}">${renderHariaiBreakResult(slot, attacker, receiver)}</div>`;
+  if (kind === "finish") return `<div class="hariai-break-body is-hit">${renderHariaiFinish(slot, hearts)}</div>`;
+  if (kind === "pass") return renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}は看破を見送りました`);
+  if (kind === "surrender") return renderHariaiSurrender(slot, attacker);
+  return "";
+}
+
+// 短尺映像は、送った人の側の吹き出しに置く。自動再生はしない。
+function renderStrategyThreadVideo(clip) {
+  if (!clip) return "";
+  const player = playerByUid(clip.ownerUid);
+  const round = Math.max(1, Math.min(HARIAI_MAX_SLOTS, Number(clip.round) || 1));
+  return hariaiMessage(player, `<figure class="sd-video"><video controls controlslist="nodownload noplaybackrate" disablepictureinpicture playsinline preload="metadata" src="${escapeHtml(clip.url)}"></video>
+    <figcaption>${round}手目のころ・${Number(clip.duration || 0).toFixed(1)}秒の映像</figcaption></figure>`, "sd-video-msg");
+}
+
+// 描き直しても、中身が同じ吹き出しは前の要素を使い回す（画像の読み直しと再生中の映像の停止を防ぐ）。
+function collectStrategyThreadNodes() {
+  return new Map(Array.from(app.querySelectorAll("#strategyThreadItems > [data-thread-key]"))
+    .map((node) => [node.dataset.threadKey, node]));
+}
+
+function reuseStrategyThreadNodes(nodes, root = app) {
+  if (!nodes.size) return;
+  root.querySelectorAll("[data-thread-key][data-thread-sig]").forEach((node) => {
+    const previous = nodes.get(node.dataset.threadKey);
+    if (!previous || previous === node || node.classList.contains("is-arriving") || previous.dataset.threadSig !== node.dataset.threadSig) return;
+    previous.classList.remove("is-arriving");
+    node.replaceWith(previous);
+  });
+}
+
+// チャット・映像が届いた時は、スレッドの中身だけを差し替える。
+function refreshStrategyThread() {
+  const list = document.querySelector("#strategyThreadItems");
+  if (!list || state.screen !== "battle") return false;
+  syncStrategyThreadLog();
+  const nodes = collectStrategyThreadNodes();
+  const wrapper = document.createElement("ol");
+  wrapper.innerHTML = renderStrategyThreadItems();
+  reuseStrategyThreadNodes(nodes, wrapper);
+  list.replaceChildren(...wrapper.childNodes);
+  stickStrategyThreadIfFollowing();
+  return true;
+}
+
+function stickStrategyThreadIfFollowing() {
+  const thread = document.querySelector("[data-sd-thread]");
+  if (!thread) return;
+  if (strategyThreadFollow) {
+    thread.scrollTop = thread.scrollHeight;
+    return;
+  }
+  const jump = document.querySelector("[data-sd-jump]");
+  if (jump) jump.hidden = false;
+}
+
+// DMは画面の高さに収め、スレッドだけを内側でスクロールさせる。
+function settleStrategyThreadLayout({ follow = false } = {}) {
+  const battle = app.querySelector("[data-sd-battle]");
+  if (!battle) return;
+  const top = Math.max(0, Math.round(battle.getBoundingClientRect().top + window.scrollY));
+  battle.style.setProperty("--vb-dm-top", `${top}px`);
+  if (follow) strategyThreadFollow = true;
+  const thread = battle.querySelector("[data-sd-thread]");
+  if (!thread) return;
+  thread.scrollTop = strategyThreadFollow ? thread.scrollHeight : strategyThreadScrollTop;
+}
+
+function bindStrategyThreadEvents() {
+  const thread = document.querySelector("[data-sd-thread]");
+  if (!thread) return;
+  const jump = document.querySelector("[data-sd-jump]");
+  thread.addEventListener("scroll", () => {
+    strategyThreadScrollTop = thread.scrollTop;
+    strategyThreadFollow = thread.scrollHeight - thread.scrollTop - thread.clientHeight <= STRATEGY_THREAD_FOLLOW_SLACK_PX;
+    if (strategyThreadFollow && jump) jump.hidden = true;
+  }, { passive: true });
+  // 画像・映像の読み込みで高さが変わっても、追従中なら一番下を保つ。
+  thread.addEventListener("load", () => { if (strategyThreadFollow) thread.scrollTop = thread.scrollHeight; }, true);
+  thread.addEventListener("loadedmetadata", () => { if (strategyThreadFollow) thread.scrollTop = thread.scrollHeight; }, true);
+  jump?.addEventListener("click", () => {
+    strategyThreadFollow = true;
+    thread.scrollTop = thread.scrollHeight;
+    jump.hidden = true;
+  });
+}
+
+// 操作シート・メモの中のスクロール位置は、描き直しても戻す（手札を選ぶたびに上へ戻らないように）。
+function captureStrategyKeptScroll() {
+  return new Map(Array.from(app.querySelectorAll("[data-keep-scroll]")).map((node) => [node.dataset.keepScroll, node.scrollTop]));
+}
+
+function restoreStrategyKeptScroll(saved) {
+  saved.forEach((top, name) => {
+    const node = app.querySelector(`[data-keep-scroll="${name}"]`);
+    if (node) node.scrollTop = top;
+  });
+}
+
+/* ---------- DMヘッダー・段階の帯・操作シート・入力欄 ---------- */
+
+function strategyTurnLabel() {
+  const replay = state.replay;
+  const pending = replay?.pending;
+  if (replay?.outcome) return "決着";
+  if (!pending) return "準備中";
+  const combo = pending.stage === "act" && pending.combo ? "・連投中" : "";
+  return `${pending.actor === state.uid ? "あなたの番" : `${getOpponent()?.name || "相手"}の番`}${combo}`;
+}
+
+function renderStrategyGauge(player) {
+  const runtime = state.replay?.players?.[player.uid];
+  const local = player.uid === state.uid;
+  const reason = runtime ? runtime.reason : HARIAI_REASON_MAX;
+  const ratio = Math.max(0, Math.min(1, reason / HARIAI_REASON_MAX)).toFixed(3);
+  const hand = runtime ? runtime.hand : MAIN_COUNT + RESERVE_COUNT;
+  const breakLabel = !runtime ? "未使用" : runtime.breakResult === "hit" ? "成功" : runtime.breakResult === "miss" ? "失敗" : runtime.breakPassed ? "見送り" : "未使用";
+  const label = local ? "あなたの理性" : `${player.name}の理性`;
+  return `<div class="vb-dm-gauge ${local ? "is-local" : "is-remote"}">
+    <div class="vb-dm-gauge-label"><span>${escapeHtml(label)}</span><span class="vb-hp-value"><b>${reason}</b>/${HARIAI_REASON_MAX}</span></div>
+    <div class="vb-hp${reason / HARIAI_REASON_MAX <= 0.3 ? " is-low" : ""}" role="img" aria-label="${escapeHtml(label)} ${reason}/${HARIAI_REASON_MAX}" style="--hp:${ratio};--hp-ghost:${ratio}"><i class="vb-hp-ghost"></i><i class="vb-hp-fill"></i></div>
+    <small class="sd-gauge-note">手札 ${hand} ・ 看破 ${breakLabel}</small>
+    ${local ? "" : renderOpponentAchievementShowcase({ compact: true, context: "is-hud", label: "相手の実績" })}
+  </div>`;
+}
+
+function renderStrategyDmHead() {
+  const opponent = getOpponent();
+  const me = getLocalPlayer();
+  if (!opponent || !me) return "";
+  const personaId = normalizeChatPersonaId(opponent.persona?.type);
+  const avatar = shared()?.profileAvatar?.renderBattle?.(opponent.name, state.remoteAvatar?.url, { hidden: state.hideOpponentAvatar, className: "vb-dm-avatar" }) || "";
+  return `<header class="vb-dm-head sd-head" aria-label="${escapeHtml(opponent.name)}とのDM・${escapeHtml(strategyTurnLabel())}">
+    <div class="vb-dm-who">
+      <span class="vb-dm-avatar-wrap">${avatar}${personaId ? `<span class="vb-dm-avatar-mark">${renderChatPersonaMark(personaId)}</span>` : ""}</span>
+      <div class="vb-dm-name"><b>${escapeHtml(opponent.name)}</b>
+        <small><span>${renderChatPersonaMark(personaId)}${escapeHtml(personaLabel(opponent))}・一人称「${escapeHtml(personaFirst(opponent))}」</span><span>あなたを「${escapeHtml(personaCallName(opponent, me))}」と呼ぶ</span><span class="connection-pill vb-dm-presence ${state.opponentOnline ? "connected" : "warning"}">${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span></small>
+      </div>
+      <button type="button" class="sd-memo-button" data-sd-side-toggle aria-controls="strategySide" aria-expanded="${strategySideOpen}">メモ</button>
+      <details class="vb-menu"><summary aria-label="対戦メニュー"><span aria-hidden="true">•••</span></summary>
+        <div class="vb-menu-panel">
+          <button class="avatar-visibility-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
+          <p class="vb-menu-room">ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())} · ${state.channelReady ? "P2P接続中" : "P2P接続待ち"} · ${state.videoChannelReady ? "映像P2P接続中" : "映像P2P接続なし"}</p>
+        </div></details>
+    </div>
+    <div class="vb-dm-gauges">${renderStrategyGauge(opponent)}${renderStrategyGauge(me)}</div>
+  </header>`;
+}
+
+// その時の段階を1行で。自分の番は主ボタンで操作シートを開く。
+function strategySheetKey(pending = state.replay?.pending) {
+  return pending && !state.replay?.outcome ? `${pending.slot}:${pending.stage}:${pending.actor}` : "";
+}
+
+function strategySheetAvailable(pending = state.replay?.pending) {
+  if (!pending || state.replay?.outcome || pending.actor !== state.uid) return false;
+  if (pending.stage === "score") return state.openedMediaKeys.has(imageKey("move", pending.slot));
+  return ["act", "right", "answer", "finish"].includes(pending.stage);
+}
+
+function strategySheetIsOpen() {
+  return strategySheetAvailable() && strategySheetFor === strategySheetKey();
+}
+
+function strategyBandAction(pending) {
+  if (pending.stage === "act") return pending.canPost ? "1枚貼る" : "看破するか決める";
+  if (pending.stage === "score") return "採点する";
+  if (pending.stage === "right") return "権利を使う";
+  if (pending.stage === "answer") return pending.right?.kind === "instruction" ? "指示に従う" : "答える";
+  if (pending.stage === "finish") return "仕留める";
+  return "";
+}
+
+function strategyBandLine(pending) {
+  const opponent = getOpponent();
+  const slot = state.replay.slots.find((item) => item.slot === pending.slot);
+  if (pending.stage === "act") return pending.combo ? `あなたの番・連投中（次の手は+${Math.min(HARIAI_COMBO_CAP, HARIAI_COMBO_STEP * pending.combo)}）` : "あなたの番。次の1枚を貼ります";
+  if (pending.stage === "score") return `${opponent.name}が貼りました。何点刺さった？`;
+  if (pending.stage === "right") {
+    const options = pending.options || {};
+    return options.combo ? `${slot?.score}点！ 質問か指示をひとつ＋連投` : options.instruction ? `${slot?.score}点！ 指示をひとつ使えます` : `${slot?.score}点！ 質問をひとつ使えます`;
+  }
+  if (pending.stage === "answer") return pending.right?.kind === "instruction" ? "指示されました" : "質問されました";
+  if (pending.stage === "finish") return `看破成功！ 仕留めの手札を選ぶ（最大${pending.finishMax}枚）`;
+  return "";
+}
+
+function renderStrategyBand() {
+  const replay = state.replay;
+  const opponent = getOpponent();
+  const personaId = normalizeChatPersonaId(opponent?.persona?.type);
+  const band = (line, { note = "", action = "", tone = "" } = {}) => `<div class="sd-band${tone ? ` is-${tone}` : ""}" id="hariaiConsole" aria-live="polite">
+    <p class="sd-band-line">${line}${note ? `<small>${note}</small>` : ""}</p>${action}</div>`;
+  if (replay?.outcome) return band(`<strong>決着</strong><span>${escapeHtml(hariaiOutcomeText(replay.outcome))}</span>`, { note: "弱点の最終照合をしています…" });
+  const pending = replay?.pending;
+  if (!pending) return band("<span>先攻を決めています…</span>");
+  const mine = pending.actor === state.uid;
+  const transfer = (title) => band(`<span>${escapeHtml(title)}</span>`, { note: `<span id="hariaiTransferProgress">${state.channelReady ? `転送状況 ${state.transferProgress}%` : "P2P接続を待っています…"}</span>` });
+  if (pending.stage === "receive") return transfer(pending.attacker === state.uid ? "画像を送っています" : "画像を受け取っています");
+  if (pending.stage === "finishReceive") return transfer(pending.attacker === state.uid ? "仕留めの画像を送っています" : "仕留めの画像を受け取っています");
+  if (pending.stage === "breakReveal") return band(`<span>${mine ? "看破の答え合わせを送っています…" : "看破の答え合わせ中…"}</span>`, { note: "封印した弱点と照合しています。" });
+  if (!mine) {
+    const notes = {
+      act: pending.combo ? `${escapeHtml(opponent.name)}の連投中（${pending.combo}手連続で90点以上）` : "",
+      score: "刺さったかどうかは、相手の自己申告です。",
+      finish: `最大${pending.finishMax}枚`,
+    };
+    return band(`${renderChatPersonaMark(personaId)}<span>${escapeHtml(strategyTypingText(personaId, opponent?.name, pending.stage))}</span><span class="chat-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>`, { note: notes[pending.stage] || "", tone: "theirs" });
+  }
+  const scoreKey = imageKey("move", pending.slot);
+  if (pending.stage === "score" && !state.openedMediaKeys.has(scoreKey)) {
+    return band(`<strong>${escapeHtml(strategyBandLine(pending))}</strong>`, {
+      note: "画像と言葉を開いてから、今の自分に刺さった点数を返します。",
+      action: `<button class="button button-primary sd-band-action" type="button" data-hariai-open="${escapeHtml(scoreKey)}">開いて採点</button>`,
+      tone: "mine",
+    });
+  }
+  const open = strategySheetIsOpen();
+  return band(`<strong>${escapeHtml(strategyBandLine(pending))}</strong>`, {
+    action: `<button class="button button-primary sd-band-action" type="button" data-sd-sheet-toggle aria-controls="strategySheet" aria-expanded="${open}">${open ? "閉じる" : escapeHtml(strategyBandAction(pending))}</button>`,
+    tone: "mine",
+  });
+}
+
+function renderStrategySheet() {
+  const pending = state.replay?.pending;
+  if (!strategySheetAvailable(pending)) return "";
+  let body = "";
+  if (pending.stage === "act") body = renderHariaiActConsole(pending);
+  else if (pending.stage === "score") body = `${renderStrategyScoreTarget(pending)}${renderHariaiScoreConsole(pending)}`;
+  else if (pending.stage === "right") body = renderHariaiRightConsole(pending);
+  else if (pending.stage === "answer") body = renderHariaiAnswerConsole(pending);
+  else if (pending.stage === "finish") body = renderHariaiFinishConsole(pending);
+  return `<section class="sd-sheet" id="strategySheet" aria-label="あなたの番の操作"${strategySheetIsOpen() ? "" : " hidden"}>
+    <div class="sd-sheet-grip"><button type="button" class="sd-sheet-close" data-sd-sheet-toggle aria-label="操作を閉じる">閉じる</button></div>
+    <div class="hariai-console sd-sheet-body" data-keep-scroll="sheet">${body}</div></section>`;
+}
+
+// 採点のシートを開くとスレッドが縮むので、点を付ける1枚と言葉をシートの上にも小さく出す。
+function renderStrategyScoreTarget(pending) {
+  const slot = state.replay.slots.find((item) => item.slot === pending.slot);
+  const item = state.remoteImages.get(imageKey("move", pending.slot));
+  if (!slot || !item?.url) return "";
+  const attacker = playerByUid(slot.by);
+  const caption = slot.captionHeart ? ensureHariaiHeart(slot.caption) : slot.caption;
+  return `<figure class="sd-score-target"><img src="${item.url}" alt="${escapeHtml(attacker?.name || "")}が貼った画像" />
+    <figcaption><b>${escapeHtml(caption)}</b><small>狙い：あなたの「${escapeHtml(candidateText(slot.receiver, slot.target))}」</small></figcaption></figure>`;
+}
+
+function setStrategySheetOpen(open) {
+  strategySheetFor = open && strategySheetAvailable() ? strategySheetKey() : "";
+  render();
+  // シートへ移るのは閉じるボタンまで（入力欄に合わせてスマホのキーボードを勝手に開かない）。
+  if (strategySheetFor) document.querySelector("#strategySheet .sd-sheet-close")?.focus({ preventScroll: true });
+}
+
+function setStrategySideOpen(open) {
+  strategySideOpen = Boolean(open);
+  document.querySelector("[data-sd-side]")?.classList.toggle("is-open", strategySideOpen);
+  document.querySelectorAll(".sd-memo-button[data-sd-side-toggle]").forEach((button) => button.setAttribute("aria-expanded", String(strategySideOpen)));
+}
+
+// 短尺映像を録れるか。対戦中1本・品評会1本（今と同じ）。
+function strategyVideoAvailability() {
+  const phase = currentStrategyVideoPhase();
+  const alreadySent = phase ? state.videoSentPhases.has(phase) : false;
+  const reviewPermissionReady = phase !== "review" || state.opponentReviewMediaReceiving;
+  const canRecord = Boolean(phase) && state.videoChannelReady && reviewPermissionReady && !alreadySent && !state.videoSending;
+  const status = !state.videoChannelReady
+    ? "○ 動画P2P接続なし（チャットと対戦は続行できます）"
+    : phase === "review" && !state.opponentReviewMediaReceiving
+      ? "○ 相手がメディア受信を停止しています"
+    : alreadySent
+      ? `● この${phase === "review" ? "品評会" : "対戦"}では送信済み`
+      : "● 動画P2P接続済み";
+  return { phase, alreadySent, canRecord, status };
+}
+
+function renderStrategyCameraButton() {
+  const video = strategyVideoAvailability();
+  const reason = video.alreadySent ? "この対戦では映像を送信済み" : !state.videoChannelReady ? "映像のP2P接続を待っています" : "";
+  return `<button type="button" class="sd-camera" id="strategyCameraButton" data-strategy-video-open ${video.canRecord ? "" : "disabled"} aria-label="${escapeHtml(reason || "10秒の映像を録って送る")}" title="${escapeHtml(reason || "10秒の映像を録って送る")}">
+    <svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="6.5" width="13" height="11" rx="2.5"></rect><path d="M16 10.5l5-3v9l-5-3z"></path></svg></button>`;
+}
+
+function refreshStrategyCameraButton() {
+  const button = document.querySelector("#strategyCameraButton");
+  if (!button) return;
+  button.outerHTML = renderStrategyCameraButton();
+  bindStrategyVideoPanelEvents();
+}
+
+function renderStrategyComposer() {
+  const effect = normalizeChatEffect(state.chatEffect);
+  return `<div class="vb-dm-composer sd-composer" data-strategy-chat>
+    <details class="vb-dm-tools" data-sd-tools${strategyToolsOpen ? " open" : ""}>
+      <summary aria-label="言い方・ことば・スタンプ"><svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></summary>
+      <div class="vb-dm-tools-panel">
+        ${renderChatEffectPicker(effect, { disabled: state.playerSafetyStopped })}
+        ${renderChatTools({ id: "strategy", textReactions: STRATEGY_CHAT_PROMPTS, stamps: getAvailableStamps(state.economy), textAttribute: "data-strategy-chat-reaction", stampAttribute: "data-strategy-chat-stamp" })}
+      </div>
+    </details>
+    ${renderStrategyCameraButton()}
+    <form class="chat-form${effect ? " has-effect" : ""}" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="会話から本当の弱点を探る…" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
+      <button class="button button-primary button-small" type="submit">送信</button></form>
+  </div>`;
 }
 
 function renderHariaiThread() {
@@ -1884,14 +2396,12 @@ function renderHariaiSlotHead(slot, text) {
   return `<p class="ha-divider hariai-slot-head"><span class="hariai-slot-no">${slot.slot}手目</span>${text}</p>`;
 }
 
+// 結果画面の「対戦スレッドを見返す」は、1手ずつまとめて並べる。対戦中のDMスレッドは出来事ごとに分けて積む。
 function renderHariaiSlot(slot, hearts = new Map()) {
   const attacker = playerByUid(slot.by);
   const receiver = playerByUid(slot.receiver);
   const side = slot.by === state.uid ? "is-local" : "is-opponent";
-  if (slot.kind === "surrender") {
-    return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}が参りました`)}
-      ${hariaiMessage(attacker, `<p class="ha-bubble ${hariaiPersonaClass(attacker)}">${escapeHtml(personaLine(attacker, "surrender"))}</p>`)}</li>`;
-  }
+  if (slot.kind === "surrender") return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSurrender(slot, attacker)}</li>`;
   if (slot.kind === "pass") {
     return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}は看破を見送りました`)}</li>`;
   }
@@ -1899,7 +2409,20 @@ function renderHariaiSlot(slot, hearts = new Map()) {
   return renderHariaiPostSlot(slot, attacker, receiver, side, hearts);
 }
 
+function renderHariaiSurrender(slot, attacker) {
+  return `${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}が参りました`)}
+    ${hariaiMessage(attacker, `<p class="ha-bubble ${hariaiPersonaClass(attacker)}">${escapeHtml(personaLine(attacker, "surrender"))}</p>`)}`;
+}
+
 function renderHariaiPostSlot(slot, attacker, receiver, side, hearts = new Map()) {
+  return `<li class="hariai-slot hariai-post ${side}">
+    ${renderHariaiPostEvent(slot, attacker, receiver, hearts)}
+    ${renderHariaiScoreBlock(slot, receiver, hearts)}
+    ${renderHariaiRightBlock(slot, attacker, receiver, hearts)}
+  </li>`;
+}
+
+function renderHariaiPostEvent(slot, attacker, receiver, hearts = new Map()) {
   const item = hariaiSlotItem(slot);
   const key = imageKey("move", slot.slot);
   const concealed = slot.by !== state.uid && !state.openedMediaKeys.has(key);
@@ -1914,12 +2437,8 @@ function renderHariaiPostSlot(slot, attacker, receiver, side, hearts = new Map()
   const post = `${media}
     ${hariaiReactable(`t:${slot.slot}:caption`, attacker, captionBubble)}
     <span class="ha-chip hariai-target">狙い：${owner}「${escapeHtml(candidateText(slot.receiver, slot.target))}」</span>`;
-  return `<li class="hariai-slot hariai-post ${side}">
-    ${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}が貼った${slot.combo > 1 ? `<em class="hariai-combo">${slot.combo}連投</em>` : ""}`)}
-    ${hariaiMessage(attacker, post)}
-    ${renderHariaiScoreBlock(slot, receiver, hearts)}
-    ${renderHariaiRightBlock(slot, attacker, receiver, hearts)}
-  </li>`;
+  return `${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}が貼った${slot.combo > 1 ? `<em class="hariai-combo">${slot.combo}連投</em>` : ""}`)}
+    ${hariaiMessage(attacker, post)}`;
 }
 
 // 点数は受け手の吹き出し。数字・ひとこと・メーター・権利と理性の変化をまとめて返す。
@@ -1967,42 +2486,62 @@ function hariaiAnswerText(slot, attacker, receiver) {
 
 function renderHariaiRightBlock(slot, attacker, receiver, hearts = new Map()) {
   if (!slot.right) return "";
+  if (slot.right.kind === "none") return renderHariaiRightAsk(slot, attacker);
+  const reply = slot.answer
+    ? renderHariaiAnswerBubble(slot, attacker, receiver, hearts)
+    : `<p class="hariai-answer is-waiting">${escapeHtml(receiver?.name || "")}の返事を待っています…</p>`;
+  return `${renderHariaiRightAsk(slot, attacker)}${reply}`;
+}
+
+// 指示は金色の「命令」の吹き出し、質問は紫の吹き出し。
+function renderHariaiRightAsk(slot, attacker) {
+  if (!slot.right) return "";
   if (slot.right.kind === "none") return '<p class="hariai-right is-skipped">権利は使わずに進めました。</p>';
   const label = slot.right.kind === "question" ? "質問" : "指示";
   const flavor = slot.right.flavor ? `<span class="hariai-flavor">${escapeHtml(slot.right.flavor)}</span>` : "";
-  const answer = slot.answer;
-  const text = hariaiAnswerText(slot, attacker, receiver);
-  // 指示は金色の「命令」の吹き出し、質問は紫の吹き出し。
   const askBubble = `<p class="ha-bubble hariai-right is-${slot.right.kind} sp-order"><b>${label}</b>${escapeHtml(hariaiRightPrompt(slot.right, slot.receiver))}${flavor}</p>`;
-  const ask = hariaiMessage(attacker, hariaiReactable(`t:${slot.slot}:right`, attacker, askBubble));
-  const answerBubble = `<p class="ha-bubble hariai-answer ${hariaiPersonaClass(receiver)}">${hariaiHeartBadge(hearts, `${slot.slot}:answer`)}${escapeHtml(text)}</p>`;
-  const reply = answer
-    ? hariaiMessage(receiver, hariaiReactable(`t:${slot.slot}:answer`, receiver, answerBubble))
-    : `<p class="hariai-answer is-waiting">${escapeHtml(receiver?.name || "")}の返事を待っています…</p>`;
-  return `${ask}${reply}`;
+  return hariaiMessage(attacker, hariaiReactable(`t:${slot.slot}:right`, attacker, askBubble));
+}
+
+function renderHariaiAnswerBubble(slot, attacker, receiver, hearts = new Map()) {
+  if (!slot.answer) return "";
+  const answerBubble = `<p class="ha-bubble hariai-answer ${hariaiPersonaClass(receiver)}">${hariaiHeartBadge(hearts, `${slot.slot}:answer`)}${escapeHtml(hariaiAnswerText(slot, attacker, receiver))}</p>`;
+  return hariaiMessage(receiver, hariaiReactable(`t:${slot.slot}:answer`, receiver, answerBubble));
 }
 
 function renderHariaiBreakSlot(slot, attacker, receiver, side, hearts = new Map()) {
-  const guess = candidateText(slot.receiver, slot.guess);
   let result = '<p class="hariai-break-wait">答え合わせ中…</p>';
-  if (slot.breakResult === "miss") {
-    result = `<p class="hariai-break-result is-miss">ハズレ。「${escapeHtml(guess)}」はブラフでした。${escapeHtml(attacker?.name || "")}の理性 −${Number(slot.selfDamage || 0)}</p>`;
-  } else if (slot.breakResult === "hit") {
-    const bluffs = (slot.bluffSlots || []).map((number) => state.replay.slots.find((item) => item.slot === number)).filter(Boolean);
-    const faces = bluffs.length
-      ? `<div class="hariai-bluffs sp-receipts"><b>効いてないって言ったよね♡</b>${bluffs.map((item) => `<span>${item.slot}手目 ${item.score}点「${escapeHtml(item.caption)}」</span>`).join("")}</div>`
-      : "";
+  if (slot.breakResult === "miss") result = renderHariaiBreakResult(slot, attacker, receiver);
+  else if (slot.breakResult === "hit") {
     const finish = Number.isInteger(slot.finishCount)
       ? renderHariaiFinish(slot, hearts)
       : `<p class="hariai-break-wait">仕留めの準備中…（最大${Number(slot.finishMax || 0)}枚）</p>`;
-    result = `<p class="hariai-break-result is-hit">看破成功！ 本命は「${escapeHtml(guess)}」。${escapeHtml(receiver?.name || "")}の理性 −${Number(slot.damage || 0)}</p>${faces}${finish}`;
+    result = `${renderHariaiBreakResult(slot, attacker, receiver)}${finish}`;
   }
-  // 看破の宣言には封蝋を押す（宣言と成功の時だけ押し当てる動き）。
+  return `<li class="hariai-slot hariai-break ${side}">${renderHariaiBreakCall(slot, attacker)}
+    <div class="hariai-break-body${slot.breakResult ? ` is-${slot.breakResult}` : ""}">${result}</div></li>`;
+}
+
+// 看破の宣言には封蝋を押す（宣言と成功の時だけ押し当てる動き）。
+function renderHariaiBreakCall(slot, attacker) {
+  const guess = candidateText(slot.receiver, slot.guess);
   const sealClass = state.freshHariaiKeys.delete(`break:${slot.slot}`) ? " is-fresh" : "";
   const callBubble = `<p class="ha-bubble hariai-caption is-break sp-break">${escapeHtml(personaLine(attacker, "breakCall", { candidate: guess }))}<span class="sp-seal${sealClass}" aria-hidden="true">看破</span></p>`;
-  return `<li class="hariai-slot hariai-break ${side}">${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}の看破`)}
-    ${hariaiMessage(attacker, hariaiReactable(`t:${slot.slot}:break`, attacker, callBubble))}
-    <div class="hariai-break-body${slot.breakResult ? ` is-${slot.breakResult}` : ""}">${result}</div></li>`;
+  return `${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}の看破`)}
+    ${hariaiMessage(attacker, hariaiReactable(`t:${slot.slot}:break`, attacker, callBubble))}`;
+}
+
+function renderHariaiBreakResult(slot, attacker, receiver) {
+  const guess = candidateText(slot.receiver, slot.guess);
+  if (slot.breakResult === "miss") {
+    return `<p class="hariai-break-result is-miss">ハズレ。「${escapeHtml(guess)}」はブラフでした。${escapeHtml(attacker?.name || "")}の理性 −${Number(slot.selfDamage || 0)}</p>`;
+  }
+  if (slot.breakResult !== "hit") return "";
+  const bluffs = (slot.bluffSlots || []).map((number) => state.replay.slots.find((item) => item.slot === number)).filter(Boolean);
+  const faces = bluffs.length
+    ? `<div class="hariai-bluffs sp-receipts"><b>効いてないって言ったよね♡</b>${bluffs.map((item) => `<span>${item.slot}手目 ${item.score}点「${escapeHtml(item.caption)}」</span>`).join("")}</div>`
+    : "";
+  return `<p class="hariai-break-result is-hit">看破成功！ 本命は「${escapeHtml(guess)}」。${escapeHtml(receiver?.name || "")}の理性 −${Number(slot.damage || 0)}</p>${faces}`;
 }
 
 function renderHariaiFinish(slot, hearts = new Map()) {
@@ -2027,46 +2566,6 @@ function hariaiOutcomeText(outcome) {
   if (outcome.reason === "ko") return `${loser?.name || ""}の理性が0になりました。${winner?.name || ""}の勝ちです。`;
   if (outcome.reason === "surrender") return `${loser?.name || ""}が参りました。${winner?.name || ""}の勝ちです。`;
   return `手札が尽きました。理性が多い${winner?.name || ""}の勝ちです。`;
-}
-
-function renderHariaiConsole() {
-  const replay = state.replay;
-  if (replay?.outcome) {
-    return `<div class="hariai-console-wait"><strong>決着</strong><p>${escapeHtml(hariaiOutcomeText(replay.outcome))}</p><p>弱点の最終照合をしています…</p></div>`;
-  }
-  const pending = replay?.pending;
-  if (!pending) return "";
-  const mine = pending.actor === state.uid;
-  const opponent = getOpponent();
-  if (pending.stage === "act") {
-    return mine ? renderHariaiActConsole(pending)
-      : hariaiTypingConsole("act", pending.combo ? `${opponent.name}の連投中（${pending.combo}手連続で90点以上）` : "");
-  }
-  if (pending.stage === "receive") return renderHariaiTransferConsole(pending.attacker === state.uid ? "画像を送っています" : "画像を受け取っています");
-  if (pending.stage === "score") return mine ? renderHariaiScoreConsole(pending) : hariaiTypingConsole("score", "刺さったかどうかは、相手の自己申告です。");
-  if (pending.stage === "right") return mine ? renderHariaiRightConsole(pending) : hariaiTypingConsole("right");
-  if (pending.stage === "answer") return mine ? renderHariaiAnswerConsole(pending) : hariaiTypingConsole("answer");
-  if (pending.stage === "breakReveal") return hariaiWaitConsole(mine ? "看破の答え合わせを送っています…" : "看破の答え合わせ中…", "封印した弱点と照合しています。");
-  if (pending.stage === "finish") return mine ? renderHariaiFinishConsole(pending) : hariaiTypingConsole("finish", `最大${pending.finishMax}枚`);
-  if (pending.stage === "finishReceive") return renderHariaiTransferConsole(pending.attacker === state.uid ? "仕留めの画像を送っています" : "仕留めの画像を受け取っています");
-  return "";
-}
-
-// 相手の手番は、DMの「入力中」のように口調付きで見せる（手番の段階はゲームの進み具合から決まる）。
-function hariaiTypingConsole(stage, note = "") {
-  const opponent = getOpponent();
-  const personaId = normalizeChatPersonaId(opponent?.persona?.type);
-  const bubble = `<p class="ha-bubble hariai-typing-bubble ${hariaiPersonaClass(opponent)}" aria-hidden="true"><span class="chat-typing-dots"><i></i><i></i><i></i></span></p>`;
-  return `<div class="hariai-console-wait hariai-typing-console">${hariaiMessage(opponent, bubble)}
-    <strong>${renderChatPersonaMark(personaId)}${escapeHtml(strategyTypingText(personaId, opponent?.name, stage))}</strong>${note ? `<p>${escapeHtml(note)}</p>` : ""}</div>`;
-}
-
-function hariaiWaitConsole(title, note) {
-  return `<div class="hariai-console-wait"><strong>${escapeHtml(title)}</strong>${note ? `<p>${escapeHtml(note)}</p>` : ""}</div>`;
-}
-
-function renderHariaiTransferConsole(title) {
-  return `<div class="hariai-console-wait"><strong>${escapeHtml(title)}</strong><p id="hariaiTransferProgress">${state.channelReady ? `転送状況 ${state.transferProgress}%` : "P2P接続を待っています…"}</p></div>`;
 }
 
 function renderHariaiActConsole(pending) {
@@ -2406,6 +2905,10 @@ function bindHariaiBattleEvents() {
   const run = (action) => () => action().catch(handleRecoverableError);
   on("[data-hariai-tab]", "click", (event) => { state.drafts.consoleTab = event.currentTarget.dataset.hariaiTab; render(); });
   on("[data-hariai-memo]", "toggle", (event) => { hariaiMemoOpen = event.currentTarget.open; });
+  on("[data-sd-sheet-toggle]", "click", () => setStrategySheetOpen(!strategySheetIsOpen()));
+  on("[data-sd-side-toggle]", "click", () => setStrategySideOpen(!strategySideOpen));
+  on("[data-sd-tools]", "toggle", (event) => { strategyToolsOpen = event.currentTarget.open; });
+  bindStrategyThreadEvents();
   on("[data-hariai-right-tab]", "click", (event) => {
     const tab = event.currentTarget.dataset.hariaiRightTab;
     state.drafts.rightTab = tab;
@@ -2519,6 +3022,9 @@ function toggleHariaiFinishCard(cardId) {
 
 async function openHariaiMedia(key) {
   state.openedMediaKeys.add(key);
+  // 採点を待っている1枚を開いたら、そのまま採点のシートを開く。
+  const pending = state.replay?.pending;
+  if (pending?.stage === "score" && pending.actor === state.uid && key === imageKey("move", pending.slot)) strategySheetFor = strategySheetKey(pending);
   const item = state.remoteImages.get(key);
   render();
   if (item?.audioUrl) await playAudioUrl(item.audioUrl, 0, Number(item.audioDuration || 0));
@@ -3052,19 +3558,9 @@ function renderStrategyVideoClip(clip) {
 }
 
 function renderStrategyVideoPanel() {
-  const phase = currentStrategyVideoPhase();
   const clips = (state.screen === "review" ? state.videoClips : state.videoClips.filter((clip) => clip.phase === "battle"))
     .filter((clip) => !clip.released && clip.url);
-  const alreadySent = phase ? state.videoSentPhases.has(phase) : false;
-  const reviewPermissionReady = phase !== "review" || state.opponentReviewMediaReceiving;
-  const canRecord = Boolean(phase) && state.videoChannelReady && reviewPermissionReady && !alreadySent && !state.videoSending;
-  const status = !state.videoChannelReady
-    ? "○ 動画P2P接続なし（チャットと対戦は続行できます）"
-    : phase === "review" && !state.opponentReviewMediaReceiving
-      ? "○ 相手がメディア受信を停止しています"
-    : alreadySent
-      ? `● この${phase === "review" ? "品評会" : "対戦"}では送信済み`
-      : "● 動画P2P接続済み";
+  const { alreadySent, canRecord, status } = strategyVideoAvailability();
   return `<section class="strategy-video-panel" id="strategyVideoPanel"><div class="strategy-video-panel-head"><div><strong>SHORT VIDEO</strong>
       <span>最大10秒・480p・約${Math.round(STRATEGY_VIDEO_MAX_BYTES / (1024 * 1024))}MB / P2P一時転送</span></div>
       <button class="button button-ghost button-small" type="button" data-strategy-video-open ${canRecord ? "" : "disabled"}>${alreadySent ? "このフェーズは送信済み" : "短尺映像を録画"}</button></div>
@@ -3188,7 +3684,7 @@ function renderStrategyChat() {
     : `<div class="chat-empty">${reviewing ? "まだ品評コメントはありません。<br />画像の狙いや刺さったポイントから話してみましょう。" : "会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。"}</div>`;
   const typing = activeStrategyRemoteTyping();
   const effect = normalizeChatEffect(state.chatEffect);
-  return `<aside class="chat-panel strategy-chat-panel ${reviewing ? "is-review" : ""}${anonymous ? " is-anonymous" : ""}"><div class="chat-head"><strong>${anonymous ? "ANONYMOUS SCOUT CHAT" : reviewing ? "POST-MATCH REVIEW CHAT" : "WEAKNESS SCOUT CHAT"}</strong>
+  return `<aside class="chat-panel strategy-chat-panel ${reviewing ? "is-review" : ""}${anonymous ? " is-anonymous" : ""}" data-strategy-chat><div class="chat-head"><strong>${anonymous ? "ANONYMOUS SCOUT CHAT" : reviewing ? "POST-MATCH REVIEW CHAT" : "WEAKNESS SCOUT CHAT"}</strong>
       <span>${anonymous ? "名前・写真はデッキ封印まで非公開" : reviewing ? "双方同意済み・最大10分" : "会話も推理材料"}</span></div>
     <div class="strategy-chat-participants">${renderStrategyChatParticipant(localPlayer, true, anonymous)}${renderStrategyChatParticipant(opponent, false, anonymous)}</div>
     ${anonymous ? "" : reviewing ? `${renderStrategyReviewBattleGallery()}${renderStrategyReviewAssetPanel()}${renderStrategyVideoPanel()}` : renderStrategyVideoPanel()}
@@ -3196,7 +3692,7 @@ function renderStrategyChat() {
     <p class="chat-typing" id="strategyChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderStrategyTypingContent(typing) : ""}</p>
     ${renderChatTools({ id: "strategy", textReactions: STRATEGY_CHAT_PROMPTS, stamps: getAvailableStamps(state.economy, { freeOnly: anonymous }), textAttribute: "data-strategy-chat-reaction", stampAttribute: "data-strategy-chat-stamp" })}
     ${renderChatEffectPicker(effect, { disabled: state.playerSafetyStopped })}
-    <form class="chat-form${effect ? " has-effect" : ""}" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" placeholder="${reviewing ? "この一戦の感想を送る…" : "会話から本当の弱点を探る…"}" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
+    <form class="chat-form${effect ? " has-effect" : ""}" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="${reviewing ? "この一戦の感想を送る…" : "会話から本当の弱点を探る…"}" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
       <button class="button button-cyan button-small" type="submit">送信</button></form></aside>`;
 }
 
@@ -3255,21 +3751,6 @@ function syncStrategyChatPeek() {
   const count = strategyVisibleChatMessages().length;
   if (strategyChatOpen) strategyChatSeenCount = count;
   peek.closest(".sc-dock-peek")?.classList.toggle("has-new", !strategyChatOpen && count > strategyChatSeenCount);
-}
-
-// 対戦スレッドの上のDMの見出し。相手の口調・一人称・こちらの呼び方・理性をまとめて見せる。
-function renderHariaiDmHead() {
-  const opponent = getOpponent();
-  const me = getLocalPlayer();
-  if (!opponent || !me) return "";
-  const personaId = normalizeChatPersonaId(opponent.persona?.type);
-  const runtime = state.replay?.players?.[opponent.uid];
-  const reason = runtime ? runtime.reason : HARIAI_REASON_MAX;
-  const percent = Math.max(0, Math.min(100, (reason / HARIAI_REASON_MAX) * 100));
-  const avatar = shared()?.profileAvatar?.renderBattle?.(opponent.name, state.remoteAvatar?.url, { hidden: state.hideOpponentAvatar, className: "hariai-dm-avatar" }) || "";
-  return `<header class="hariai-dm-head" aria-label="${escapeHtml(opponent.name)}とのやりとり"><span class="hariai-dm-face">${avatar}<span class="hariai-dm-badge">${renderChatPersonaMark(personaId)}</span></span>
-    <span class="hariai-dm-who"><b>${escapeHtml(opponent.name)}</b><small>${renderChatPersonaMark(personaId)}${escapeHtml(personaLabel(opponent))}・一人称「${escapeHtml(personaFirst(opponent))}」</small><em>あなたを「${escapeHtml(personaCallName(opponent, me))}」と呼ぶ</em></span>
-    <span class="hariai-dm-reason"><small>理性</small><b>${reason}</b><i style="--reason:${percent.toFixed(1)}%"></i></span></header>`;
 }
 
 function hariaiPersonaClass(player) {
@@ -3411,14 +3892,18 @@ function bindStrategyChatEvents() {
     const input = document.querySelector("#strategyChatInput");
     const text = input?.value || "";
     if (input) input.value = "";
+    state.chatDraft = "";
     sendStrategyChat(text);
     input?.focus();
   });
-  // 入力中の合図はフォームで拾う（P2Pだけで送る）。
+  // 入力中の合図はフォームで拾う（P2Pだけで送る）。打ちかけの文は、画面を描き直しても残す。
   const chatForm = document.querySelector("#strategyChatForm");
-  chatForm?.addEventListener("input", () => notifyStrategyTyping(Boolean(document.querySelector("#strategyChatInput")?.value.trim())));
+  chatForm?.addEventListener("input", () => {
+    state.chatDraft = String(document.querySelector("#strategyChatInput")?.value || "");
+    notifyStrategyTyping(Boolean(state.chatDraft.trim()));
+  });
   chatForm?.addEventListener("focusout", () => notifyStrategyTyping(false));
-  const effectPicker = document.querySelector(".strategy-chat-panel .chat-effect-picker");
+  const effectPicker = document.querySelector("[data-strategy-chat] .chat-effect-picker");
   effectPicker?.addEventListener("pointerdown", (event) => {
     if (document.activeElement?.id === "strategyChatInput" && event.target.closest("[data-chat-effect]")) event.preventDefault();
   });
@@ -3472,6 +3957,7 @@ async function sendStrategyChat(value, stampId = "") {
 }
 
 function refreshStrategyChat({ preserveScroll = false } = {}) {
+  if (refreshStrategyThread()) return;
   const list = document.querySelector("#strategyChatMessages");
   if (!list) return;
   const scrollTop = list.scrollTop;
@@ -3488,7 +3974,7 @@ function refreshStrategyChat({ preserveScroll = false } = {}) {
 
 function setStrategyChatEffect(value) {
   state.chatEffect = normalizeChatEffect(value);
-  document.querySelectorAll(".strategy-chat-panel [data-chat-effect]").forEach((chip) => {
+  document.querySelectorAll("[data-strategy-chat] [data-chat-effect]").forEach((chip) => {
     chip.setAttribute("aria-pressed", String(normalizeChatEffect(chip.dataset.chatEffect) === state.chatEffect));
   });
   document.querySelector("#strategyChatForm")?.classList.toggle("has-effect", Boolean(state.chatEffect));
@@ -3538,6 +4024,7 @@ function syncStrategyTyping() {
     line.innerHTML = typing ? renderStrategyTypingContent(typing) : "";
     line.hidden = !typing;
   }
+  if (typing && strategyThreadFollow) stickStrategyThreadIfFollowing();
   syncStrategyChatPeek();
 }
 
@@ -3787,9 +4274,17 @@ function resetStrategyPersonaChatState(targetState = state) {
     incomingShareConsentRequestId: "",
     shareConsentAnswered: false,
     shareCardController: null,
+    chatDraft: "",
+    threadLog: [],
+    threadFreshKeys: new Set(),
   });
   strategyChatOpen = false;
   strategyChatSeenCount = 0;
+  strategyThreadFollow = true;
+  strategyThreadScrollTop = 0;
+  strategySheetFor = "";
+  strategySideOpen = false;
+  strategyToolsOpen = false;
   controller?.close();
 }
 
@@ -3803,6 +4298,11 @@ function bindStrategyVideoPanelEvents() {
 }
 
 function refreshStrategyVideoPanel() {
+  if (state.screen === "battle") {
+    refreshStrategyThread();
+    refreshStrategyCameraButton();
+    return;
+  }
   const panel = document.querySelector("#strategyVideoPanel");
   if (!panel || isStrategyChatAnonymous()) return;
   panel.outerHTML = renderStrategyVideoPanel();
@@ -5418,7 +5918,8 @@ async function setupRoomListeners() {
     if (state.seenChatIds.has(snapshot.key)) return;
     state.seenChatIds.add(snapshot.key);
     state.chatMessages.push({ id: snapshot.key, ...snapshot.val() });
-    if (state.chatMessages.length > 60) state.chatMessages.shift();
+    // 最初に読むのは直近60件。届いた発言は、対戦スレッドに残すため200件まで手元に置く。
+    if (state.chatMessages.length > STRATEGY_THREAD_CHAT_LIMIT) state.chatMessages.shift();
     if (snapshot.val()?.authorUid !== state.uid && state.remoteTyping) clearStrategyRemoteTyping();
     refreshStrategyChat();
   }, handleRoomError));
@@ -7098,6 +7599,18 @@ document.addEventListener("visibilitychange", () => {
 
 window.addEventListener("hariai-ranking-dashboard-updated", () => {
   if (active && state.screen === "profile") updateStrategyCrownMatchmakingActions();
+});
+
+// 画面の大きさが変わっても、対戦のDMを画面の高さに収め直す（読み返している位置は保つ）。
+// スマホとPCの幅をまたいだ時は、操作シートの置き場所が変わるので描き直す。
+let strategyLastWideLayout = strategyWideLayout();
+window.addEventListener("resize", () => {
+  const wide = strategyWideLayout();
+  const crossed = wide !== strategyLastWideLayout;
+  strategyLastWideLayout = wide;
+  if (!active || state.screen !== "battle") return;
+  if (crossed) render();
+  else settleStrategyThreadLayout();
 });
 
 window.HariaiStrategy = { start, isActive, requestHome, destroyRoom };

@@ -110,11 +110,13 @@ test("the strategy thread, right tabs and notebook memo keep their state across 
   const tabHandler = sourceBetween(strategy, 'on("[data-hariai-right-tab]", "click"', 'on("[data-hariai-card]"');
   assert.match(tabHandler, /state\.drafts\.rightKind && state\.drafts\.rightKind !== tab/);
   assert.match(tabHandler, /state\.drafts\.rightId = "";/);
-  const layout = sourceBetween(strategy, "function renderBattle()", "function renderHariaiThread()");
-  assert.match(layout, /<div class="hariai-layout">\$\{renderHariaiReadingMemo\(\)\}<div class="hariai-main">/);
+  // 読みメモと自分の秘密は、PCではDMの右の列（自分の番の操作シートの下）、スマホでは「メモ」から開く引き出し。
+  const layout = sourceBetween(strategy, "function renderBattle()", "function strategyThreadChats()");
+  assert.match(layout, /<aside class="sd-side\$\{strategySideOpen \? " is-open" : ""\}" id="strategySide" data-sd-side data-keep-scroll="side"/);
+  assert.match(layout, /\$\{renderHariaiReadingMemo\(\)\}\$\{renderHariaiSelfCard\(\)\}\$\{renderHariaiRuleCard\(\)\}/);
   const css = read("strategy.css");
-  assert.match(css, /grid-template-areas: "memo" "main" "side";/);
-  assert.match(css, /grid-template-areas: "main memo" "main side";/);
+  assert.match(css, /\.sd-side\.is-open \{\n  display: grid;\n  grid-auto-rows: max-content;\n\}/);
+  assert.match(css, /@media \(min-width: 901px\) \{\n  \.sd-battle \{\n    display: grid;\n    grid-template-columns: minmax\(0, 720px\) 300px;/);
 });
 
 test("the strategy preview only runs on localhost and never writes to a room", () => {
