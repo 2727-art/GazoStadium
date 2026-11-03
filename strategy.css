@@ -2699,29 +2699,6 @@
   font-size: 0.64rem;
 }
 
-/* スマホは読みメモ → スレッド → 自分の秘密。PCはスレッドの右にメモと秘密を並べる。 */
-.hariai-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "memo" "main" "side";
-  gap: 14px;
-  align-items: start;
-}
-
-.hariai-main {
-  display: grid;
-  grid-area: main;
-  gap: 16px;
-  min-width: 0;
-}
-
-.hariai-side {
-  display: grid;
-  grid-area: side;
-  gap: 12px;
-  min-width: 0;
-}
-
 .hariai-thread {
   display: grid;
   gap: 14px;
@@ -3439,7 +3416,6 @@
 
 /* 読みメモ：罫線と赤い余白線のあるノート。閉じると1行の要約になる */
 .hariai-memo {
-  grid-area: memo;
   min-width: 0;
   overflow: hidden;
   border-radius: 16px;
@@ -3678,25 +3654,6 @@
   color: var(--hariai-pink);
 }
 
-/* PC：読みメモは右上でスレッドについてくる。自分の秘密とルールは操作欄の横 */
-@media (min-width: 901px) {
-  .hariai-layout {
-    grid-template-columns: minmax(0, 1fr) 300px;
-    grid-template-rows: minmax(0, 1fr) auto;
-    grid-template-areas: "main memo" "main side";
-    gap: 14px 18px;
-  }
-
-  .hariai-memo {
-    position: sticky;
-    top: 16px;
-  }
-
-  .hariai-side {
-    align-self: end;
-  }
-}
-
 @media (max-width: 900px) {
   .strategy-persona-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3910,135 +3867,6 @@
   background: rgba(255, 255, 255, 0.04);
   font-family: var(--ha-font-memo);
   text-decoration: line-through 2px rgba(255, 85, 102, 0.85);
-}
-
-/* 相手の手番は、DMの「入力中」 */
-.hariai-typing-console {
-  justify-items: center;
-}
-
-.hariai-typing-console .ha-msg {
-  justify-self: start;
-}
-
-.hariai-typing-console strong {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--vs-pearl);
-  font-size: 0.92rem;
-}
-
-.hariai-typing-bubble {
-  display: inline-flex;
-  min-height: 38px;
-  align-items: center;
-  padding: 10px 16px;
-}
-
-.hariai-typing-bubble .chat-typing-dots i {
-  width: 7px;
-  height: 7px;
-  background: currentColor;
-}
-
-/* 対戦スレッドの上のDMの見出し。スクロールしても上に残る */
-.hariai-dm-head {
-  position: sticky;
-  z-index: 6;
-  top: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-radius: 16px;
-  background: rgba(20, 13, 24, 0.94);
-  box-shadow: inset 0 0 0 1px rgba(255, 127, 166, 0.35), 0 10px 24px rgba(0, 0, 0, 0.4);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-}
-
-.hariai-dm-face {
-  position: relative;
-  flex: none;
-}
-
-.hariai-dm-face .hariai-dm-avatar {
-  width: 40px;
-  height: 40px;
-  box-shadow: 0 0 0 2px #ff4fa0, 0 0 14px rgba(255, 79, 160, 0.45);
-}
-
-.hariai-dm-badge {
-  position: absolute;
-  right: -5px;
-  bottom: -4px;
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--ha-ground);
-}
-
-.hariai-dm-badge .chat-persona-mark {
-  width: 12px;
-  height: 12px;
-  margin: 0;
-  vertical-align: 0;
-}
-
-.hariai-dm-who {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 1px;
-}
-
-.hariai-dm-who b {
-  overflow: hidden;
-  color: var(--vs-pearl);
-  font-size: 0.92rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hariai-dm-who small {
-  color: var(--vs-rose-soft);
-  font-size: 0.7rem;
-  font-weight: 700;
-}
-
-.hariai-dm-who em {
-  overflow: hidden;
-  color: var(--vs-dim);
-  font-size: 0.68rem;
-  font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hariai-dm-reason {
-  display: grid;
-  flex: none;
-  justify-items: end;
-  gap: 2px;
-  color: var(--vs-mist);
-  font: 600 0.68rem/1 var(--vs-font-number);
-  letter-spacing: 0.06em;
-}
-
-.hariai-dm-reason b {
-  color: var(--vs-pearl);
-  font-size: 1.05rem;
-}
-
-.hariai-dm-reason i {
-  display: block;
-  width: 64px;
-  height: 5px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, var(--vs-rose) var(--reason, 100%), var(--ha-bubble-theirs) var(--reason, 100%));
 }
 
 .hariai-persona-chip .chat-persona-mark {
@@ -4272,7 +4100,8 @@
 @media (prefers-reduced-motion: reduce) {
   .hariai-band.sp-band-ribbon.is-fresh,
   .sp-seal.is-fresh,
-  .hariai-typing-bubble .chat-typing-dots i,
+  .sd-items > .sd-item.is-arriving,
+  .sd-dm > .sd-sheet,
   .strategy-identity-screen:not(.is-refresh) .sp-veil-lift,
   .strategy-identity-screen:not(.is-refresh) + .sc-dock .strategy-chat-panel .chat-message p.chat-persona-bubble {
     animation: none;
@@ -4281,5 +4110,370 @@
   .sc-dock-sheet,
   .sc-dock.is-open .sc-dock-sheet {
     transition: none;
+  }
+}
+
+/* ---------- 対戦のDMスレッド（XのDMと同じ骨組み） ---------- */
+/*
+  DMヘッダー → スレッド（手・点数・権利・看破・チャット・映像を起きた順に）→ 段階の帯 → 操作シート → 入力欄。
+  画面の高さに収め、スレッドだけを内側でスクロールさせる。--vb-dm-top は strategy.js が測る。
+  読みメモと自分の秘密は、PCでは右の列、スマホでは「メモ」から開く引き出し。
+*/
+.sd-battle {
+  position: relative;
+}
+
+.sd-head .vb-dm-name small {
+  gap: 1px 6px;
+}
+
+.sd-memo-button {
+  min-height: 44px;
+  flex: none;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  color: var(--vs-gold);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.sd-memo-button[aria-expanded="true"] {
+  color: var(--ha-ink);
+  background: var(--vs-gold);
+}
+
+.sd-gauge-note {
+  color: var(--vs-mist);
+  font-size: 0.64rem;
+}
+
+.sd-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sd-item {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.sd-item.is-arriving {
+  animation: vb-dm-arrive 520ms var(--vs-ease-out) both;
+}
+
+.sd-item .ha-divider {
+  margin: 6px 0 0;
+}
+
+.sd-item .hariai-thread-empty.sd-start {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 0.78rem;
+}
+
+/* 点数の吹き出しは、ひとことがなくてもメーターが読める幅にする（共通の .ha-bubble が後から読み込まれて inline-block に戻すため、ここで上書き） */
+.hariai-thread .ha-bubble.hariai-score {
+  display: grid;
+  min-width: 236px;
+  max-width: 100%;
+}
+
+.sd-outcome {
+  color: var(--vs-gold);
+  font-weight: 800;
+}
+
+.sd-item.is-chat .strategy-chat-message-row {
+  margin-bottom: 0;
+}
+
+.sd-item.is-chat .strategy-chat-message-row .chat-message {
+  max-width: min(82%, 420px);
+}
+
+/* 短尺映像は、送った人の側の吹き出し。自動再生はしない */
+.sd-video {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.sd-video video {
+  display: block;
+  width: min(62vw, 260px);
+  max-height: 340px;
+  border-radius: 18px 18px 18px 4px;
+  background: #000;
+  box-shadow: 0 0 0 1.5px rgba(255, 79, 160, 0.55), 0 0 22px rgba(255, 79, 160, 0.22);
+}
+
+.ha-msg.is-mine .sd-video video {
+  border-radius: 18px 18px 4px 18px;
+}
+
+.sd-video figcaption {
+  color: var(--vs-mist);
+  font-size: 0.68rem;
+}
+
+.ha-msg.is-mine .sd-video figcaption {
+  text-align: right;
+}
+
+/* その時の段階の帯。相手の番は口調付きの入力中の一文、自分の番は主ボタン */
+.sd-band {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--ha-raised);
+  box-shadow: 0 -1px 0 var(--vs-line-soft);
+}
+
+.sd-band.is-mine {
+  box-shadow: 0 -1px 0 rgba(255, 63, 134, 0.45);
+}
+
+.sd-band-line {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0;
+  color: var(--vs-pearl);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.sd-band-line small {
+  flex-basis: 100%;
+  color: var(--vs-mist);
+  font-size: 0.72rem;
+}
+
+.sd-band.is-theirs .sd-band-line {
+  color: var(--vs-rose-soft);
+}
+
+.sd-band .sd-band-action {
+  min-height: 44px;
+  flex: none;
+  padding: 0 16px;
+  border-radius: 22px;
+}
+
+/* 自分の番の操作シート。帯の代わりに入力欄の上へ出し、スレッドはその上で縮む（最新の画像が隠れないように） */
+.sd-sheet {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  min-height: 0;
+  max-height: 60%;
+  flex: 0 1 auto;
+  flex-direction: column;
+  border-radius: 22px 22px 0 0;
+  background: var(--ha-raised);
+  box-shadow: 0 -1px 0 rgba(255, 63, 134, 0.45), 0 -18px 40px rgba(0, 0, 0, 0.55);
+  animation: vs-fade-up 200ms var(--vs-ease-out) both;
+}
+
+.sd-sheet[hidden] {
+  display: none;
+}
+
+.sd-sheet-grip {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  padding: 8px 10px 0;
+}
+
+.sd-sheet-close {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 20px;
+  cursor: pointer;
+  color: var(--vs-mist);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.sd-sheet .hariai-console.sd-sheet-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* 採点のシートの上に、点を付ける1枚と言葉を小さく出す */
+.sd-score-target {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+.sd-score-target img {
+  width: 64px;
+  height: 86px;
+  flex: none;
+  border-radius: 10px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1.5px rgba(255, 79, 160, 0.55);
+}
+
+.sd-score-target figcaption {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.sd-score-target b {
+  color: var(--vs-pearl);
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.sd-score-target small {
+  color: var(--vs-mist);
+  font-size: 0.7rem;
+}
+
+/* スマホで操作のシートを開いている間は、理性ゲージを畳んでスレッドの高さを残す */
+@media (max-width: 900px) {
+  .sd-dm.has-sheet .vb-dm-gauges {
+    display: none;
+  }
+}
+
+/* 入力欄のカメラ：10秒の映像を録って送る */
+.sd-camera {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--vs-rose-soft);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 63, 134, 0.45);
+}
+
+.sd-camera:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.sd-camera:focus-visible,
+.sd-memo-button:focus-visible,
+.sd-sheet-close:focus-visible {
+  outline: 2px solid var(--vs-gold-hi);
+  outline-offset: 2px;
+}
+
+/* 読みメモと自分の秘密。スマホは右からの引き出し */
+.sd-side {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: none;
+  width: min(88%, 380px);
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  border-radius: 22px;
+  background: var(--ha-ground);
+  box-shadow: 0 0 0 1px var(--vs-line), -18px 0 40px rgba(0, 0, 0, 0.55);
+}
+
+.sd-side.is-open {
+  display: grid;
+  grid-auto-rows: max-content;
+}
+
+.sd-side > * {
+  min-width: 0;
+}
+
+.sd-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sd-side-head strong {
+  color: var(--vs-gold);
+  font-size: 0.9rem;
+}
+
+@media (min-width: 901px) {
+  .sd-battle {
+    display: grid;
+    grid-template-columns: minmax(0, 720px) 300px;
+    justify-content: center;
+    align-items: start;
+    gap: 18px;
+  }
+
+  .sd-battle .vb-dm {
+    max-width: none;
+    margin: 0;
+  }
+
+  .sd-side {
+    position: static;
+    display: grid;
+    width: auto;
+    height: calc(100dvh - var(--vb-dm-top, 120px) - 12px);
+    /* 中身の高さのまま積み、列ごとスクロールする（列の高さに押し込めない） */
+    grid-auto-rows: max-content;
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .sd-side .hariai-memo {
+    position: static;
+  }
+
+  .sd-side-head,
+  .sd-memo-button {
+    display: none;
+  }
+
+  /* PCの操作シートは右の列の一番上。右の列ごとスクロールする */
+  .sd-side .sd-sheet {
+    min-height: auto;
+    max-height: none;
+    flex: none;
+    border-radius: 18px;
+    animation: none;
+  }
+
+  .sd-side .sd-sheet .hariai-console.sd-sheet-body {
+    overflow: visible;
+    padding: 4px 14px 16px;
   }
 }

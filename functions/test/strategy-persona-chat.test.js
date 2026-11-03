@@ -106,12 +106,12 @@ test("the share card labels strategy lines with the move number", async () => {
 test("strategy.js wires persona bubbles, the DM header, typing and the anonymous veil", () => {
   assert.match(strategy, /from "\.\/chat-persona\.mjs\?v=chat-persona-v2";/);
   assert.match(strategy, /from "\.\/strategy-chat\.mjs\?v=strategy-persona-chat-v1";/);
-  assert.match(between(strategy, "function renderBattle()", "function renderHariaiThread()"), /<div class="hariai-main">\$\{renderHariaiDmHead\(\)\}/);
+  assert.match(between(strategy, "function renderBattle()", "function strategyThreadChats()"), /<div class="vb-dm sd-dm\$\{sheetInThread \? " has-sheet" : ""\}">\$\{renderStrategyDmHead\(\)\}/);
   assert.match(strategy, /あなたを「\$\{escapeHtml\(personaCallName\(opponent, me\)\)\}」と呼ぶ/);
-  const consoleSource = between(strategy, "function renderHariaiConsole()", "function hariaiTypingConsole(");
-  for (const stage of ["act", "score", "right", "answer", "finish"]) {
-    assert.match(consoleSource, new RegExp(`hariaiTypingConsole\\("${stage}"`), stage);
-  }
+  // 相手の番は、段階の帯に口調付きの入力中の一文を出す（段階はゲームの進み具合から決まる）。
+  const band = between(strategy, "function renderStrategyBand()", "function renderStrategySheet()");
+  assert.match(band, /if \(!mine\) \{/);
+  assert.match(band, /strategyTypingText\(personaId, opponent\?\.name, pending\.stage\)/);
   assert.match(strategy, /const captionBubble = `<p class="ha-bubble hariai-caption \$\{hariaiPersonaClass\(attacker\)\}">/);
   assert.match(strategy, /<span class="sp-seal\$\{sealClass\}" aria-hidden="true">看破<\/span>/);
   assert.match(strategy, /\$\{HARIAI_BAND_LABELS\[slot\.band\] \|\| ""\}\$\{unlocked \? "が解禁" : ""\}/);
@@ -161,9 +161,7 @@ test("persona bubbles outrank the generic DM colors and motion stops for reduced
   for (const selector of [".hariai-band.sp-band-ribbon.is-fresh", ".sp-seal.is-fresh", ".strategy-identity-screen:not(.is-refresh) .sp-veil-lift"]) {
     assert.ok(reduced.includes(selector), selector);
   }
-  // 既存の並び（スマホ：メモ→スレッド→秘密、PC：スレッドの右にメモ）は変えない。
-  assert.match(css, /grid-template-areas: "memo" "main" "side";/);
-  assert.match(css, /grid-template-areas: "main memo" "main side";/);
+  assert.ok(reduced.includes(".sd-items > .sd-item.is-arriving"), "the DM thread stops its arrival motion too");
 });
 
 test("the strategy chat rules accept only known effects and still reject unknown fields", () => {
