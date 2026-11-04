@@ -4547,6 +4547,148 @@
   max-height: min(78cqh, 520px);
 }
 
+/* 開いた後の相手の1枚は、押すと見つめるモードで開く */
+.hariai-media .hariai-gaze-open {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  cursor: zoom-in;
+  background: transparent;
+}
+
+.hariai-media .hariai-gaze-open:focus-visible {
+  outline: 2px solid var(--vs-gold-hi);
+  outline-offset: -2px;
+}
+
+/* ---------- 見つめるモード（戦略型だけの部分。共通の見た目は velvet-battle.css の vb-gaze-*） ---------- */
+.sd-gaze .sd-gaze-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.sd-gaze .sd-gaze-caption .hariai-caption {
+  max-width: 100%;
+  margin: 0;
+  color: #fff4f9;
+  background: rgba(20, 10, 22, 0.58);
+  background: color-mix(in srgb, var(--chat-border, #ff4fa0) 16%, rgba(14, 8, 16, 0.6));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.sd-gaze .sd-gaze-caption .hariai-target {
+  color: #e3d2df;
+  background: rgba(14, 8, 16, 0.6);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* 言葉の欄はすき間のタップを画像へ通し、音声のボタンだけ押せるようにする */
+.sd-gaze .sd-gaze-caption .hariai-audio,
+.sd-gaze .vb-gaze-chat .chat-message {
+  pointer-events: auto;
+}
+
+.sd-gaze .vb-gaze-chat .strategy-chat-message-row {
+  margin: 0;
+}
+
+.sd-gaze .vb-gaze-dock .sd-band {
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* 高さが足りない時は、操作ではなく重ねているチャットの方から縮める（採点パネルが欠けないように） */
+.sd-gaze .vb-gaze-bottom > .vb-gaze-dock {
+  flex-shrink: 0;
+}
+
+/* 背の低い画面では、重ねるチャットを新しい2件にして画像を見やすくする */
+@media (max-height: 760px) {
+  .sd-gaze .vb-gaze-line:nth-last-child(n + 3) {
+    display: none;
+  }
+}
+
+/* 見つめながら採点する小さなパネル */
+.sd-gaze-score {
+  display: grid;
+  gap: 8px;
+}
+
+.sd-gaze-score .hariai-score-quick {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+}
+
+.sd-gaze-score .hariai-score-quick button {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0;
+}
+
+.sd-gaze-score-row {
+  display: grid;
+  grid-template-columns: 4.6em minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.sd-gaze-score-row .text-input {
+  min-width: 0;
+  min-height: 42px;
+  border-color: rgba(248, 238, 242, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sd-gaze-score-row .button {
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 21px;
+}
+
+.sd-gaze-score-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sd-gaze-score-note {
+  min-width: 0;
+  margin: 0;
+  color: #e3d2df;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.sd-gaze-score-note.is-ko {
+  color: var(--vs-danger);
+  font-weight: 800;
+}
+
+.sd-gaze-more {
+  flex: none;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  color: var(--vs-gold);
+  background: none;
+  font-size: 0.74rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* 入力欄のマイク（ボイス）とカメラ（10秒の映像）。右上の数字は残りの本数 */
 .sd-mic,
 .sd-camera {
