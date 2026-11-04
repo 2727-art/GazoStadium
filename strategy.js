@@ -2052,7 +2052,7 @@ function renderBattle() {
     <aside class="sd-side${strategySideOpen ? " is-open" : ""}" id="strategySide" data-sd-side data-keep-scroll="side" aria-label="あなたの番の操作・読みメモ・あなたの秘密">
       ${sheetInSide ? sheet : ""}
       <div class="sd-side-head"><strong>メモ</strong><button type="button" class="button button-ghost button-small" data-sd-side-toggle>閉じる</button></div>
-      ${renderHariaiReadingMemo()}${renderHariaiSelfCard()}${renderHariaiRuleCard()}
+      ${renderStrategyPeopleCard()}${renderHariaiReadingMemo()}${renderHariaiSelfCard()}${renderHariaiRuleCard()}
     </aside></section>`;
 }
 
@@ -2288,20 +2288,54 @@ function strategyTurnLabel() {
   return `${pending.actor === state.uid ? "あなたの番" : `${getOpponent()?.name || "相手"}の番`}${combo}`;
 }
 
+// 手札の残りと看破の状態。PCはゲージの下、スマホはメモの「ふたりのこと」に出す。
+function strategyHandStatus(player) {
+  const runtime = state.replay?.players?.[player.uid];
+  const hand = runtime ? runtime.hand : MAIN_COUNT + RESERVE_COUNT;
+  const breakLabel = !runtime ? "未使用" : runtime.breakResult === "hit" ? "成功" : runtime.breakResult === "miss" ? "失敗" : runtime.breakPassed ? "見送り" : "未使用";
+  return `手札 ${hand} ・ 看破 ${breakLabel}`;
+}
+
 function renderStrategyGauge(player) {
   const runtime = state.replay?.players?.[player.uid];
   const local = player.uid === state.uid;
   const reason = runtime ? runtime.reason : HARIAI_REASON_MAX;
   const ratio = Math.max(0, Math.min(1, reason / HARIAI_REASON_MAX)).toFixed(3);
-  const hand = runtime ? runtime.hand : MAIN_COUNT + RESERVE_COUNT;
-  const breakLabel = !runtime ? "未使用" : runtime.breakResult === "hit" ? "成功" : runtime.breakResult === "miss" ? "失敗" : runtime.breakPassed ? "見送り" : "未使用";
   const label = local ? "あなたの理性" : `${player.name}の理性`;
+  // スマホでは「〇〇 ━━ 100/100」の1行にするので、「の理性」は畳める別の要素にしておく。
   return `<div class="vb-dm-gauge ${local ? "is-local" : "is-remote"}">
-    <div class="vb-dm-gauge-label"><span>${escapeHtml(label)}</span><span class="vb-hp-value"><b>${reason}</b>/${HARIAI_REASON_MAX}</span></div>
+    <div class="vb-dm-gauge-label"><span>${escapeHtml(local ? "あなた" : player.name)}<span class="sd-gauge-suffix">の理性</span></span><span class="vb-hp-value"><b>${reason}</b>/${HARIAI_REASON_MAX}</span></div>
     <div class="vb-hp${reason / HARIAI_REASON_MAX <= 0.3 ? " is-low" : ""}" role="img" aria-label="${escapeHtml(label)} ${reason}/${HARIAI_REASON_MAX}" style="--hp:${ratio};--hp-ghost:${ratio}"><i class="vb-hp-ghost"></i><i class="vb-hp-fill"></i></div>
-    <small class="sd-gauge-note">手札 ${hand} ・ 看破 ${breakLabel}</small>
+    <small class="sd-gauge-note">${strategyHandStatus(player)}</small>
     ${local ? "" : renderOpponentAchievementShowcase({ compact: true, context: "is-hud", label: "相手の実績" })}
   </div>`;
+}
+
+// スマホの対戦は全画面のDMにしてサイトの見出しと「〇〇との交流」の欄を出さないので、
+// ブロック・退出・安心設定・効果音を ••• に置く（PCは見出しと欄が残るので出さない）。
+function renderStrategyPhoneMenuItems() {
+  const soundOn = window.HariaiAudio?.isEnabled?.() !== false;
+  return `<div class="sd-menu-safety">${renderContactControls("strategy")}</div>
+    <button type="button" class="sd-menu-phone" data-player-safety-open>安心設定</button>
+    <div class="vb-menu-switch sd-menu-phone"><span id="strategySoundLabel">効果音</span><button type="button" role="switch" aria-checked="${soundOn}" aria-labelledby="strategySoundLabel" data-sd-sound><i aria-hidden="true"></i></button></div>`;
+}
+
+function toggleStrategySound(button) {
+  const audio = window.HariaiAudio;
+  if (!audio?.setEnabled) return;
+  audio.setEnabled(!audio.isEnabled());
+  button.setAttribute("aria-checked", String(audio.isEnabled()));
+}
+
+// スマホのDMヘッダーは1段に畳むので、口調・一人称・呼び方と、ふたりの手札・看破はメモの一番上に置く。
+function renderStrategyPeopleCard() {
+  const opponent = getOpponent();
+  const me = getLocalPlayer();
+  if (!opponent || !me) return "";
+  const personaId = normalizeChatPersonaId(opponent.persona?.type);
+  return `<section class="hariai-self sd-people" aria-label="ふたりのこと"><h2>ふたりのこと</h2>
+    <p><b>${escapeHtml(opponent.name)}</b>　${renderChatPersonaMark(personaId)}${escapeHtml(personaLabel(opponent))}・一人称「${escapeHtml(personaFirst(opponent))}」<small>あなたを「${escapeHtml(personaCallName(opponent, me))}」と呼ぶ・${strategyHandStatus(opponent)}</small></p>
+    <p><b>あなた</b><small>${strategyHandStatus(me)}</small></p></section>`;
 }
 
 function renderStrategyDmHead() {
@@ -2319,6 +2353,7 @@ function renderStrategyDmHead() {
       <button type="button" class="sd-memo-button" data-sd-side-toggle aria-controls="strategySide" aria-expanded="${strategySideOpen}">メモ</button>
       <details class="vb-menu"><summary aria-label="対戦メニュー"><span aria-hidden="true">•••</span></summary>
         <div class="vb-menu-panel">
+          ${renderStrategyPhoneMenuItems()}
           <button class="avatar-visibility-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
           <div class="vb-menu-switch"><span id="strategyReceiptsLabel">既読・再生済みを付ける<small>オフにすると相手のものも見えません</small></span><button type="button" role="switch" aria-checked="${strategyReceiptsOn}" aria-labelledby="strategyReceiptsLabel" data-sd-receipts><i aria-hidden="true"></i></button></div>
           <p class="vb-menu-room">ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())} · ${state.channelReady ? "P2P接続中" : "P2P接続待ち"} · ${state.videoChannelReady ? "映像P2P接続中" : "映像P2P接続なし"}</p>
@@ -2370,13 +2405,14 @@ function renderStrategyBand() {
   const replay = state.replay;
   const opponent = getOpponent();
   const personaId = normalizeChatPersonaId(opponent?.persona?.type);
-  const band = (line, { note = "", action = "", tone = "" } = {}) => `<div class="sd-band${tone ? ` is-${tone}` : ""}" id="hariaiConsole" aria-live="polite">
-    <p class="sd-band-line">${line}${note ? `<small>${note}</small>` : ""}</p>${action}</div>`;
+  // スマホでは帯を1行にして補足は畳む。転送の進み具合だけは畳まない（keep）。
+  const band = (line, { note = "", action = "", tone = "", keep = false } = {}) => `<div class="sd-band${tone ? ` is-${tone}` : ""}" id="hariaiConsole" aria-live="polite">
+    <p class="sd-band-line">${line}${note ? `<small${keep ? ' class="is-keep"' : ""}>${note}</small>` : ""}</p>${action}</div>`;
   if (replay?.outcome) return band(`<strong>決着</strong><span>${escapeHtml(hariaiOutcomeText(replay.outcome))}</span>`, { note: "弱点の最終照合をしています…" });
   const pending = replay?.pending;
   if (!pending) return band("<span>先攻を決めています…</span>");
   const mine = pending.actor === state.uid;
-  const transfer = (title) => band(`<span>${escapeHtml(title)}</span>`, { note: `<span id="hariaiTransferProgress">${state.channelReady ? `転送状況 ${state.transferProgress}%` : "P2P接続を待っています…"}</span>` });
+  const transfer = (title) => band(`<span>${escapeHtml(title)}</span>`, { note: `<span id="hariaiTransferProgress">${state.channelReady ? `転送状況 ${state.transferProgress}%` : "P2P接続を待っています…"}</span>`, keep: true });
   if (pending.stage === "receive") return transfer(pending.attacker === state.uid ? "画像を送っています" : "画像を受け取っています");
   if (pending.stage === "finishReceive") return transfer(pending.attacker === state.uid ? "仕留めの画像を送っています" : "仕留めの画像を受け取っています");
   if (pending.stage === "breakReveal") return band(`<span>${mine ? "看破の答え合わせを送っています…" : "看破の答え合わせ中…"}</span>`, { note: "封印した弱点と照合しています。" });
@@ -3433,6 +3469,7 @@ function bindHariaiBattleEvents() {
   on("[data-sd-sheet-toggle]", "click", () => setStrategySheetOpen(!strategySheetIsOpen()));
   on("[data-sd-side-toggle]", "click", () => setStrategySideOpen(!strategySideOpen));
   on("[data-sd-receipts]", "click", () => setStrategyReceipts(!strategyReceiptsOn));
+  on("[data-sd-sound]", "click", (event) => toggleStrategySound(event.currentTarget));
   bindStrategyComposerEvents();
   bindStrategyThreadEvents();
   on("[data-hariai-right-tab]", "click", (event) => {
