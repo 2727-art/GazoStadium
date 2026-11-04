@@ -2904,7 +2904,6 @@ function normalizeRankingDashboard(value) {
   const profileSource = source.profile && typeof source.profile === "object" ? source.profile : {};
   const overallSource = source.overall || source.context || {};
   const runSource = source.run || source.crownRun || source.proof || null;
-  const customizationSource = source.customization || {};
   const rulesSource = source.rules && typeof source.rules === "object" ? source.rules : {};
   const rating = Math.min(3000, Math.max(100, Math.floor(Number(
     profileSource.rating
@@ -2916,17 +2915,6 @@ function normalizeRankingDashboard(value) {
   const runStatus = ["active", "complete", "finalized", "expired"].includes(rawStatus)
     ? rawStatus
     : "idle";
-  const signatureIds = normalizeCrownSignatureIds(
-    customizationSource.availableSignatureIds
-      || source.availableSignatureIds
-      || runSource?.signatureIds,
-  );
-  const selectedSignatureId = String(
-    customizationSource.crownSignatureId
-      || source.crownSignatureId
-      || runSource?.crownSignatureId
-      || "",
-  );
   return {
     enabled: source.enabled === true,
     entryId: String(source.entryId || overallSource.entryId || ""),
@@ -2957,21 +2945,6 @@ function normalizeRankingDashboard(value) {
           && Math.max(0, Math.floor(Number(runSource.participantCount || 0))) >= 4
         ),
     } : null,
-    customization: {
-      crownTheme: normalizeCrownTheme(
-        customizationSource.crownTheme
-          || source.crownTheme
-          || runSource?.crownTheme,
-      ),
-      crownSignatureId: CROWN_SIGNATURE_IDS.includes(selectedSignatureId)
-        ? selectedSignatureId
-        : "",
-      availableThemes: (Array.isArray(customizationSource.availableThemes)
-        ? customizationSource.availableThemes
-        : CROWN_THEMES
-      ).map(normalizeCrownTheme).filter((theme, index, themes) => themes.indexOf(theme) === index),
-      availableSignatureIds: signatureIds,
-    },
     rules: {
       rulesetVersion: Math.max(0, Math.floor(Number(rulesSource.rulesetVersion || source.rulesetVersion || 2))),
       modes: (Array.isArray(rulesSource.modes) ? rulesSource.modes : CROWN_CIRCUIT_MODES)
@@ -2994,9 +2967,9 @@ function dispatchRankingDashboardUpdated() {
 }
 
 function applyRankingDashboard(value) {
-  // A preparation-screen refresh must not erase already loaded presentation.
+  // A preparation-screen refresh must not erase the already loaded spotlight.
   const source = value?.presentationIncluded === false && rankingDashboard
-    ? { ...value, customization: rankingDashboard.customization, spotlight: rankingDashboard.spotlight }
+    ? { ...value, spotlight: rankingDashboard.spotlight }
     : value;
   rankingDashboard = normalizeRankingDashboard(source);
   rankingDashboardStatus = "ready";
@@ -3008,10 +2981,6 @@ function applyRankingDashboard(value) {
 function applyCrownRunToRankingDashboard(value) {
   if (!value || typeof value !== "object") return;
   if (!rankingDashboard) {
-    const selectedTheme = normalizeCrownTheme(value.crownTheme);
-    const selectedSignatureId = CROWN_SIGNATURE_IDS.includes(String(value.crownSignatureId || ""))
-      ? String(value.crownSignatureId)
-      : "";
     applyRankingDashboard({
       enabled: true,
       entryId: value.entryId,
@@ -3020,12 +2989,6 @@ function applyCrownRunToRankingDashboard(value) {
         contextAvailable: false,
       },
       crownRun: value,
-      customization: {
-        crownTheme: selectedTheme,
-        crownSignatureId: selectedSignatureId,
-        availableThemes: [...new Set(["rose", selectedTheme])],
-        availableSignatureIds: selectedSignatureId ? [selectedSignatureId] : [],
-      },
       rules: {
         modes: CROWN_CIRCUIT_MODES,
         dailyKey: value.key,
@@ -3037,13 +3000,6 @@ function applyCrownRunToRankingDashboard(value) {
   applyRankingDashboard({
     ...rankingDashboard,
     run: value,
-    customization: {
-      ...rankingDashboard.customization,
-      availableSignatureIds: [
-        ...rankingDashboard.customization.availableSignatureIds,
-        ...normalizeCrownSignatureIds(value.signatureIds),
-      ],
-    },
   });
 }
 
@@ -3059,11 +3015,6 @@ function getRankingDashboard() {
         signatureIds: [...rankingDashboard.run.signatureIds],
       }
       : null,
-    customization: {
-      ...rankingDashboard.customization,
-      availableThemes: [...rankingDashboard.customization.availableThemes],
-      availableSignatureIds: [...rankingDashboard.customization.availableSignatureIds],
-    },
     rules: {
       ...rankingDashboard.rules,
       modes: [...rankingDashboard.rules.modes],
@@ -3683,36 +3634,6 @@ async function startCrownRun() {
   }
 }
 
-async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "" } = {}) {
-  if (rankingDashboardBusy) return getRankingDashboard();
-  const normalizedTheme = normalizeCrownTheme(crownTheme);
-  const normalizedSignatureId = CROWN_SIGNATURE_IDS.includes(String(crownSignatureId || ""))
-    ? String(crownSignatureId)
-    : "";
-  rankingDashboardBusy = true;
-  dispatchRankingDashboardUpdated();
-  try {
-    await ensureRankingCommentUser();
-    const response = await economyActionCallable({
-      action: "set_crown_customization",
-      crownTheme: normalizedTheme,
-      crownSignatureId: normalizedSignatureId,
-    });
-    const result = response.data || {};
-    if (result.dashboard) applyRankingDashboard(result.dashboard);
-    else await refreshRankingDashboard({ includePresentation: true });
-    await Promise.allSettled([
-      refreshLeaderboard(leaderboardPeriod, {
-        force: true,
-        key: leaderboardPeriod === "weekly" ? leaderboardPeriodKey : "",
-      }),
-    ]);
-    return getRankingDashboard();
-  } finally {
-    rankingDashboardBusy = false;
-    dispatchRankingDashboardUpdated();
-  }
-}
 
 async function refreshLeaderboard(period = leaderboardPeriod, { force = false, key = "" } = {}) {
   if (rankingDashboardVisibleSurface() !== "ranking") return;
@@ -13101,7 +13022,6 @@ window.HariaiOnline = {
   refreshRankingDashboard,
   refreshVisibleRankingDashboard,
   startCrownRun,
-  setCrownCustomization,
   getLeaderboardComments,
   getLeaderboardCommentIdentity,
   saveLeaderboardComment,

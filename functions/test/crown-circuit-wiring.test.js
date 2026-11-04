@@ -320,10 +320,8 @@ test("live Crown metadata and X consent stay synchronized without private histor
   );
   assert.match(participation, /syncCurrentCrownCircuitMetadata\(uid, finalizedProfile\)/);
   assert.match(participation, /syncRankingSpotlightConsent\(finalizedProfile\)/);
-  assert.match(
-    server,
-    /setCrownCustomization[\s\S]*syncRankingSpotlightConsent\(profile\)/,
-  );
+  const retiredCustomization = sourceBetween(server, "async function setCrownCustomization", "async function getAchievements");
+  assert.doesNotMatch(retiredCustomization, /syncRankingSpotlightConsent|mirrorCrownCircuitEntries/);
 });
 
 test("server Crown ordering ignores metadata timestamps", () => {

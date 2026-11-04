@@ -157,9 +157,7 @@ test("ranking actions preserve proof controls without overall percentile data", 
   assert.match(online, /action:\s*"start_crown_run"/);
   assert.match(online, /dateKey:\s*leaderboardPeriodKeyFor\("daily"/);
   assert.doesNotMatch(online, /expectedDateKey/);
-  assert.match(online, /action:\s*"set_crown_customization"/);
-  assert.match(online, /crownTheme:\s*normalizedTheme/);
-  assert.match(online, /crownSignatureId:\s*normalizedSignatureId/);
+  assert.doesNotMatch(online, /set_crown_customization|setCrownCustomization/);
   assert.doesNotMatch(online, /topPercent:/);
   assert.doesNotMatch(app, /overall\.topPercent/);
   assert.doesNotMatch(app, /上位\$\{percentile\}/);
@@ -234,16 +232,13 @@ test("monthly Crown opening guidance reports per-player progress and the August 
   assert.match(rankingScreen, /同じプレイヤーが成立ウィークリー/);
 });
 
-test("proof run, crown customization, SIGNATURE, and safe X promotion controls are present", () => {
+test("proof run, earned SIGNATURE and safe X promotion remain without customization controls", () => {
   const app = read("app.js");
 
   for (const marker of [
     'id="crownRunStartButton"',
     'id="crownRunSoloButton"',
     'id="crownRunStrategyButton"',
-    'id="crownThemeSelect"',
-    'id="crownSignatureSelect"',
-    'id="crownCustomizationSave"',
     "今日の三戦証明",
     "SIGNATURE",
     "24H X SPOTLIGHT",
@@ -252,6 +247,7 @@ test("proof run, crown customization, SIGNATURE, and safe X promotion controls a
   }
   assert.match(app, /rel="noopener noreferrer nofollow ugc"/);
   assert.match(app, /referrerpolicy="no-referrer"/);
+  assert.doesNotMatch(app, /CROWN CUSTOMIZATION|crownCustomizationSave|crownThemeSelect|crownSignatureSelect/);
 });
 
 test("normal and strategy setup screens expose one contextual proof-run matchmaking state", () => {
@@ -430,7 +426,6 @@ test("ranking V2 styles and browser cache keys are wired", () => {
     ".ranking-neighbor-list",
     ".crown-proof-panel",
     ".crown-proof-meter",
-    ".crown-customization",
     ".crown-spotlight",
     ".ranking-signature",
     ".ranking-overall-section",
@@ -439,7 +434,7 @@ test("ranking V2 styles and browser cache keys are wired", () => {
   ]) {
     assert.match(styles, new RegExp(selector.replace(".", "\\.")));
   }
-  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*\.crown-customization/);
+  assert.doesNotMatch(styles, /\.crown-customization/);
   assert.match(html, /styles\.css\?v=[^"]*crown-circuit-v2/);
   assert.match(html, /app\.js\?v=[^"]*crown-circuit-v2/);
   assert.match(html, /online\.js\?v=[^"]*crown-circuit-v2/);
