@@ -4361,6 +4361,192 @@
   }
 }
 
+/* ---------- スマホの対戦は全画面のDM ---------- */
+/*
+  対戦中はサイトの見出しと「〇〇との交流」の欄を出さず、DMを画面の高さいっぱいに置く（--vb-dm-top が 0 になり、
+  ページはスクロールしないので入力欄の下に空きが出ない）。ブロック・退出・安心設定・効果音は DMヘッダーの ••• へ。
+  DMヘッダーは「アイコン・名前・メモ・•••」と「ふたりの理性」の2行、段階の帯は1行。口調・呼び方・手札・看破はメモへ。
+  共通の velvet-battle.css が後から読み込まれても負けないよう、.sd-dm から書く。PC（901px以上）は今まで通り。
+*/
+@media (max-width: 900px) {
+  body:has(.sd-battle) .site-header,
+  body:has(.sd-battle) #app > .player-safety-contact {
+    display: none;
+  }
+
+  /* velvet-battle.css の body:has(.vb-dm) #app（上下12px）より強くする */
+  body:has(.sd-battle) main#app {
+    width: 100%;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .sd-battle .sd-dm {
+    max-width: none;
+    height: calc(100dvh - var(--vb-dm-top, 0px));
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .sd-dm .sd-head {
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .sd-dm .sd-head .vb-dm-who {
+    gap: 8px;
+  }
+
+  .sd-dm .sd-head .battle-avatar {
+    width: 34px;
+    height: 34px;
+    font-size: 0.8rem;
+  }
+
+  .sd-dm .sd-head .vb-dm-avatar-mark {
+    right: -4px;
+    bottom: -2px;
+    width: 18px;
+    height: 18px;
+  }
+
+  .sd-dm .sd-head .vb-dm-name {
+    gap: 2px;
+  }
+
+  .sd-dm .sd-head .vb-dm-name small > span:not(.vb-dm-presence) {
+    display: none;
+  }
+
+  .sd-dm .sd-head .vb-dm-name small:not(:has(.vb-dm-presence.warning)) {
+    display: none;
+  }
+
+  .sd-dm .sd-head .vb-dm-gauges {
+    gap: 12px;
+  }
+
+  /* 「〇〇 ━━━ 100/100」の1行 */
+  .sd-dm .sd-head .vb-dm-gauge {
+    grid-template-columns: minmax(0, auto) minmax(28px, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sd-dm .sd-head .vb-dm-gauge-label {
+    display: contents;
+  }
+
+  .sd-dm .sd-head .vb-dm-gauge-label > span:first-child {
+    grid-row: 1;
+    grid-column: 1;
+    max-width: 6.5em;
+  }
+
+  .sd-dm .sd-head .vb-dm-gauge .vb-hp {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .sd-dm .sd-head .vb-dm-gauge .vb-hp-value {
+    grid-row: 1;
+    grid-column: 3;
+  }
+
+  .sd-dm .sd-head .vb-dm-gauge .match-achievement-showcase.is-hud {
+    grid-column: 1 / -1;
+  }
+
+  .sd-dm .sd-head .sd-gauge-suffix,
+  .sd-dm .sd-head .sd-gauge-note {
+    display: none;
+  }
+
+  .sd-dm .sd-band {
+    gap: 8px;
+    padding: 6px 12px;
+  }
+
+  .sd-dm .sd-band-line {
+    flex-wrap: nowrap;
+    font-size: 0.8rem;
+    line-height: 1.35;
+  }
+
+  .sd-dm .sd-band-line > span:not(.chat-typing-dots),
+  .sd-dm .sd-band-line > strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sd-dm .sd-band-line small {
+    display: none;
+  }
+
+  .sd-dm .sd-band-line small.is-keep {
+    display: block;
+    flex: none;
+    flex-basis: auto;
+  }
+
+  .sd-dm .sd-band .sd-band-action {
+    min-height: 40px;
+    padding: 0 14px;
+  }
+
+  /* DMが画面いっぱいになった分、操作シートは半分弱にとどめ、相手の最後の1枚と言葉をスレッドに残す（中身はシートの中でスクロール） */
+  .sd-dm > .sd-sheet {
+    max-height: 45%;
+  }
+
+  /* ••• の中のブロック・退出（「〇〇との交流」の欄をそのまま入れる） */
+  .sd-dm .sd-menu-safety .player-safety-contact {
+    display: grid;
+    gap: 2px;
+    margin: 0 0 4px;
+    padding: 0 0 4px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: 0 1px 0 var(--vs-line-soft);
+  }
+
+  .sd-dm .sd-menu-safety .player-safety-contact > span {
+    padding: 6px 12px 2px;
+    color: var(--vs-mist);
+    font-size: 0.7rem;
+  }
+
+  .sd-dm .sd-menu-safety [data-player-safety-contact] {
+    color: var(--vs-danger);
+  }
+}
+
+@media (min-width: 901px) {
+  .sd-dm .sd-menu-safety,
+  .sd-dm .sd-menu-phone,
+  .sd-side .sd-people {
+    display: none;
+  }
+}
+
+/*
+  相手が貼った1枚は、吹き出しの列いっぱい（スマホで幅の8割ほど）まで広げ、スレッドの見えている高さに収める（通常型1on1と同じ考え方）。
+  画像は loading="lazy" なので、読み込む前に幅0にならないよう、箱の幅は画面の幅から決めておく
+  （100% だと吹き出しの列が言葉の長さで決まり、短い言葉の時に画像まで細くなる）。
+*/
+.sd-thread .ha-msg.is-theirs .hariai-media {
+  width: min(74vw, 340px);
+  max-width: 100%;
+}
+
+/* 高さはスレッドの8割弱まで。スマホでも縦長の1枚・言葉・狙いが同じ画面に入る */
+.sd-thread .ha-msg.is-theirs .hariai-media img {
+  max-height: min(78cqh, 520px);
+}
+
 /* 入力欄のマイク（ボイス）とカメラ（10秒の映像）。右上の数字は残りの本数 */
 .sd-mic,
 .sd-camera {

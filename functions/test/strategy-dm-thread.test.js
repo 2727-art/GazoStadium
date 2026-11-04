@@ -150,8 +150,11 @@ test("the new module, styles and design note ship with fresh cache keys and the 
   // 画像が手の記録より先に着いた時の受信の書き込みを直した版（2026-11-03）。
   assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-media-ack-v1[^"]*"/);
   // 第2段（ボイス・映像の本数・既読、2026-11-04）。
-  assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-voice-v1"/);
-  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-voice-v1"/);
+  assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-voice-v1[^"]*"/);
+  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-voice-v1[^"]*"/);
+  // スマホの対戦を全画面のDMにした版（2026-11-04）。
+  assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-fullscreen-v1"/);
+  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-fullscreen-v1"/);
   const firebase = JSON.parse(read("firebase.json"));
   assert.ok(firebase.hosting.ignore.includes("STRATEGY_DM_THREAD_DESIGN.md"));
   assert.match(read(".assetsignore"), /^STRATEGY_DM_THREAD_DESIGN\.md$/m);
@@ -160,6 +163,38 @@ test("the new module, styles and design note ship with fresh cache keys and the 
   // 右の列は中身の高さのまま積む（操作シートがメモに重ならない）。点数の吹き出しはメーターが読める幅。
   assert.match(css, /grid-auto-rows: max-content;/);
   assert.match(css, /\.hariai-thread \.ha-bubble\.hariai-score \{\n  display: grid;\n  min-width: 236px;/);
+});
+
+test("on phones the battle is a full-screen DM, and block, leave, safety and sound move into the ••• menu", () => {
+  const strategy = read("strategy.js");
+  const css = read("strategy.css");
+  // サイトの見出しと「〇〇との交流」の欄は、スマホの対戦中だけ出さない（PCは今まで通り）。
+  const phone = between(css, "/* ---------- スマホの対戦は全画面のDM ---------- */", "/* 高さはスレッドの8割弱まで");
+  assert.match(phone, /@media \(max-width: 900px\) \{\n  body:has\(\.sd-battle\) \.site-header,\n  body:has\(\.sd-battle\) #app > \.player-safety-contact \{\n    display: none;\n  \}/);
+  assert.match(phone, /body:has\(\.sd-battle\) main#app \{\n    width: 100%;\n    padding-top: 0;\n    padding-bottom: 0;\n  \}/);
+  assert.match(phone, /\.sd-battle \.sd-dm \{\n    max-width: none;\n    height: calc\(100dvh - var\(--vb-dm-top, 0px\)\);/);
+  // ヘッダーは2行（口調・呼び方・手札・看破はメモへ）、帯は1行（転送の進み具合だけ残す）、シートは半分弱。
+  assert.match(phone, /\.sd-dm \.sd-head \.vb-dm-name small > span:not\(\.vb-dm-presence\) \{\n    display: none;/);
+  assert.match(phone, /\.sd-dm \.sd-head \.sd-gauge-suffix,\n  \.sd-dm \.sd-head \.sd-gauge-note \{\n    display: none;/);
+  assert.match(phone, /\.sd-dm \.sd-band-line small\.is-keep \{\n    display: block;/);
+  assert.match(phone, /\.sd-dm > \.sd-sheet \{\n    max-height: 45%;/);
+  assert.match(phone, /@media \(min-width: 901px\) \{\n  \.sd-dm \.sd-menu-safety,\n  \.sd-dm \.sd-menu-phone,\n  \.sd-side \.sd-people \{\n    display: none;/);
+  // 相手の1枚は、読み込み前も幅0にならない箱で、スレッドの見えている高さに収める。
+  assert.match(css, /\.sd-thread \.ha-msg\.is-theirs \.hariai-media \{\n  width: min\(74vw, 340px\);\n  max-width: 100%;\n\}/);
+  assert.match(css, /\.sd-thread \.ha-msg\.is-theirs \.hariai-media img \{\n  max-height: min\(78cqh, 520px\);\n\}/);
+  // ••• には「〇〇との交流」の欄（ブロックして退出・退出する）と、安心設定・効果音を置く。
+  const menu = between(strategy, "function renderStrategyPhoneMenuItems()", "function toggleStrategySound(");
+  assert.match(menu, /<div class="sd-menu-safety">\$\{renderContactControls\("strategy"\)\}<\/div>/);
+  assert.match(menu, /data-player-safety-open>安心設定<\/button>/);
+  assert.match(menu, /role="switch" aria-checked="\$\{soundOn\}" aria-labelledby="strategySoundLabel" data-sd-sound>/);
+  assert.match(between(strategy, "function renderStrategyDmHead()", "function strategySheetKey("), /<div class="vb-menu-panel">\n          \$\{renderStrategyPhoneMenuItems\(\)\}/);
+  assert.match(between(strategy, "function toggleStrategySound(", "function renderStrategyPeopleCard()"), /audio\.setEnabled\(!audio\.isEnabled\(\)\);/);
+  assert.match(strategy, /on\("\[data-sd-sound\]", "click", \(event\) => toggleStrategySound\(event\.currentTarget\)\);/);
+  // 口調・一人称・呼び方とふたりの手札・看破は、メモの一番上の「ふたりのこと」。
+  assert.match(between(strategy, "function renderBattle()", "function strategyThreadChats()"), /\$\{renderStrategyPeopleCard\(\)\}\$\{renderHariaiReadingMemo\(\)\}/);
+  const people = between(strategy, "function renderStrategyPeopleCard()", "function strategySheetKey(");
+  assert.match(people, /あなたを「\$\{escapeHtml\(personaCallName\(opponent, me\)\)\}」と呼ぶ・\$\{strategyHandStatus\(opponent\)\}/);
+  assert.match(strategy, /const transfer = \(title\) => band\(`<span>\$\{escapeHtml\(title\)\}<\/span>`, \{ note: `<span id="hariaiTransferProgress">[^\n]*keep: true \}\);/);
 });
 
 test("voices take their place in the thread like videos and drop out once released", async () => {
