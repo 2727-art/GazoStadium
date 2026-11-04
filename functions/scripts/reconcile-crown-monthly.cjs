@@ -30,7 +30,7 @@ function loadMonthlyFinalizer({ firestore, realtime }) {
   return new Function(...Object.keys(context), [
     between("function cleanText(", "function safeBalance("),
     between("function periodKey(", "function eventId("),
-    between("function publicCrownCircuitEntry(", "async function mirrorServerRateFloorProfiles("),
+    between("function publicCrownCircuitEntry(", "async function mirrorCrownCircuitEntries("),
     between("async function mirrorCrownCircuitEntries(", "async function mirrorServerRankingEntries("),
     between("async function commitCrownCircuitWrites(", "async function finalizeClosedCrownCircuitPeriods("),
     "return { finalize: (key, now) => finalizeCrownCircuitPeriod('monthly', key, now), revision: CROWN_MONTHLY_ACHIEVEMENT_REVISION };",

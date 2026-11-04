@@ -6,7 +6,6 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   assertFails,
-  assertSucceeds,
   initializeTestEnvironment,
 } = require("@firebase/rules-unit-testing");
 const {
@@ -25,7 +24,7 @@ const projectId = process.env.RATE_FLOOR_DATABASE_TEST_PROJECT_ID || "demo-rate-
 const runsAgainstSafeEmulator = /^demo-[a-z0-9-]+$/.test(projectId)
   && /^(?:127\.0\.0\.1|localhost):\d+$/.test(emulatorHost);
 
-test("RATE FLOOR RTDB rules expose ordered rows but reject every client write", {
+test("retired overall and floor RTDB paths reject public and authenticated reads and writes", {
   skip: runsAgainstSafeEmulator
     ? false
     : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* RATE_FLOOR_DATABASE_TEST_PROJECT_ID",
@@ -68,39 +67,14 @@ test("RATE FLOOR RTDB rules expose ordered rows but reject every client write", 
     });
   });
 
-  const publicDatabase = environment.unauthenticatedContext().database();
-  const hiddenSnapshot = await assertSucceeds(get(ref(
-    publicDatabase,
-    `online/serverRateFloorLeaderboard/${hiddenId}`,
-  )));
-  assert.equal(hiddenSnapshot.exists(), true);
-  assert.equal(hiddenSnapshot.child("rateFloorHidden").val(), true);
-  assert.equal(hiddenSnapshot.child("name").exists(), false);
-  const allRowsSnapshot = await assertSucceeds(get(ref(
-    publicDatabase,
-    "online/serverRateFloorLeaderboard",
-  )));
-  assert.equal(allRowsSnapshot.size, 12);
-  const publicSnapshot = await assertSucceeds(get(query(
-    ref(publicDatabase, "online/serverRateFloorLeaderboard"),
-    orderByChild("rating"),
-    limitToFirst(10),
-  )));
-  const orderedIds = [];
-  publicSnapshot.forEach((child) => {
-    orderedIds.push(child.key);
-  });
-  assert.deepEqual(orderedIds, activeIds.slice(0, 10));
-  assert.equal(publicSnapshot.child(activeId).child("name").val(), "PLAYER");
-  assert.equal(publicSnapshot.child(hiddenId).child("name").exists(), false);
-
-  await assertFails(set(
-    ref(publicDatabase, `online/serverRateFloorLeaderboard/${activeId}/rating`),
-    100,
-  ));
-  const signedInDatabase = environment.authenticatedContext("rate-floor-user").database();
-  await assertFails(remove(ref(
-    signedInDatabase,
-    `online/serverRateFloorLeaderboard/${activeId}`,
-  )));
+  for (const database of [environment.unauthenticatedContext().database(), environment.authenticatedContext("rate-floor-user").database()]) {
+    for (const retired of ["serverRateFloorLeaderboard", "serverOverallLeaderboard", "serverOverallLeaderboardEntriesByUser"]) {
+      const location = `online/${retired}`;
+      await assertFails(get(ref(database, location)));
+      await assertFails(get(ref(database, `${location}/${activeId}`)));
+      await assertFails(get(query(ref(database, location), orderByChild("rating"), limitToFirst(10))));
+      await assertFails(set(ref(database, `${location}/${activeId}/rating`), 100));
+      await assertFails(remove(ref(database, `${location}/${activeId}`)));
+    }
+  }
 });

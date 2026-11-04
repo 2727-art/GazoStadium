@@ -191,28 +191,16 @@ test("live showcase sync keeps secret achievements manual and removes a prior ma
   });
   const automatic = await harness.sync("player");
   assert.equal(automatic.achievementShowcase, "battle_total_1");
-  assert.equal(automatic.rateFloorRevision, 5);
+  assert.equal(automatic.rateFloorRevision, 4);
 
   harness.state.achievements.customShowcase = [secret];
   const selected = await harness.sync("player");
   assert.equal(selected.achievementShowcase, secret);
-  assert.equal(selected.rateFloorRevision, 6);
-  const selectedRow = serverRateFloorMirrorDecision(null, {
-    publicEntry: publicProfile(selected), revision: selected.rateFloorRevision,
-  }).value;
-
+  assert.equal(selected.rateFloorRevision, 4);
   harness.state.achievements.customShowcase = [];
   const removed = await harness.sync("player");
-  const publicRemoved = serverRateFloorMirrorDecision(selectedRow, {
-    publicEntry: publicProfile(removed), revision: removed.rateFloorRevision,
-  }).value;
-  assert.equal(publicRemoved.achievementShowcase, "battle_total_1");
-  assert.equal(removed.rateFloorRevision, 7);
-  const delayed = serverRateFloorMirrorDecision(publicRemoved, {
-    publicEntry: publicProfile(selected), revision: selected.rateFloorRevision,
-  });
-  assert.equal(delayed.committed, false);
-  assert.equal(delayed.value.achievementShowcase, "battle_total_1");
+  assert.equal(removed.achievementShowcase, "battle_total_1");
+  assert.equal(removed.rateFloorRevision, 4);
 });
 
 test("showcase transaction retries after a concurrent selection and rated match", async () => {
@@ -229,11 +217,11 @@ test("showcase transaction retries after a concurrent selection and rated match"
   assert.equal(harness.state.commits.length, 1);
   assert.equal(synced.rating, 735);
   assert.equal(synced.serverMatches, 21);
-  assert.equal(synced.rateFloorRevision, 6);
+  assert.equal(synced.rateFloorRevision, 5);
   assert.equal(synced.achievementShowcase, "battle_total_10");
   assert.equal(harness.state.ranking.achievementShowcase, "battle_total_10");
   assert.deepEqual(Object.keys(harness.state.commits[0].patch).sort(), [
-    "achievementShowcase", "rateFloorRevision", "updatedAt",
+    "achievementShowcase", "updatedAt",
   ]);
 });
 
@@ -244,7 +232,7 @@ test("showcase changes preserve concurrent opt-out and clear unavailable badges"
   const synced = await harness.sync("player");
   assert.equal(synced.enabled, false);
   assert.equal(synced.rateFloorEnabled, false);
-  assert.equal(synced.rateFloorRevision, 6);
+  assert.equal(synced.rateFloorRevision, 5);
   assert.equal(Object.hasOwn(synced, "achievementShowcase"), false);
   assert.equal(Object.hasOwn(harness.state.ranking, "achievementShowcase"), false);
   assert.equal(publicProfile(synced), null);
@@ -262,7 +250,7 @@ test("unchanged showcases avoid profile writes and missing profiles remain absen
   assert.equal(missing.state.commits.length, 0);
 });
 
-test("customization validates earned options and serializes signature removal with floor revisions", async () => {
+test("customization preserves earned options and removes signatures without retired mirror writes", async () => {
   const harness = transactionHarness(eligibleProfile(), {});
   let mirrored = null;
   class HttpsError extends Error {
@@ -291,68 +279,26 @@ test("customization validates earned options and serializes signature removal wi
   await assert.rejects(customize("player", { crownTheme: "gold", crownSignatureId: "upset" }),
     { code: "failed-precondition" });
   assert.equal(harness.state.commits.length, 0);
-  const old = publicProfile(harness.state.ranking);
   await customize("player", { crownTheme: "rose", crownSignatureId: "" });
-  assert.equal(mirrored.rateFloorRevision, 5);
-  assert.equal(Object.hasOwn(mirrored, "crownSignatureId"), false);
+  assert.equal(mirrored, null);
+  assert.equal(harness.state.ranking.crownTheme, "rose");
   assert.equal(Object.hasOwn(harness.state.ranking, "crownSignatureId"), false);
-  const removed = serverRateFloorMirrorDecision(null, {
-    publicEntry: publicProfile(mirrored), revision: mirrored.rateFloorRevision,
-  }).value;
-  assert.equal(removed.crownTheme, "rose");
-  assert.equal(serverRateFloorMirrorDecision(removed, { publicEntry: old, revision: 4 }).committed, false);
+  assert.equal(harness.state.ranking.rateFloorRevision, 4);
 });
 
-test("achievement updates use the fresh profile through the floor CAS without rewriting overall RATE", () => {
+test("achievement updates preserve period showcases without retired mirrors", () => {
   const sync = sourceBetween("async function syncAchievementPublicSurfaces", "async function syncCurrentServerRankingMetadata");
   assert.match(sync, /syncCurrentServerRankingShowcase\(uid\)/);
-  assert.match(sync, /mirrorServerRateFloorProfiles\(\{ \[uid\]: serverProfile \}\)/);
+  assert.doesNotMatch(sync, /mirrorServerRateFloorProfiles/);
   assert.doesNotMatch(sync, /mirrorServerOverallProfiles|batch\.set\(serverRankingProfileRef/);
 });
 
-test("participation re-read cannot restore a concurrently removed signature or showcase", async () => {
-  let current = eligibleProfile();
-  const mirrored = [];
-  const profileRef = {
-    get: async () => ({ data: () => structuredClone(current) }),
-  };
-  const participate = backendFunction(
-    "async function setServerRateFloorParticipation",
-    "async function getServerRankingAwards",
-    "setServerRateFloorParticipation",
-    {
-      isPlainCallableObject: (value) => value && typeof value === "object",
-      SERVER_RATE_FLOOR_MINIMUM_MATCHES,
-      createServerRateFloorEntryId,
-      serverRankingProfileRef: () => profileRef,
-      publicServerRateFloorProfile: publicProfile,
-      firestore: {
-        runTransaction: async (callback) => callback({
-          get: async () => ({ exists: true, data: () => structuredClone(current) }),
-          set: (_ref, patch) => { current = { ...current, ...patch }; },
-        }),
-      },
-      mirrorServerRateFloorProfiles: async (profiles) => {
-        mirrored.push(profiles.player);
-        if (mirrored.length === 1) {
-          current.rateFloorRevision += 1;
-          delete current.crownSignatureId;
-          delete current.achievementShowcase;
-        }
-      },
-    },
-  );
-  const result = await participate("player", { action: "set_rate_floor_participation", enabled: true });
-  assert.equal(result.rateFloorEligible, true);
-  assert.equal(mirrored.length, 2);
-  assert.equal(mirrored[0].crownSignatureId, "daily_champion");
-  assert.equal(mirrored[1].rateFloorRevision, 6);
-  assert.equal(Object.hasOwn(mirrored[1], "crownSignatureId"), false);
-  assert.equal(Object.hasOwn(mirrored[1], "achievementShowcase"), false);
-  const overallParticipation = sourceBetween(
-    "async function setServerRankingParticipation", "async function setServerRateFloorParticipation",
-  );
-  assert.doesNotMatch(overallParticipation, /normalizeServerRankingProfile\(\(await profileRef\.get\(\)\)\.data\(\), savedProfile\)/);
+test("retired floor participation rejects old clients before reading or writing", async () => {
+  class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
+  const participate = backendFunction("async function setServerRateFloorParticipation", "async function getServerRankingAwards", "setServerRateFloorParticipation", { HttpsError });
+  for (const data of [{ enabled: true }, { enabled: false }, {}, null]) {
+    await assert.rejects(participate("player", data), { code: "failed-precondition" });
+  }
 });
 
 test("RATE FLOOR uses an uncorrelated private random public-row id", () => {
@@ -367,58 +313,12 @@ test("RATE FLOOR uses an uncorrelated private random public-row id", () => {
   assert.match(functionsSource, /rateFloorEntryId: isServerRateFloorEntryId/);
 });
 
-test("overall profile mirroring delegates RATE FLOOR publication to its monotonic CAS", () => {
-  const floorMirror = sourceBetween(
-    "async function mirrorServerRateFloorProfiles",
-    "async function mirrorServerOverallProfiles",
-  );
-  assert.match(
-    floorMirror,
-    /online\/serverRateFloorLeaderboard\/\$\{profile\.rateFloorEntryId\}/,
-  );
-  assert.doesNotMatch(floorMirror, /profile\.entryId/);
-  assert.match(floorMirror, /publicRef\.transaction\(\(current\) =>/);
-  assert.match(floorMirror, /serverRateFloorMirrorDecision\(current/);
-
-  const overallMirror = sourceBetween(
-    "async function mirrorServerOverallProfiles",
-    "async function mirrorCrownCircuitEntries",
-  );
-  assert.match(overallMirror, /await mirrorServerRateFloorProfiles\(profilesByUid\)/);
-
-  const verifiedMatch = sourceBetween(
-    "async function recordVerifiedMatch",
-    "function validatePostMatchTipRequest",
-  );
-  assert.match(
-    verifiedMatch,
-    /Object\.keys\(serverRankingProfileResults\)\.length[\s\S]*mirrorServerOverallProfiles\(serverRankingProfileResults\)/,
-  );
-  assert.match(
-    verifiedMatch,
-    /rateFloorRevision: nextServerRateFloorRevision\(serverProfile\.rateFloorRevision\)/,
-  );
-
-  const removal = sourceBetween(
-    "async function removeServerRankingPublicEntries",
-    "async function setServerRankingParticipation",
-  );
-  assert.doesNotMatch(removal, /serverRateFloorLeaderboard/);
-
-  const participation = sourceBetween(
-    "async function setServerRankingParticipation",
-    "async function setServerRateFloorParticipation",
-  );
-  assert.match(participation, /enabled: false,[\s\S]*rateFloorEnabled: false/);
-  assert.match(participation, /rateFloorRevision: FieldValue\.increment\(1\)/);
-  assert.match(
-    participation,
-    /removeServerRankingPublicEntries\(uid, now\)/,
-  );
-  assert.match(
-    participation,
-    /mirrorServerRateFloorProfiles\(\{ \[uid\]: disabledProfile \}\)/,
-  );
+test("rated results retain internal RATE but never update retired public mirrors", () => {
+  const recorded = sourceBetween("async function recordVerifiedMatch", "function validatePostMatchTipRequest");
+  assert.match(recorded, /calculateServerRankingRating/);
+  assert.match(recorded, /transaction\.set\(serverProfileRefs\[index\], updatedServerProfile\)/);
+  assert.match(recorded, /mirrorCrownCircuitEntries/);
+  assert.doesNotMatch(functionsSource, /mirrorServerOverallProfiles|mirrorServerRateFloorProfiles|rateFloorRevision: next/);
 });
 
 test("ten-match activation wins and a delayed nine-match tombstone cannot hide it", () => {
@@ -487,42 +387,11 @@ test("ranking opt-out tombstone rejects a delayed active publication", () => {
   assert.deepEqual(stalePublish.value, optedOut.value);
 });
 
-test("RATE FLOOR participation action validates input and returns server eligibility", () => {
-  const action = sourceBetween(
-    "async function setServerRateFloorParticipation",
-    "async function getServerRankingAwards",
-  );
-  assert.match(action, /key !== "action" && key !== "enabled"/);
-  assert.match(action, /typeof data\.enabled !== "boolean"/);
-  assert.match(action, /enabled && \(!profile\.enabled \|\| !profile\.entryId\)/);
-  assert.match(action, /rateFloorEnabled: enabled/);
-  assert.match(action, /const initialRateFloorEntryId = createServerRateFloorEntryId\(\)/);
-  assert.match(
-    action,
-    /rateFloorEntryId: profile\.rateFloorEntryId \|\| initialRateFloorEntryId/,
-  );
-  assert.match(action, /rateFloorRevision: nextServerRateFloorRevision\(profile\.rateFloorRevision\)/);
-  assert.match(action, /await mirrorServerRateFloorProfiles\(\{ \[uid\]: savedProfile \}\)/);
-  assert.doesNotMatch(action, /mirrorServerOverallProfiles/);
-  assert.match(action, /rateFloorEligible: Boolean\(publicServerRateFloorProfile\(profile\)\)/);
-  assert.match(action, /minimumMatches: SERVER_RATE_FLOOR_MINIMUM_MATCHES/);
 
-  assert.match(functionsSource, /"set_rate_floor_participation"/);
-  assert.match(
-    functionsSource,
-    /action === "set_rate_floor_participation"\) return await setServerRateFloorParticipation/,
-  );
-  assert.match(
-    functionsSource,
-    /profile:\s*\{[\s\S]{0,240}rateFloorEnabled: profile\.rateFloorEnabled,[\s\S]{0,120}rateFloorEligible:/,
-  );
-});
-
-test("RATE FLOOR RTDB mirror is public read, Admin-only write, and RATE-indexed", () => {
-  const rules = databaseRules.rules.online.serverRateFloorLeaderboard;
-  assert.equal(rules[".read"], true);
-  assert.equal(rules[".write"], false);
-  assert.deepEqual(rules[".indexOn"], ["rating"]);
+test("retired overall and floor mirrors deny reads and writes including legacy indexes", () => {
+  for (const name of ["serverOverallLeaderboard", "serverRateFloorLeaderboard", "serverOverallLeaderboardEntriesByUser"]) {
+    assert.deepEqual(databaseRules.rules.online[name], { ".read": false, ".write": false });
+  }
 });
 
 test("RATE FLOOR adds no history, reward, achievement, Crown, or spotlight surface", () => {

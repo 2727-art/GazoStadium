@@ -330,20 +330,16 @@
         }
       },
       "serverOverallLeaderboard": {
-        ".read": true,
-        ".write": false,
-        ".indexOn": ["rating"]
+        ".read": false,
+        ".write": false
       },
       "serverRateFloorLeaderboard": {
-        ".read": true,
-        ".write": false,
-        ".indexOn": ["rating"]
+        ".read": false,
+        ".write": false
       },
       "serverOverallLeaderboardEntriesByUser": {
-        "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
-          ".write": false
-        }
+        ".read": false,
+        ".write": false
       },
       "crownCircuitPeriods": {
         "$period": {

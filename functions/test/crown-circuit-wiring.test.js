@@ -77,14 +77,9 @@ test("crown circuit Firestore state is Admin-only", () => {
 test("public crown mirrors are read-only while UID indexes are owner-only", () => {
   const rules = JSON.parse(read("database.rules.json")).rules.online;
 
-  assert.equal(rules.serverOverallLeaderboard[".read"], true);
-  assert.equal(rules.serverOverallLeaderboard[".write"], false);
-  assert.deepEqual(rules.serverOverallLeaderboard[".indexOn"], ["rating"]);
-  assert.match(
-    rules.serverOverallLeaderboardEntriesByUser.$uid[".read"],
-    /auth != null && auth\.uid === \$uid/,
-  );
-  assert.equal(rules.serverOverallLeaderboardEntriesByUser.$uid[".write"], false);
+  for (const retired of ["serverOverallLeaderboard", "serverRateFloorLeaderboard", "serverOverallLeaderboardEntriesByUser"]) {
+    assert.deepEqual(rules[retired], { ".read": false, ".write": false });
+  }
 
   const crownPeriod = rules.crownCircuitPeriods.$period.$periodKey;
   assert.equal(crownPeriod[".write"], false);
@@ -126,7 +121,8 @@ test("verified match recording gates legacy ranking and proof-run writes by acti
   assert.match(recording, /addCrownRunResult/);
   assert.match(recording, /transaction\.set\(crownRunRefs\[index\], crownResult\.run\)/);
   assert.match(recording, /transaction\.set\(crownPeriodEntryRefs\[index\], crownResult\.run\)/);
-  assert.match(recording, /mirrorServerOverallProfiles/);
+  assert.doesNotMatch(recording, /mirrorServerOverallProfiles|mirrorServerRateFloorProfiles/);
+  assert.match(recording, /transaction\.set\(serverProfileRefs\[index\], updatedServerProfile\)/);
   assert.match(recording, /mirrorCrownCircuitEntries/);
 });
 
@@ -353,7 +349,7 @@ test("public crown entries never expose opponent identifiers or private run coun
   const publicProjection = sourceBetween(
     server,
     "function publicCrownCircuitEntry",
-    "async function mirrorServerOverallProfiles",
+    "async function mirrorCrownCircuitEntries",
   );
   assert.doesNotMatch(publicProjection, /opponentCounts/);
   assert.doesNotMatch(publicProjection, /\buid\b/);
