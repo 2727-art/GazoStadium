@@ -80,6 +80,9 @@ import {
   releaseStrategyVoiceResources,
   sendStrategyVoice,
 } from "./strategy-voice-transfer.mjs?v=strategy-dm-voice-v1";
+import { nextStrategyGazeSlot, recentStrategyGazeChatIds, strategyGazeScoring } from "./strategy-dm-gaze.mjs?v=strategy-dm-gaze-v1";
+// 見つめるモードの拡大の計算と、重ねる吹き出しの濃さは通常型1on1と同じものを使う。
+import { clampGazeZoom, gazeLineOpacity, toggleGazeZoom, zoomGazeAt } from "./normal-dm-gaze.mjs?v=normal-dm-gaze-v1";
 import {
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitlePresentation,
@@ -279,6 +282,16 @@ const STRATEGY_RECEIPTS_KEY = "hariai-stadium-strategy-receipts-v1";
 let strategyReceiptsOn = readStrategyReceiptsSetting();
 // ボイスの再生は1本ずつ。再生中の吹き出しの位置を帯に映す。
 let strategyVoicePlayer = null;
+// 見つめるモード：見ている相手の手（スロット番号）、相手の1枚を開いた時に見つめるモードで開くか（端末に保存、既定はオン）、
+// 文字と操作を隠しているか、拡大の状態、場面の移り変わりを見るための直前の段階。
+const STRATEGY_GAZE_AUTO_KEY = "hariai-stadium-strategy-gaze-auto-v1";
+let strategyGazeAuto = readStrategyGazeAutoSetting();
+let strategyGazeSlot = null;
+let strategyGazeChromeHidden = false;
+let strategyGazeZoom = { scale: 1, x: 0, y: 0 };
+let strategyGazeTapTimer = 0;
+let strategyGazeLayoutObserver = null;
+let strategyGazeLastPending = null;
 
 const matchAchievementShowcaseCallable = httpsCallable(functions, "matchAchievementShowcase");
 
@@ -1069,6 +1082,7 @@ const STRATEGY_PREVIEW_STEPS = [
   ["right", "権利を使う（91点）"],
   ["act", "次の1手（連投）"],
   ["score", "採点する"],
+  ["gaze", "見つめる・採点"],
   ["answer", "質問に答える"],
   ["wait", "相手の番"],
   ["finish", "看破成功・仕留め"],
@@ -1289,7 +1303,8 @@ async function showStrategyPreviewStep(step) {
     if (strategyPreview.video) strategyPreview.video.previewAfter = "answer:6";
   }
   const [host, guest] = state.players;
-  const moves = strategyPreviewMoves(step === "video" ? "act" : step);
+  // 「見つめる・採点」は「採点する」と同じ場面で、届いた1枚を開いて見つめるモードにした所を見せる。
+  const moves = strategyPreviewMoves(step === "video" ? "act" : step === "gaze" ? "score" : step);
   const cards = [...state.main, ...state.reserve];
   cards.forEach((card) => { card.used = false; });
   state.drafts = emptyHariaiDrafts();
@@ -1331,6 +1346,9 @@ async function showStrategyPreviewStep(step) {
   strategyThreadFollow = true;
   // 自分の番の見本は、操作のシートを開いた状態で見せる（映像の見本は帯だけ）。
   strategySheetFor = ["right", "act", "answer", "finish"].includes(step) ? strategySheetKey(state.replay.pending) : "";
+  strategyGazeLastPending = state.replay.pending ? { slot: state.replay.pending.slot, stage: state.replay.pending.stage, actor: state.replay.pending.actor } : null;
+  setStrategyGazeSlot(step === "gaze" ? state.replay.pending?.slot ?? null : null);
+  if (step === "gaze") state.drafts.score = 85;
   state.screen = "battle";
   render();
 }
@@ -1522,6 +1540,9 @@ function render() {
   if (screenChanged && lastRenderedScreen === "battle") {
     stopStrategyVoiceRecording({ discard: true });
     stopStrategyVoicePlayback();
+    setStrategyGazeSlot(null);
+    strategyGazeLayoutObserver?.disconnect();
+    strategyGazeLayoutObserver = null;
   }
   const threadNodes = screenChanged ? new Map() : collectStrategyThreadNodes();
   const keptScroll = screenChanged ? new Map() : captureStrategyKeptScroll();
@@ -2035,20 +2056,23 @@ function renderBattle() {
   const replay = state.replay;
   if (!replay) return renderWaiting("HARIAI", "貼り合いを準備しています", "先攻と手札を確認しています。");
   syncStrategyThreadLog();
+  syncStrategyGaze();
   const typing = activeStrategyRemoteTyping();
   // 操作シートは、スマホではスレッドの下（入力欄の上）、PCでは右の列の上に出す。PCでスレッドの下に出すと、画面の低いノートPCでスレッドがほぼ見えなくなる。
+  // 見つめるモードの間は、DM の列を見つめるモードにする。見ながら採点している時は、同じ入力が2つにならないようシートを出さない。
+  const gazing = strategyGazeSlot !== null;
   const sheetInSide = strategyWideLayout();
-  const sheetInThread = strategySheetIsOpen() && !sheetInSide;
-  const sheet = renderStrategySheet();
+  const sheetInThread = !gazing && strategySheetIsOpen() && !sheetInSide;
+  const sheet = gazing && strategyGazeScoring(strategyGazeSlot, replay.pending, state.uid) ? "" : renderStrategySheet();
   return `<section class="screen strategy-screen hariai-battle sd-battle" data-sd-battle>
-    <div class="vb-dm sd-dm${sheetInThread ? " has-sheet" : ""}">${renderStrategyDmHead()}
+    ${gazing ? renderStrategyGaze(typing) : `<div class="vb-dm sd-dm${sheetInThread ? " has-sheet" : ""}">${renderStrategyDmHead()}
       <div class="vb-dm-thread sd-thread" data-sd-thread>
         <ol class="vb-dm-items hariai-thread sd-items" id="strategyThreadItems" role="log" aria-live="polite" aria-label="${escapeHtml(getOpponent()?.name || "相手")}とのやりとり">${renderStrategyThreadItems()}</ol>
         <p class="chat-typing vb-dm-typing" id="strategyChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderStrategyTypingContent(typing) : ""}</p>
         <button type="button" class="vb-dm-jump" data-sd-jump hidden>新しいメッセージ ↓</button>
       </div>
       ${sheetInThread ? "" : renderStrategyBand()}${sheetInSide ? "" : sheet}${renderStrategyComposer()}
-    </div>
+    </div>`}
     <aside class="sd-side${strategySideOpen ? " is-open" : ""}" id="strategySide" data-sd-side data-keep-scroll="side" aria-label="あなたの番の操作・読みメモ・あなたの秘密">
       ${sheetInSide ? sheet : ""}
       <div class="sd-side-head"><strong>メモ</strong><button type="button" class="button button-ghost button-small" data-sd-side-toggle>閉じる</button></div>
@@ -2194,6 +2218,14 @@ function reuseStrategyThreadNodes(nodes, root = app) {
 
 // チャット・映像が届いた時は、スレッドの中身だけを差し替える。
 function refreshStrategyThread() {
+  // 見つめるモードの間は、重ねている直近のチャットだけを差し替える（画像は作り直さない）。
+  const gazeChat = document.querySelector("[data-sd-gaze-chat]");
+  if (gazeChat && state.screen === "battle") {
+    syncStrategyThreadLog();
+    gazeChat.innerHTML = renderStrategyGazeChatLines();
+    reportStrategySeenChats();
+    return true;
+  }
   const list = document.querySelector("#strategyThreadItems");
   if (!list || state.screen !== "battle") return false;
   syncStrategyThreadLog();
@@ -2252,10 +2284,12 @@ function bindStrategyThreadEvents() {
     jump.hidden = true;
     reportStrategySeenChats();
   });
-  // ボイスの再生ボタン（吹き出しは描き直しで入れ替わるので、スレッドで受ける）。
+  // ボイスの再生ボタンと、相手の画像（押すと見つめるモード）。吹き出しは描き直しで入れ替わるので、スレッドで受ける。
   thread.addEventListener("click", (event) => {
     const button = event.target.closest("[data-sd-voice-play]");
     if (button) toggleStrategyVoice(button.dataset.sdVoicePlay);
+    const gaze = event.target.closest("[data-sd-gaze-open]");
+    if (gaze) openStrategyGaze(Number(gaze.dataset.sdGazeOpen));
   });
   // 相手の映像を再生し始めたら「再生済み」を送る（play は泡立たないので捕捉で受ける）。
   thread.addEventListener("play", (event) => {
@@ -2355,6 +2389,7 @@ function renderStrategyDmHead() {
         <div class="vb-menu-panel">
           ${renderStrategyPhoneMenuItems()}
           <button class="avatar-visibility-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
+          <div class="vb-menu-switch"><span id="strategyGazeAutoLabel">相手の1枚を開いたら、見つめるモードで開く<small>オフでも、画像を押せば見つめられます</small></span><button type="button" role="switch" aria-checked="${strategyGazeAuto}" aria-labelledby="strategyGazeAutoLabel" data-sd-gaze-auto><i aria-hidden="true"></i></button></div>
           <div class="vb-menu-switch"><span id="strategyReceiptsLabel">既読・再生済みを付ける<small>オフにすると相手のものも見えません</small></span><button type="button" role="switch" aria-checked="${strategyReceiptsOn}" aria-labelledby="strategyReceiptsLabel" data-sd-receipts><i aria-hidden="true"></i></button></div>
           <p class="vb-menu-room">ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())} · ${state.channelReady ? "P2P接続中" : "P2P接続待ち"} · ${state.videoChannelReady ? "映像P2P接続中" : "映像P2P接続なし"}</p>
         </div></details>
@@ -2466,6 +2501,8 @@ function renderStrategyScoreTarget(pending) {
 
 function setStrategySheetOpen(open) {
   strategySheetFor = open && strategySheetAvailable() ? strategySheetKey() : "";
+  // 操作のシートを開く時は、見つめるモードを閉じてスレッドへ戻る。
+  if (strategySheetFor) setStrategyGazeSlot(null);
   render();
   // シートへ移るのは閉じるボタンまで（入力欄に合わせてスマホのキーボードを勝手に開かない）。
   if (strategySheetFor) document.querySelector("#strategySheet .sd-sheet-close")?.focus({ preventScroll: true });
@@ -2475,6 +2512,355 @@ function setStrategySideOpen(open) {
   strategySideOpen = Boolean(open);
   document.querySelector("[data-sd-side]")?.classList.toggle("is-open", strategySideOpen);
   document.querySelectorAll(".sd-memo-button[data-sd-side-toggle]").forEach((button) => button.setAttribute("aria-expanded", String(strategySideOpen)));
+}
+
+/* ---------- 見つめるモード ---------- */
+/*
+  相手の1枚を画面いっぱいに出し、言葉と狙い・直近のチャット・採点・入力欄を半透明で重ねる（見た目は通常型1on1の vb-gaze-*）。
+  画像をタップすると文字と操作が消えて画像だけになり、その間だけピンチとダブルタップで拡大できる。
+  開くのは、相手の1枚を開いた時（設定がオンなら）とスレッドの画像を押した時。閉じる判断は strategy-dm-gaze.mjs、拡大の計算は normal-dm-gaze.mjs。
+*/
+const STRATEGY_GAZE_ICON_CLOSE = '<svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
+const STRATEGY_GAZE_ICON_IMAGE_ONLY = '<svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>';
+
+function readStrategyGazeAutoSetting() {
+  try {
+    return localStorage.getItem(STRATEGY_GAZE_AUTO_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function setStrategyGazeAuto(on) {
+  strategyGazeAuto = Boolean(on);
+  try {
+    localStorage.setItem(STRATEGY_GAZE_AUTO_KEY, strategyGazeAuto ? "1" : "0");
+  } catch {
+    // 保存できなくても、この画面の間は切り替えを守る。
+  }
+  document.querySelectorAll("[data-sd-gaze-auto]").forEach((button) => button.setAttribute("aria-checked", String(strategyGazeAuto)));
+  showToast(strategyGazeAuto
+    ? "相手の1枚を開いたら、見つめるモードで開きます。この端末に保存します。"
+    : "相手の1枚は、スレッドの中で開きます。画像を押すと見つめるモードで開けます。");
+}
+
+// 見つめられるのは、相手が貼って、もう開いた1枚だけ。
+function strategyGazeImage(slotNumber) {
+  const key = imageKey("move", slotNumber);
+  const item = state.remoteImages.get(key);
+  return item?.url && state.openedMediaKeys.has(key) ? item : null;
+}
+
+// 描くたびに、場面が進んで閉じる時かを確かめる（開くのは開いた時と押した時だけ）。
+function syncStrategyGaze() {
+  const pending = state.screen === "battle" ? state.replay?.pending || null : null;
+  const next = nextStrategyGazeSlot({
+    gazeSlot: strategyGazeSlot,
+    previousPending: strategyGazeLastPending,
+    pending,
+    uid: state.uid,
+    outcome: state.replay?.outcome || null,
+    hasImage: (slot) => Boolean(strategyGazeImage(slot)),
+  });
+  strategyGazeLastPending = pending ? { slot: pending.slot, stage: pending.stage, actor: pending.actor } : null;
+  setStrategyGazeSlot(state.screen === "battle" ? next : null);
+}
+
+function setStrategyGazeSlot(slot) {
+  if (strategyGazeSlot === slot) return;
+  strategyGazeSlot = slot;
+  window.clearTimeout(strategyGazeTapTimer);
+  strategyGazeChromeHidden = false;
+  strategyGazeZoom = { scale: 1, x: 0, y: 0 };
+}
+
+function openStrategyGaze(slot) {
+  if (state.screen !== "battle" || !Number.isInteger(slot) || !strategyGazeImage(slot)) return;
+  setStrategyGazeSlot(slot);
+  render();
+  if (document.activeElement?.id !== "strategyChatInput") document.querySelector("[data-sd-gaze-close]")?.focus({ preventScroll: true });
+}
+
+function closeStrategyGaze() {
+  const slot = strategyGazeSlot;
+  if (slot === null) return;
+  setStrategyGazeSlot(null);
+  render();
+  if (document.activeElement?.id !== "strategyChatInput") document.querySelector(`[data-sd-gaze-open="${slot}"]`)?.focus({ preventScroll: true });
+}
+
+function renderStrategyGaze(typing) {
+  const slotNumber = strategyGazeSlot;
+  const slot = state.replay?.slots?.find((item) => item.slot === slotNumber);
+  const item = strategyGazeImage(slotNumber);
+  const opponent = getOpponent();
+  const me = getLocalPlayer();
+  if (!slot || !item || !opponent || !me) return "";
+  const attacker = playerByUid(slot.by) || opponent;
+  const name = attacker.name || "相手";
+  const personaId = normalizeChatPersonaId(attacker.persona?.type);
+  const pending = state.replay.pending;
+  const fx = window.HariaiBattleFx;
+  fx?.prepareFill?.(item.url);
+  const fill = fx?.fillSource?.(item.url) || "";
+  const hidden = strategyGazeChromeHidden;
+  const where = pending && pending.slot !== slotNumber ? ` · いまは${pending.slot}手目` : "";
+  const caption = slot.captionHeart ? ensureHariaiHeart(slot.caption) : slot.caption;
+  const owner = slot.receiver === state.uid ? "あなたの" : "相手の";
+  const gauge = (player) => {
+    const local = player.uid === state.uid;
+    const runtime = state.replay.players?.[player.uid];
+    const reason = runtime ? runtime.reason : HARIAI_REASON_MAX;
+    const label = local ? "あなたの理性" : `${player.name}の理性`;
+    return `<div class="vb-gaze-gauge ${local ? "is-local" : "is-remote"}">
+      <span><span>${escapeHtml(label)}</span><b>${reason}/${HARIAI_REASON_MAX}</b></span>
+      <i role="img" aria-label="${escapeHtml(label)} ${reason}/${HARIAI_REASON_MAX}" style="--hp:${Math.max(0, Math.min(1, reason / HARIAI_REASON_MAX)).toFixed(3)}"></i>
+    </div>`;
+  };
+  return `<div class="vb-dm sd-dm vb-gaze sd-gaze${hidden ? " is-clean" : ""}${strategyGazeZoom.scale > 1 ? " is-zoomed" : ""}" data-sd-gaze aria-label="${escapeHtml(`${name}の${slotNumber}手目の1枚を見つめる`)}">
+    <img class="vb-gaze-backdrop${fill ? " is-small" : ""}" src="${escapeHtml(fill || item.url)}" data-fill-for="${escapeHtml(item.url)}" alt="" aria-hidden="true" draggable="false" />
+    <div class="vb-gaze-stage" data-gaze-stage>
+      <img class="vb-gaze-image" data-gaze-image src="${escapeHtml(item.url)}" alt="${escapeHtml(`${slotNumber}手目に${name}が貼った画像`)}" draggable="false" style="--gaze-scale:${strategyGazeZoom.scale};--gaze-x:${strategyGazeZoom.x}px;--gaze-y:${strategyGazeZoom.y}px" />
+      <span class="vb-gaze-tip" aria-hidden="true">タップで画像だけ</span>
+    </div>
+    <header class="vb-gaze-head" data-gaze-chrome-part${hidden ? " inert" : ""}>
+      <div class="vb-gaze-bar">
+        <button type="button" class="vb-gaze-icon-button" data-sd-gaze-close aria-label="見つめるモードを閉じて、スレッドに戻る">${STRATEGY_GAZE_ICON_CLOSE}</button>
+        <div class="vb-gaze-who"><b>${renderChatPersonaMark(personaId)}${escapeHtml(name)}</b><small>${escapeHtml(personaLabel(attacker))} · ${slotNumber}手目の1枚${where}<span class="connection-pill vb-gaze-presence ${state.opponentOnline ? "connected" : "warning"}">${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span></small></div>
+        <button type="button" class="vb-gaze-icon-button" data-sd-gaze-chrome aria-pressed="false" aria-label="文字と操作を隠して、画像だけを見る">${STRATEGY_GAZE_ICON_IMAGE_ONLY}</button>
+      </div>
+      <div class="vb-gaze-gauges">${gauge(opponent)}${gauge(me)}</div>
+    </header>
+    <div class="vb-gaze-bottom" data-gaze-bottom data-gaze-chrome-part${hidden ? " inert" : ""}>
+      <div class="vb-gaze-caption sd-gaze-caption">
+        <p class="ha-bubble hariai-caption ${hariaiPersonaClass(attacker)}">${escapeHtml(caption)}</p>
+        <span class="ha-chip hariai-target">狙い：${owner}「${escapeHtml(candidateText(slot.receiver, slot.target))}」</span>
+        ${item.audioUrl ? `<button class="hariai-audio" type="button" data-strategy-play-audio="${escapeHtml(item.audioUrl)}" data-audio-start="0" data-audio-duration="${Number(item.audioDuration || 0)}">♪ 音声 ${Number(item.audioDuration || 0).toFixed(1)}秒</button>` : ""}
+      </div>
+      <div class="vb-gaze-chat" data-sd-gaze-chat role="log" aria-live="polite" aria-label="${escapeHtml(opponent.name)}とのやりとり（直近）">${renderStrategyGazeChatLines()}</div>
+      <p class="chat-typing vb-dm-typing" id="strategyChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderStrategyTypingContent(typing) : ""}</p>
+      <div class="vb-dm-dock vb-gaze-dock">${renderStrategyGazeDock(slotNumber, pending)}</div>
+      ${renderStrategyComposer()}
+    </div>
+    <div class="vb-gaze-restore" data-gaze-restore${hidden ? "" : " hidden"}>
+      <small>ピンチ・ダブルタップで拡大</small>
+      <button type="button" data-sd-gaze-chrome aria-pressed="true">文字と操作を戻す</button>
+    </div>
+  </div>`;
+}
+
+// 重ねるのは直近のチャットだけ。新しい吹き出しほど濃く出す。
+function renderStrategyGazeChatLines() {
+  const chats = new Map(strategyThreadChats().map((message) => [String(message.id), message]));
+  const ids = recentStrategyGazeChatIds(orderedStrategyThreadEntries(state.threadLog, { chatIds: [...chats.keys()] }));
+  return ids.map((id, index) => {
+    const message = chats.get(id);
+    return `<div class="vb-gaze-line" style="--gaze-line:${gazeLineOpacity(ids.length - 1 - index)}">${renderStrategyChatMessage(message, message.phase === "scout")}</div>`;
+  }).join("");
+}
+
+// 見ている1枚の採点待ちなら小さな採点パネル。前の1枚を見ている時に採点待ちの1枚があれば、そちらへ移るボタン。ほかは段階の帯。
+function renderStrategyGazeDock(slotNumber, pending) {
+  if (strategyGazeScoring(slotNumber, pending, state.uid)) return renderStrategyGazeScore(pending);
+  const waiting = pending && !state.replay?.outcome && pending.stage === "score" && pending.actor === state.uid;
+  if (waiting && strategyGazeImage(pending.slot)) {
+    return `<button type="button" class="button button-primary vb-gaze-current" data-sd-gaze-open="${pending.slot}">${pending.slot}手目の1枚を見て採点する</button>`;
+  }
+  return renderStrategyBand();
+}
+
+// 見つめながら採点する小さなパネル。点数のボタン・数値・ひとこと・返す。スライダー・ひとことの候補・「参りました」はシートで。
+// 入力の id と data 属性はシートと同じなので、下書きも送信も同じ処理を通る。
+function renderStrategyGazeScore(pending) {
+  const slot = state.replay.slots.find((item) => item.slot === pending.slot);
+  const me = state.replay.players[state.uid];
+  const value = Number.isInteger(state.drafts.score) ? state.drafts.score : null;
+  const notes = [];
+  if (value === null) notes.push("点数を選ぶと、相手の権利と理性の減り方が出ます");
+  else notes.push(strategyGazeScoreNote(value, slot, me));
+  if (me?.heartsRemaining) notes.push("語尾に♡が付きます");
+  if (state.drafts.surrender) notes.push("「参りました」付き");
+  return `<div class="sd-gaze-score" role="group" aria-label="何点刺さった？">
+    <div class="hariai-score-quick">${[60, 75, 80, 85, 90, 95, 100].map((score) => `<button type="button" class="is-${hariaiBand(score)}${value === score ? " is-selected" : ""}" data-hariai-score="${score}">${score}</button>`).join("")}</div>
+    <div class="sd-gaze-score-row">
+      <input class="text-input sd-gaze-score-number" type="number" min="0" max="100" step="1" inputmode="numeric" id="hariaiScoreNumber" value="${value ?? ""}" placeholder="点数" aria-label="点数（0〜100）" />
+      <input class="text-input" id="hariaiReply" maxlength="${HARIAI_REPLY_MAX}" value="${escapeHtml(state.drafts.reply)}" autocomplete="off" placeholder="${pending.reasonRequired ? `理由を${HARIAI_REASON_MIN_LENGTH}文字以上` : "ひとこと（任意）"}" aria-label="ひとこと" />
+      <button class="button button-primary" type="button" data-hariai-score-submit ${state.battleBusy || value === null ? "disabled" : ""}>返す</button>
+    </div>
+    <div class="sd-gaze-score-foot"><p class="sd-gaze-score-note${value !== null && strategyGazeScoreKo(value, slot, me) ? " is-ko" : ""}">${escapeHtml(notes.join("・"))}</p>
+      <button type="button" class="sd-gaze-more" data-sd-gaze-sheet>候補・参りました</button></div>
+  </div>`;
+}
+
+function strategyGazeScoreKo(value, slot, me) {
+  return hariaiPostDamage(value, slot?.combo || 1) >= Number(me?.reason || 0);
+}
+
+function strategyGazeScoreNote(value, slot, me) {
+  const damage = Math.min(Number(me?.reason || 0), hariaiPostDamage(value, slot?.combo || 1));
+  const rest = Number(me?.reason || 0) - damage;
+  const right = { none: "手番があなたに移る", question: "相手に質問権", instruction: "相手に指示権", combo: "相手は権利＋連投" }[hariaiBand(value)];
+  return `${value}点：${right}／理性 −${damage}${rest <= 0 ? "（陥落）" : `（残り${rest}）`}`;
+}
+
+// 文字と操作を隠す・戻す。作り直さずにクラスだけを切り替え、拡大は戻す時に等倍へ戻す。
+function setStrategyGazeChromeHidden(hidden, { focus = false } = {}) {
+  window.clearTimeout(strategyGazeTapTimer);
+  strategyGazeChromeHidden = hidden;
+  if (!hidden) strategyGazeZoom = { scale: 1, x: 0, y: 0 };
+  const screen = document.querySelector("[data-sd-gaze]");
+  if (!screen) return;
+  screen.classList.toggle("is-clean", hidden);
+  screen.querySelectorAll("[data-gaze-chrome-part]").forEach((part) => { part.inert = hidden; });
+  const restore = screen.querySelector("[data-gaze-restore]");
+  if (restore) restore.hidden = !hidden;
+  applyStrategyGazeZoom(screen);
+  if (focus) screen.querySelector(hidden ? "[data-gaze-restore] [data-sd-gaze-chrome]" : ".vb-gaze-head [data-sd-gaze-chrome]")?.focus({ preventScroll: true });
+}
+
+function applyStrategyGazeZoom(screen = document.querySelector("[data-sd-gaze]")) {
+  const image = screen?.querySelector("[data-gaze-image]");
+  if (!image) return;
+  image.style.setProperty("--gaze-scale", String(strategyGazeZoom.scale));
+  image.style.setProperty("--gaze-x", `${strategyGazeZoom.x}px`);
+  image.style.setProperty("--gaze-y", `${strategyGazeZoom.y}px`);
+  screen.classList.toggle("is-zoomed", strategyGazeZoom.scale > 1);
+}
+
+function bindStrategyGazeEvents() {
+  strategyGazeLayoutObserver?.disconnect();
+  strategyGazeLayoutObserver = null;
+  app.querySelectorAll("[data-sd-gaze-auto]").forEach((button) => button.addEventListener("click", () => setStrategyGazeAuto(!strategyGazeAuto)));
+  const screen = app.querySelector("[data-sd-gaze]");
+  if (!screen) return;
+  screen.querySelector("[data-sd-gaze-close]")?.addEventListener("click", closeStrategyGaze);
+  screen.querySelectorAll("[data-sd-gaze-chrome]").forEach((button) => button.addEventListener("click", () => setStrategyGazeChromeHidden(!strategyGazeChromeHidden, { focus: true })));
+  screen.querySelector(".vb-gaze-dock [data-sd-gaze-open]")?.addEventListener("click", (event) => openStrategyGaze(Number(event.currentTarget.dataset.sdGazeOpen)));
+  screen.querySelector("[data-sd-gaze-sheet]")?.addEventListener("click", () => {
+    setStrategyGazeSlot(null);
+    setStrategySheetOpen(true);
+  });
+  const bottom = screen.querySelector("[data-gaze-bottom]");
+  bottom?.addEventListener("focusin", syncStrategyGazeKeyboard);
+  bottom?.addEventListener("focusout", () => window.setTimeout(syncStrategyGazeKeyboard, 0));
+  bindStrategyGazeStage(screen);
+  observeStrategyGazeLayout(screen);
+}
+
+// 画像のタップ・ピンチ・ダブルタップ（通常型1on1と同じ動き）。拡大は文字と操作を隠している間だけ。
+function bindStrategyGazeStage(screen) {
+  const stage = screen.querySelector("[data-gaze-stage]");
+  const image = screen.querySelector("[data-gaze-image]");
+  if (!stage || !image) return;
+  const pointers = new Map();
+  let gesture = null;
+  let lastTap = null;
+  const size = () => ({ width: image.offsetWidth, height: image.offsetHeight });
+  // 画像の中心（拡大前の位置）からの、指の位置
+  const fromCenter = (point) => {
+    const rect = stage.getBoundingClientRect();
+    return {
+      x: point.x - (rect.left + image.offsetLeft + image.offsetWidth / 2),
+      y: point.y - (rect.top + image.offsetTop + image.offsetHeight / 2),
+    };
+  };
+  const midpoint = () => {
+    const [first, second] = [...pointers.values()];
+    return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+  };
+  const distance = () => {
+    const [first, second] = [...pointers.values()];
+    return Math.hypot(first.x - second.x, first.y - second.y) || 1;
+  };
+  stage.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    try {
+      stage.setPointerCapture(event.pointerId);
+    } catch {
+      // 指がすでに離れている時は、つかまえずに続ける。
+    }
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 1) {
+      gesture = { kind: "tap", start: { x: event.clientX, y: event.clientY }, zoom: { ...strategyGazeZoom }, time: Date.now() };
+    } else if (pointers.size === 2 && strategyGazeChromeHidden) {
+      window.clearTimeout(strategyGazeTapTimer);
+      gesture = { kind: "pinch", distance: distance(), mid: midpoint(), zoom: { ...strategyGazeZoom } };
+    } else {
+      gesture = null;
+    }
+  });
+  stage.addEventListener("pointermove", (event) => {
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (!gesture) return;
+    if (gesture.kind === "pinch" && pointers.size === 2) {
+      const mid = midpoint();
+      const next = zoomGazeAt(gesture.zoom, gesture.zoom.scale * (distance() / gesture.distance), fromCenter(gesture.mid), size());
+      strategyGazeZoom = clampGazeZoom({ ...next, x: next.x + mid.x - gesture.mid.x, y: next.y + mid.y - gesture.mid.y }, size());
+      applyStrategyGazeZoom(screen);
+      return;
+    }
+    const dx = event.clientX - gesture.start.x;
+    const dy = event.clientY - gesture.start.y;
+    if (gesture.kind === "tap" && Math.hypot(dx, dy) > 10) gesture.kind = strategyGazeChromeHidden && gesture.zoom.scale > 1 ? "pan" : "drag";
+    if (gesture.kind === "pan") {
+      strategyGazeZoom = clampGazeZoom({ ...gesture.zoom, x: gesture.zoom.x + dx, y: gesture.zoom.y + dy }, size());
+      applyStrategyGazeZoom(screen);
+    }
+  });
+  const release = (event) => {
+    if (!pointers.delete(event.pointerId)) return;
+    const tapped = event.type === "pointerup" && gesture?.kind === "tap" && pointers.size === 0 && Date.now() - gesture.time < 500;
+    if (pointers.size === 0 || gesture?.kind === "pinch") gesture = null;
+    if (!tapped) return;
+    if (!strategyGazeChromeHidden) {
+      setStrategyGazeChromeHidden(true);
+      return;
+    }
+    const point = { x: event.clientX, y: event.clientY };
+    if (lastTap && Date.now() - lastTap.time < 320 && Math.hypot(point.x - lastTap.x, point.y - lastTap.y) < 40) {
+      window.clearTimeout(strategyGazeTapTimer);
+      lastTap = null;
+      strategyGazeZoom = toggleGazeZoom(strategyGazeZoom, fromCenter(point), size());
+      applyStrategyGazeZoom(screen);
+      return;
+    }
+    lastTap = { ...point, time: Date.now() };
+    strategyGazeTapTimer = window.setTimeout(() => setStrategyGazeChromeHidden(false), 320);
+  };
+  stage.addEventListener("pointerup", release);
+  stage.addEventListener("pointercancel", release);
+  // Safari の画面全体の拡大を止め、画像だけを拡大する。
+  stage.addEventListener("gesturestart", (event) => event.preventDefault());
+}
+
+// 上の帯と、下の重なりのうち操作・入力欄の高さを測り、画像をその間に置く（言葉と直近のチャットは画像の下の方に重ねる）。
+function observeStrategyGazeLayout(screen) {
+  const head = screen.querySelector(".vb-gaze-head");
+  const bottom = screen.querySelector("[data-gaze-bottom]");
+  if (!head || !bottom) return;
+  const measure = () => {
+    const solid = bottom.querySelector(":scope > .vb-gaze-dock, :scope > .vb-dm-composer");
+    const reserve = solid ? bottom.offsetHeight - solid.offsetTop : 0;
+    screen.style.setProperty("--vb-gaze-head", `${Math.round(head.offsetHeight)}px`);
+    screen.style.setProperty("--vb-gaze-bottom", `${Math.round(reserve)}px`);
+  };
+  measure();
+  if (!window.ResizeObserver) return;
+  strategyGazeLayoutObserver = new ResizeObserver(measure);
+  [head, bottom].forEach((node) => strategyGazeLayoutObserver.observe(node));
+}
+
+// キーボードが開いた時は、下の重なり（入力欄・採点・チャット）だけを持ち上げ、画像は動かさない。
+function syncStrategyGazeKeyboard() {
+  const screen = document.querySelector("[data-sd-gaze]");
+  const viewport = window.visualViewport;
+  if (!screen || !viewport) return;
+  const typing = screen.querySelector("[data-gaze-bottom]")?.contains(document.activeElement)
+    && document.activeElement?.matches?.("input, textarea");
+  const covered = typing ? screen.getBoundingClientRect().bottom - (viewport.offsetTop + viewport.height) : 0;
+  const lift = Math.max(0, Math.min(Math.round(covered), Math.round(screen.clientHeight * 0.6)));
+  screen.style.setProperty("--vb-gaze-keyboard", `${lift}px`);
 }
 
 // 短尺映像の本数。対戦中は3本（相手の画面が古い間は1本）、品評会は1本。
@@ -2988,9 +3374,12 @@ function renderHariaiPostEvent(slot, attacker, receiver, hearts = new Map()) {
   const key = imageKey("move", slot.slot);
   const concealed = slot.by !== state.uid && !state.openedMediaKeys.has(key);
   const caption = slot.captionHeart ? ensureHariaiHeart(slot.caption) : slot.caption;
+  // 開いた後の相手の1枚は、押すと見つめるモードで開く（対戦中だけ）。
+  const gazeable = !concealed && slot.by !== state.uid && state.screen === "battle";
   const media = item?.url
     ? `<div class="hariai-media ${concealed ? "is-concealed" : ""}"><img src="${item.url}" alt="${escapeHtml(attacker?.name || "")}が貼った画像" loading="lazy" />
-        ${concealed ? `<button type="button" class="hariai-open" data-hariai-open="${escapeHtml(key)}">タップして開く${item.audioBlob ? "（音声あり）" : ""}</button>` : ""}</div>
+        ${concealed ? `<button type="button" class="hariai-open" data-hariai-open="${escapeHtml(key)}">タップして開く${item.audioBlob ? "（音声あり）" : ""}</button>` : ""}
+        ${gazeable ? `<button type="button" class="hariai-gaze-open" data-sd-gaze-open="${slot.slot}" aria-label="${escapeHtml(`${slot.slot}手目の1枚を見つめる`)}"></button>` : ""}</div>
         ${!concealed && item.audioUrl ? `<button class="hariai-audio" type="button" data-strategy-play-audio="${escapeHtml(item.audioUrl)}" data-audio-start="0" data-audio-duration="${Number(item.audioDuration || 0)}">♪ 音声 ${Number(item.audioDuration || 0).toFixed(1)}秒</button>` : ""}`
     : '<div class="hariai-media is-loading"><span>画像を受信中…</span></div>';
   const owner = slot.receiver === state.uid ? "あなたの" : "相手の";
@@ -3472,6 +3861,7 @@ function bindHariaiBattleEvents() {
   on("[data-sd-sound]", "click", (event) => toggleStrategySound(event.currentTarget));
   bindStrategyComposerEvents();
   bindStrategyThreadEvents();
+  bindStrategyGazeEvents();
   on("[data-hariai-right-tab]", "click", (event) => {
     const tab = event.currentTarget.dataset.hariaiRightTab;
     state.drafts.rightTab = tab;
@@ -3585,11 +3975,13 @@ function toggleHariaiFinishCard(cardId) {
 
 async function openHariaiMedia(key) {
   state.openedMediaKeys.add(key);
-  // 採点を待っている1枚を開いたら、そのまま採点のシートを開く。
+  // 相手の1枚を開いたら、設定がオンなら見つめるモードで開く（採点待ちの1枚なら、その上で採点できる）。
+  // オフなら今まで通り、採点を待っている1枚を開いた時は採点のシートを開く。
   const pending = state.replay?.pending;
-  if (pending?.stage === "score" && pending.actor === state.uid && key === imageKey("move", pending.slot)) strategySheetFor = strategySheetKey(pending);
-  // 相手の1枚を開いたら、相手の画面に「既読」を出す。
   const [kind, slot] = key.split(":");
+  if (kind === "move" && strategyGazeAuto && state.screen === "battle" && strategyGazeImage(Number(slot))) setStrategyGazeSlot(Number(slot));
+  else if (pending?.stage === "score" && pending.actor === state.uid && key === imageKey("move", pending.slot)) strategySheetFor = strategySheetKey(pending);
+  // 相手の1枚を開いたら、相手の画面に「既読」を出す。
   if (kind === "move") sendStrategyReceipt("seen", [`post:${Number(slot)}`]);
   const item = state.remoteImages.get(key);
   render();
@@ -8238,6 +8630,18 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("hariai-ranking-dashboard-updated", () => {
   if (active && state.screen === "profile") updateStrategyCrownMatchmakingActions();
 });
+
+// 見つめるモードは Escape で閉じる（画像だけを見ている時は、先に文字と操作を戻す）。
+// メニュー・ダイアログ・リアクションが開いている時は、そちらを先に閉じる。
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !active || !document.querySelector("[data-sd-gaze]")) return;
+  if (document.querySelector(".vb-menu[open], dialog[open], [data-chat-react-picker]")) return;
+  if (strategyGazeChromeHidden) {
+    setStrategyGazeChromeHidden(false, { focus: true });
+    return;
+  }
+  closeStrategyGaze();
+}, true);
 
 // 画面の大きさが変わっても、対戦のDMを画面の高さに収め直す（読み返している位置は保つ）。
 // スマホとPCの幅をまたいだ時は、操作シートの置き場所が変わるので描き直す。

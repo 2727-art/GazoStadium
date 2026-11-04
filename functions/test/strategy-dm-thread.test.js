@@ -153,8 +153,8 @@ test("the new module, styles and design note ship with fresh cache keys and the 
   assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-voice-v1[^"]*"/);
   assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-voice-v1[^"]*"/);
   // スマホの対戦を全画面のDMにした版（2026-11-04）。
-  assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-fullscreen-v1"/);
-  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-fullscreen-v1"/);
+  assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-fullscreen-v1[^"]*"/);
+  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-fullscreen-v1[^"]*"/);
   const firebase = JSON.parse(read("firebase.json"));
   assert.ok(firebase.hosting.ignore.includes("STRATEGY_DM_THREAD_DESIGN.md"));
   assert.match(read(".assetsignore"), /^STRATEGY_DM_THREAD_DESIGN\.md$/m);
