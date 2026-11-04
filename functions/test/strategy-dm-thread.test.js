@@ -98,7 +98,7 @@ const between = (source, start, end) => {
 
 test("the battle runs as one DM: header, thread, band, sheet and composer, with no separate chat panel", () => {
   const strategy = read("strategy.js");
-  assert.match(strategy, /from "\.\/strategy-dm-thread\.mjs\?v=strategy-dm-thread-v1";/);
+  assert.match(strategy, /from "\.\/strategy-dm-thread\.mjs\?v=strategy-dm-voice-v1";/);
   const battle = between(strategy, "function renderBattle()", "function strategyThreadChats()");
   for (const part of ["renderStrategyDmHead()", "renderStrategyThreadItems()", "renderStrategyBand()", "renderStrategySheet()", "renderStrategyComposer()"]) {
     assert.ok(battle.includes(part), part);
@@ -109,7 +109,7 @@ test("the battle runs as one DM: header, thread, band, sheet and composer, with 
   const render = between(strategy, "function render() {", "function renderProfile()");
   assert.match(render, /const threadNodes = screenChanged \? new Map\(\) : collectStrategyThreadNodes\(\);/);
   assert.match(render, /reuseStrategyThreadNodes\(threadNodes\);/);
-  assert.match(render, /if \(state\.screen === "battle"\) settleStrategyThreadLayout\(\{ follow: screenChanged \}\);/);
+  assert.match(render, /if \(state\.screen === "battle"\) \{\n    settleStrategyThreadLayout\(\{ follow: screenChanged \}\);/);
   // 操作シートは、スマホではスレッドの下、PC（901px以上）では右の列の一番上。幅をまたいだら描き直す。
   assert.match(battle, /\$\{sheetInThread \? "" : renderStrategyBand\(\)\}\$\{sheetInSide \? "" : sheet\}\$\{renderStrategyComposer\(\)\}/);
   assert.match(battle, /aria-label="あなたの番の操作・読みメモ・あなたの秘密">\n      \$\{sheetInSide \? sheet : ""\}/);
@@ -145,10 +145,13 @@ test("chat, video and reactions keep their existing wire format and limits", () 
 
 test("the new module, styles and design note ship with fresh cache keys and the note stays private", () => {
   const html = read("index.html");
-  assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-thread-v1"/);
+  assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-thread-v1[^"]*"/);
   assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-thread-v1[^"]*"/);
   // 画像が手の記録より先に着いた時の受信の書き込みを直した版（2026-11-03）。
-  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-media-ack-v1"/);
+  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-media-ack-v1[^"]*"/);
+  // 第2段（ボイス・映像の本数・既読、2026-11-04）。
+  assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-voice-v1"/);
+  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-voice-v1"/);
   const firebase = JSON.parse(read("firebase.json"));
   assert.ok(firebase.hosting.ignore.includes("STRATEGY_DM_THREAD_DESIGN.md"));
   assert.match(read(".assetsignore"), /^STRATEGY_DM_THREAD_DESIGN\.md$/m);
@@ -157,6 +160,96 @@ test("the new module, styles and design note ship with fresh cache keys and the 
   // 右の列は中身の高さのまま積む（操作シートがメモに重ならない）。点数の吹き出しはメーターが読める幅。
   assert.match(css, /grid-auto-rows: max-content;/);
   assert.match(css, /\.hariai-thread \.ha-bubble\.hariai-score \{\n  display: grid;\n  min-width: 236px;/);
+});
+
+test("voices take their place in the thread like videos and drop out once released", async () => {
+  const { appendStrategyThreadEntries, collectStrategyThreadKeys, orderedStrategyThreadEntries, parseStrategyThreadKey } = await threadModule;
+  assert.deepEqual(
+    collectStrategyThreadKeys({ chats: [{ id: "c1", phase: "battle" }], videoIds: ["v1"], voiceIds: ["vo_1", "bad id"] }),
+    ["start", "chat:c1", "video:v1", "voice:vo_1"],
+  );
+  assert.deepEqual(parseStrategyThreadKey("voice:vo_0123456789abcdef"), { kind: "voice", id: "vo_0123456789abcdef" });
+  const log = appendStrategyThreadEntries([], ["start", "voice:vo_1", "chat:c1", "voice:vo_2"]);
+  assert.deepEqual(
+    orderedStrategyThreadEntries(log, { chatIds: ["c1"], voiceIds: ["vo_2"] }).map((entry) => entry.key),
+    ["start", "chat:c1", "voice:vo_2"],
+  );
+});
+
+test("features are capped by this client's limits and anything broken counts as an old client", async () => {
+  const { LEGACY_STRATEGY_FEATURES, STRATEGY_BATTLE_VIDEO_LIMIT, STRATEGY_BATTLE_VOICE_LIMIT, normalizeStrategyFeatures, strategyFeaturesMessage } = await threadModule;
+  assert.deepEqual(strategyFeaturesMessage(), { type: "strategy-features", voice: 5, battleVideos: 3, receipts: true });
+  assert.equal(STRATEGY_BATTLE_VIDEO_LIMIT, 3);
+  assert.equal(STRATEGY_BATTLE_VOICE_LIMIT, 5);
+  assert.deepEqual(normalizeStrategyFeatures(strategyFeaturesMessage()), { voice: 5, battleVideos: 3, receipts: true });
+  assert.deepEqual(normalizeStrategyFeatures({ voice: 99, battleVideos: 99, receipts: true }), { voice: 5, battleVideos: 3, receipts: true });
+  assert.deepEqual(normalizeStrategyFeatures({ voice: -1, battleVideos: 0, receipts: "yes" }), { voice: 0, battleVideos: 1, receipts: false });
+  assert.deepEqual(normalizeStrategyFeatures(null), { ...LEGACY_STRATEGY_FEATURES });
+  assert.deepEqual(normalizeStrategyFeatures({ voice: 1.5, battleVideos: "3" }), { voice: 0, battleVideos: 1, receipts: false });
+});
+
+test("receipts keep only well-formed keys of the right kind, without duplicates and at most 20", async () => {
+  const { normalizeStrategyReceipt, strategyReceiptMessage } = await threadModule;
+  assert.deepEqual(
+    normalizeStrategyReceipt({ kind: "seen", keys: ["c:abc", "post:3", "post:0", "post:31", "voice:vo_0123456789", "c:abc", 7] }),
+    { kind: "seen", keys: ["c:abc", "post:3"] },
+  );
+  assert.deepEqual(
+    normalizeStrategyReceipt({ kind: "played", keys: ["video:sv_0123456789", "voice:vo_0123456789", "voice:short", "c:abc"] }),
+    { kind: "played", keys: ["video:sv_0123456789", "voice:vo_0123456789"] },
+  );
+  assert.equal(normalizeStrategyReceipt({ kind: "read", keys: ["c:abc"] }), null);
+  assert.equal(normalizeStrategyReceipt({ kind: "seen", keys: ["post:x"] }), null);
+  assert.equal(normalizeStrategyReceipt({ kind: "seen", keys: "c:abc" }), null);
+  const many = Array.from({ length: 30 }, (_, index) => `c:m${index}`);
+  assert.equal(normalizeStrategyReceipt({ kind: "seen", keys: many }).keys.length, 20);
+  assert.deepEqual(strategyReceiptMessage("seen", ["c:a", "c:a", "c:b"]), { type: "strategy-receipt", kind: "seen", keys: ["c:a", "c:b"] });
+});
+
+test("voice, more videos and receipts are wired over P2P only and only for the peer's own items", () => {
+  const strategy = read("strategy.js");
+  assert.match(strategy, /from "\.\/strategy-voice-transfer\.mjs\?v=strategy-dm-voice-v1";/);
+  // 主チャネルが開いたら対応機能を知らせる。届くまでは古い画面として扱う。
+  const configure = between(strategy, "function configureDataChannel(channel)", "function configureVideoDataChannel(channel)");
+  assert.match(configure, /resetStrategyPeerSignals\(\);/);
+  assert.match(configure, /sendStrategyPeer\(strategyFeaturesMessage\(\)\);/);
+  const dispatch = between(strategy, "async function handleChannelMessage(data) {", "if (state.incomingAvatarTransfer) {");
+  assert.match(dispatch, /message\.type === "strategy-features"\) \{\n      handleRemoteStrategyFeatures\(message\);/);
+  assert.match(dispatch, /message\.type === "strategy-receipt"\) \{\n      handleRemoteStrategyReceipt\(message\);/);
+  for (const type of ["strategy-features", "strategy-receipt", "strategy-voice-start"]) {
+    assert.doesNotMatch(strategy, new RegExp(`ref\\(database, [^)]*${type}`), `${type} must not touch Firebase`);
+  }
+  // 既読・再生済みは、自分が書いた・送ったものの鍵だけ受け付ける。
+  const mine = between(strategy, "function strategyReceiptKeyIsMine(key)", "function handleRemoteStrategyReceipt(message)");
+  assert.match(mine, /message\.authorUid === state\.uid/);
+  assert.match(mine, /slot\.by === state\.uid/);
+  assert.match(mine, /clip\.ownerUid === state\.uid/);
+  assert.match(between(strategy, "function sendStrategyReceipt(kind, keys)", "function reportStrategySeenChats()"), /if \(!strategyReceiptsOn \|\| !state\.peerFeatures\?\.receipts\) return;/);
+  // 映像の本数：送りは相手の対応機能まで、受けは自分の上限まで。
+  assert.match(strategy, /return phase === "battle" \? Math\.min\(STRATEGY_BATTLE_VIDEO_LIMIT, state\.peerFeatures\?\.battleVideos \|\| 1\) : 1;/);
+  assert.match(strategy, />= \(phase === "battle" \? STRATEGY_BATTLE_VIDEO_LIMIT : 1\)/);
+  // ボイスは品評会メディアのチャネルで受け、対戦中だけ・自分の上限まで。自動再生しない。
+  const review = between(strategy, "async function handleStrategyReviewAssetChannelMessage(data)", "function strategyVideoReceivedFull(phase)");
+  assert.match(review, /message\.type === "strategy-voice-start"/);
+  assert.match(review, /currentStrategyVideoPhase\(\) !== "battle"/);
+  assert.match(review, /state\.voiceReceivedCount >= STRATEGY_BATTLE_VOICE_LIMIT/);
+  assert.match(review, /expectedOwnerUid: state\.opponentUid/);
+  const voiceBubble = between(strategy, "function renderStrategyThreadVoice(clip)", "function strategyVoiceSource(id)");
+  assert.doesNotMatch(voiceBubble, /<audio|autoplay/);
+  // 入力欄のマイク、録音中の帯と注意書き、見本では押せない。
+  const composer = between(strategy, "function renderStrategyComposer()", "function refreshStrategyComposer()");
+  assert.match(composer, /\$\{renderStrategyMicButton\(\)\}\$\{renderStrategyCameraButton\(\)\}/);
+  assert.match(strategy, /声は相手の端末へ一時的に届き、保存されません。/);
+  const blocked = strategy.match(/const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "([^"]+)";/)[1];
+  assert.ok(blocked.includes("[data-sd-mic]") && blocked.includes("[data-sd-voice-send]"));
+  // 対戦を閉じたらボイスも破棄し、合図の状態も戻す。画面を離れたらマイクを止める。
+  const release = between(strategy, "function releaseMatchMedia()", "function releaseAllImages()");
+  assert.match(release, /releaseStrategyVoiceData\(\);/);
+  assert.match(release, /resetStrategyPeerSignals\(state\);/);
+  assert.match(between(strategy, "function render() {", "function renderProfile()"), /if \(screenChanged && lastRenderedScreen === "battle"\) \{\n    stopStrategyVoiceRecording\(\{ discard: true \}\);/);
+  // メニューの既読のスイッチ（端末に保存）。
+  assert.match(strategy, /role="switch" aria-checked="\$\{strategyReceiptsOn\}" aria-labelledby="strategyReceiptsLabel" data-sd-receipts/);
+  assert.match(strategy, /const STRATEGY_RECEIPTS_KEY = "hariai-stadium-strategy-receipts-v1";/);
 });
 
 test("the signature changes with the content and stays the same for the same html", async () => {

@@ -176,6 +176,7 @@ function roomRuntime(extra = {}) {
     refreshMatchAchievementShowcaseIfVisible() {}, reactToRoomData: async () => {},
     handleOpponentDestroyed: async () => {}, renderBattleIfChanged() {}, refreshStrategyChat() {},
     sendProfileAvatar: async () => {}, handleChannelMessage: async () => {},
+    resetStrategyPeerSignals() {}, sendStrategyPeer: () => true, strategyFeaturesMessage: () => ({ type: "strategy-features" }),
     ...extra,
   });
   load(context, ["strategyIdleRoomIsCurrent", "stopStrategyPrestartGuard", "confirmStrategyPrestartExpiry",

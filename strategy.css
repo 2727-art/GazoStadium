@@ -4101,6 +4101,7 @@
   .hariai-band.sp-band-ribbon.is-fresh,
   .sp-seal.is-fresh,
   .sd-items > .sd-item.is-arriving,
+  .sd-recorder > .sd-rec-dot,
   .sd-dm > .sd-sheet,
   .strategy-identity-screen:not(.is-refresh) .sp-veil-lift,
   .strategy-identity-screen:not(.is-refresh) + .sc-dock .strategy-chat-panel .chat-message p.chat-persona-bubble {
@@ -4360,8 +4361,10 @@
   }
 }
 
-/* 入力欄のカメラ：10秒の映像を録って送る */
+/* 入力欄のマイク（ボイス）とカメラ（10秒の映像）。右上の数字は残りの本数 */
+.sd-mic,
 .sd-camera {
+  position: relative;
   display: grid;
   width: 44px;
   height: 44px;
@@ -4375,16 +4378,193 @@
   box-shadow: inset 0 0 0 1px rgba(255, 63, 134, 0.45);
 }
 
+.sd-mic:disabled,
 .sd-camera:disabled {
   cursor: not-allowed;
   opacity: 0.4;
 }
 
+.sd-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  color: var(--ha-ink);
+  background: var(--vs-rose-soft);
+  font: 700 0.6rem/16px var(--vs-font-number);
+  text-align: center;
+}
+
+/* 文字を打っている間は、マイクとカメラを隠して入力欄の幅を保つ */
+.sd-composer.is-typing .sd-mic,
+.sd-composer.is-typing .sd-camera {
+  display: none;
+}
+
+.sd-mic:focus-visible,
 .sd-camera:focus-visible,
 .sd-memo-button:focus-visible,
-.sd-sheet-close:focus-visible {
+.sd-sheet-close:focus-visible,
+.sd-voice-play:focus-visible {
   outline: 2px solid var(--vs-gold-hi);
   outline-offset: 2px;
+}
+
+/* 録音中・録ったボイスの帯（入力欄の代わり） */
+.sd-composer.is-recording {
+  flex-wrap: wrap;
+}
+
+.sd-recorder {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+}
+
+.sd-rec-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: #ff4d6d;
+  animation: sd-rec-pulse 1s ease-in-out infinite;
+}
+
+@keyframes sd-rec-pulse {
+  50% { opacity: 0.3; }
+}
+
+.sd-rec-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--vs-pearl);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sd-rec-label b {
+  font: 600 0.9rem var(--vs-font-number);
+}
+
+.sd-recorder .button {
+  min-height: 40px;
+  flex: none;
+  padding: 0 12px;
+  border-radius: 20px;
+}
+
+.sd-recorder-note {
+  flex-basis: 100%;
+  color: var(--vs-mist);
+  font-size: 0.66rem;
+}
+
+/* ボイスの吹き出し：再生ボタン・波形の帯（再生した所まで色が付く）・秒数 */
+.sd-voice {
+  --voice-progress: 0;
+  position: relative;
+  display: flex;
+  width: 220px;
+  max-width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 8px;
+  border-radius: 18px 18px 18px 4px;
+  background: var(--chat-surface, var(--ha-bubble-theirs));
+  box-shadow: var(--chat-shadow, none);
+}
+
+.ha-msg.is-mine .sd-voice {
+  border-radius: 18px 18px 4px 18px;
+  background: var(--ha-bubble-mine);
+}
+
+/* 口調のしるし（♥など）は、ほかの吹き出しと同じく右上に重ねる */
+.sd-voice.sp-persona::after {
+  position: absolute;
+  z-index: 2;
+  top: -11px;
+  right: -7px;
+  color: var(--chat-charm-color, #fff);
+  font-size: 0.82rem;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+
+.sd-voice-play {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--ha-ink);
+  background: var(--vs-rose-soft);
+}
+
+.sd-voice-play .sd-pause-icon,
+.sd-voice-play.is-playing .sd-play-icon {
+  display: none;
+}
+
+.sd-voice-play.is-playing .sd-pause-icon {
+  display: block;
+}
+
+.sd-voice-wave {
+  height: 22px;
+  min-width: 0;
+  flex: 1;
+  background: linear-gradient(90deg, var(--vs-rose-soft) calc(var(--voice-progress) * 100%), rgba(255, 255, 255, 0.32) 0);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 22' preserveAspectRatio='none'><g fill='black'><rect x='0' y='8' width='3' height='6' rx='1.5'/><rect x='6' y='5' width='3' height='12' rx='1.5'/><rect x='12' y='2' width='3' height='18' rx='1.5'/><rect x='18' y='7' width='3' height='8' rx='1.5'/><rect x='24' y='4' width='3' height='14' rx='1.5'/><rect x='30' y='1' width='3' height='20' rx='1.5'/><rect x='36' y='6' width='3' height='10' rx='1.5'/><rect x='42' y='3' width='3' height='16' rx='1.5'/><rect x='48' y='8' width='3' height='6' rx='1.5'/><rect x='54' y='5' width='3' height='12' rx='1.5'/><rect x='60' y='2' width='3' height='18' rx='1.5'/><rect x='66' y='6' width='3' height='10' rx='1.5'/><rect x='72' y='4' width='3' height='14' rx='1.5'/><rect x='78' y='7' width='3' height='8' rx='1.5'/><rect x='84' y='3' width='3' height='16' rx='1.5'/><rect x='90' y='1' width='3' height='20' rx='1.5'/><rect x='96' y='5' width='3' height='12' rx='1.5'/><rect x='102' y='8' width='3' height='6' rx='1.5'/><rect x='108' y='4' width='3' height='14' rx='1.5'/><rect x='114' y='7' width='3' height='8' rx='1.5'/></g></svg>") center / 100% 100% no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 22' preserveAspectRatio='none'><g fill='black'><rect x='0' y='8' width='3' height='6' rx='1.5'/><rect x='6' y='5' width='3' height='12' rx='1.5'/><rect x='12' y='2' width='3' height='18' rx='1.5'/><rect x='18' y='7' width='3' height='8' rx='1.5'/><rect x='24' y='4' width='3' height='14' rx='1.5'/><rect x='30' y='1' width='3' height='20' rx='1.5'/><rect x='36' y='6' width='3' height='10' rx='1.5'/><rect x='42' y='3' width='3' height='16' rx='1.5'/><rect x='48' y='8' width='3' height='6' rx='1.5'/><rect x='54' y='5' width='3' height='12' rx='1.5'/><rect x='60' y='2' width='3' height='18' rx='1.5'/><rect x='66' y='6' width='3' height='10' rx='1.5'/><rect x='72' y='4' width='3' height='14' rx='1.5'/><rect x='78' y='7' width='3' height='8' rx='1.5'/><rect x='84' y='3' width='3' height='16' rx='1.5'/><rect x='90' y='1' width='3' height='20' rx='1.5'/><rect x='96' y='5' width='3' height='12' rx='1.5'/><rect x='102' y='8' width='3' height='6' rx='1.5'/><rect x='108' y='4' width='3' height='14' rx='1.5'/><rect x='114' y='7' width='3' height='8' rx='1.5'/></g></svg>") center / 100% 100% no-repeat;
+}
+
+.sd-voice-time {
+  flex: none;
+  color: var(--chat-text, var(--vs-mist));
+  font: 600 0.74rem var(--vs-font-number);
+}
+
+.sd-media-note {
+  color: var(--vs-mist);
+  font-size: 0.68rem;
+}
+
+.ha-msg.is-mine .sd-media-note {
+  text-align: right;
+}
+
+.sd-played {
+  color: var(--vs-rose-soft);
+  font-weight: 700;
+}
+
+/* 既読：スレッドの最後が自分の発言・手の時だけ、その下に1つ */
+.sd-receipt {
+  align-self: flex-end;
+  margin-top: -4px;
+  color: var(--vs-mist);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  list-style: none;
+}
+
+.vb-menu-switch span small {
+  display: block;
+  color: var(--vs-mist);
+  font-size: 0.64rem;
 }
 
 /* 読みメモと自分の秘密。スマホは右からの引き出し */
