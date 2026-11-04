@@ -250,6 +250,8 @@
       "firestore.indexes.json",
       "functions",
       "functions/**",
+      "tmp",
+      "tmp/**",
       "**/.*",
       ".claude",
       ".claude/**",

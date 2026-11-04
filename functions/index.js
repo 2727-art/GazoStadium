@@ -245,20 +245,13 @@ const {
   startCrownRun,
 } = require("./crown-circuit");
 const {
-  aggregateCount,
   crownCustomizationOptions,
   fallbackCrownCustomization,
-  fallbackServerOverallStanding,
-  sameServerOverallRankingKey,
-  serverOverallRankingKey,
 } = require("./ranking-dashboard");
 const {
   SERVER_RATE_FLOOR_MINIMUM_MATCHES,
-  createServerRateFloorEntryId,
   isServerRateFloorEntryId,
-  nextServerRateFloorRevision,
   normalizeServerRateFloorRevision,
-  serverRateFloorMirrorDecision,
   serverRateFloorPublicEntry,
 } = require("./rate-floor");
 const PRODUCT_CATALOG = require("./product-catalog");
@@ -1591,43 +1584,6 @@ function publicCrownCircuitEntry(value) {
   };
 }
 
-async function mirrorServerRateFloorProfiles(profilesByUid) {
-  await Promise.all(Object.values(profilesByUid || {}).map(async (value) => {
-    const profile = normalizeServerRankingProfile(value, value);
-    if (!profile.rateFloorEntryId) return;
-    const publicEntry = publicServerRateFloorProfile(profile);
-    const publicRef = realtime.ref(
-      `online/serverRateFloorLeaderboard/${profile.rateFloorEntryId}`,
-    );
-    await publicRef.transaction((current) => {
-      const decision = serverRateFloorMirrorDecision(current, {
-        publicEntry,
-        revision: profile.rateFloorRevision,
-        rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
-      });
-      return decision.committed ? decision.value : undefined;
-    });
-  }));
-}
-
-async function mirrorServerOverallProfiles(profilesByUid) {
-  const updates = {};
-  Object.entries(profilesByUid || {}).forEach(([uid, value]) => {
-    const profile = normalizeServerRankingProfile(value, value);
-    if (!profile.entryId) return;
-    updates[`online/serverOverallLeaderboard/${profile.entryId}`] = profile.enabled
-      ? publicServerOverallProfile(profile)
-      : null;
-    if (profile.enabled) {
-      updates[`online/serverOverallLeaderboardEntriesByUser/${uid}`] = profile.entryId;
-    } else {
-      updates[`online/serverOverallLeaderboardEntriesByUser/${uid}`] = null;
-    }
-  });
-  if (Object.keys(updates).length) await realtime.ref().update(updates);
-  await mirrorServerRateFloorProfiles(profilesByUid);
-}
-
 async function mirrorCrownCircuitEntries(entriesByUid) {
   const updates = {};
   Object.entries(entriesByUid || {}).forEach(([uid, entries]) => {
@@ -2083,12 +2039,10 @@ async function syncCurrentServerRankingShowcase(uid) {
     const next = {
       ...profile,
       achievementShowcase,
-      rateFloorRevision: nextServerRateFloorRevision(profile.rateFloorRevision),
       updatedAt: Date.now(),
     };
     transaction.set(profileRef, {
       achievementShowcase: achievementShowcase || FieldValue.delete(),
-      rateFloorRevision: next.rateFloorRevision,
       updatedAt: next.updatedAt,
     }, { merge: true });
     if (!achievementShowcase) delete next.achievementShowcase;
@@ -2153,7 +2107,6 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
       }, { merge: true });
     });
     updates.push(batch.commit());
-    updates.push(mirrorServerRateFloorProfiles({ [uid]: serverProfile }));
   }
   await Promise.all(updates);
   if (syncCrownShowcase) {
@@ -2495,9 +2448,9 @@ async function removeServerRankingPublicEntries(uid, timestamp = Date.now()) {
   });
   if (withdrawalCount) await batch.commit();
 
-  const [indexSnapshot, overallIndexSnapshot, crownIndexSnapshot, spotlightSnapshot] = await Promise.all([
+  const [indexSnapshot, publicEntrySnapshot, crownIndexSnapshot, spotlightSnapshot] = await Promise.all([
     realtime.ref(`online/serverLeaderboardPeriodEntriesByUser/${uid}`).get(),
-    realtime.ref(`online/serverOverallLeaderboardEntriesByUser/${uid}`).get(),
+    realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get(),
     realtime.ref(`online/crownCircuitPeriodEntriesByUser/${uid}`).get(),
     realtime.ref("online/rankingSpotlights/current").get(),
   ]);
@@ -2515,10 +2468,8 @@ async function removeServerRankingPublicEntries(uid, timestamp = Date.now()) {
       updates[`online/serverLeaderboardPeriodEntriesByUser/${uid}/${period}/${key}`] = null;
     }
   }
-  const overallEntryId = cleanText(overallIndexSnapshot.val(), 40);
+  const overallEntryId = cleanText(publicEntrySnapshot.val(), 40);
   if (overallEntryId) {
-    updates[`online/serverOverallLeaderboard/${overallEntryId}`] = null;
-    updates[`online/serverOverallLeaderboardEntriesByUser/${uid}`] = null;
     if (cleanText(spotlightSnapshot.child("entryId").val(), 40) === overallEntryId) {
       updates["online/rankingSpotlights/current"] = null;
     }
@@ -2560,7 +2511,6 @@ async function setServerRankingParticipation(uid, data) {
     await profileRef.set({
       enabled: false,
       rateFloorEnabled: false,
-      rateFloorRevision: FieldValue.increment(1),
       disabledAt: now,
       updatedAt: now,
     }, { merge: true });
@@ -2569,7 +2519,6 @@ async function setServerRankingParticipation(uid, data) {
     });
     await Promise.all([
       removeServerRankingPublicEntries(uid, now),
-      mirrorServerRateFloorProfiles({ [uid]: disabledProfile }),
       syncRankingSpotlightConsent(disabledProfile),
     ]);
     return { enabled: false, awards };
@@ -2609,7 +2558,6 @@ async function setServerRankingParticipation(uid, data) {
       entryId,
       name: cleanName(publicValue.name),
       commentsEnabled: publicValue.commentsEnabled !== false,
-      rateFloorRevision: nextServerRateFloorRevision(previous.rateFloorRevision),
       enabledAt: previous.enabled ? previous.enabledAt : now,
       updatedAt: now,
       achievementShowcase: showcase.join(","),
@@ -2631,7 +2579,6 @@ async function setServerRankingParticipation(uid, data) {
   await Promise.all([
     syncCurrentServerRankingMetadata(uid, finalizedProfile),
     syncCurrentCrownCircuitMetadata(uid, finalizedProfile),
-    mirrorServerOverallProfiles({ [uid]: finalizedProfile }),
     syncRankingSpotlightConsent(finalizedProfile),
   ]);
   return {
@@ -2642,60 +2589,9 @@ async function setServerRankingParticipation(uid, data) {
   };
 }
 
-async function setServerRateFloorParticipation(uid, data) {
-  if (!isPlainCallableObject(data)
-      || Reflect.ownKeys(data).some((key) => key !== "action" && key !== "enabled")
-      || typeof data.enabled !== "boolean") {
-    throw new HttpsError("invalid-argument", "下限チャレンジの公開設定が不正です。");
-  }
-  const enabled = data.enabled;
-  const now = Date.now();
-  const profileRef = serverRankingProfileRef(uid);
-  const initialRateFloorEntryId = createServerRateFloorEntryId();
-  let savedProfile = null;
-  await firestore.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(profileRef);
-    if (!snapshot.exists) {
-      throw new HttpsError(
-        "failed-precondition",
-        "下限チャレンジの前に、オンラインランキングを公開してください。",
-      );
-    }
-    const profile = normalizeServerRankingProfile(snapshot.data(), snapshot.data());
-    if (enabled && (!profile.enabled || !profile.entryId)) {
-      throw new HttpsError(
-        "failed-precondition",
-        "下限チャレンジの前に、オンラインランキングを公開してください。",
-      );
-    }
-    savedProfile = {
-      ...profile,
-      rateFloorEnabled: enabled,
-      rateFloorEntryId: profile.rateFloorEntryId || initialRateFloorEntryId,
-      rateFloorRevision: nextServerRateFloorRevision(profile.rateFloorRevision),
-      updatedAt: now,
-    };
-    transaction.set(profileRef, {
-      rateFloorEnabled: savedProfile.rateFloorEnabled,
-      rateFloorEntryId: savedProfile.rateFloorEntryId,
-      rateFloorRevision: savedProfile.rateFloorRevision,
-      updatedAt: now,
-    }, { merge: true });
-  });
-  await mirrorServerRateFloorProfiles({ [uid]: savedProfile });
-  const profile = normalizeServerRankingProfile((await profileRef.get()).data());
-  if (profile.rateFloorRevision !== savedProfile.rateFloorRevision
-      || profile.rateFloorEnabled !== savedProfile.rateFloorEnabled
-      || profile.enabled !== savedProfile.enabled) {
-    await mirrorServerRateFloorProfiles({ [uid]: profile });
-  }
-  return {
-    rateFloorEnabled: profile.rateFloorEnabled,
-    rateFloorEligible: Boolean(publicServerRateFloorProfile(profile)),
-    rating: profile.rating,
-    serverMatches: profile.serverMatches,
-    minimumMatches: SERVER_RATE_FLOOR_MINIMUM_MATCHES,
-  };
+async function setServerRateFloorParticipation() {
+  // Keep the old callable action closed for clients loaded before retirement.
+  throw new HttpsError("failed-precondition", "下限ランキングは提供を終了しました。");
 }
 
 async function getServerRankingAwards(uid) {
@@ -2706,7 +2602,6 @@ async function getServerRankingAwards(uid) {
     await Promise.all([
       syncCurrentServerRankingMetadata(uid, profile),
       syncCurrentCrownCircuitMetadata(uid, profile),
-      mirrorServerOverallProfiles({ [uid]: profile }),
       syncRankingSpotlightConsent(profile),
     ]);
   }
@@ -2748,108 +2643,6 @@ async function loadCrownCustomizationOptions(uid) {
   });
 }
 
-function serverOverallProfilesQuery() {
-  return firestore.collection("serverRankingProfiles")
-    .where("enabled", "==", true)
-    .orderBy("rating", "desc")
-    .orderBy("entryId", "asc");
-}
-
-function publicServerOverallSnapshot(snapshot) {
-  const publicProfile = publicServerOverallProfile(snapshot?.data?.());
-  const entryId = cleanText(snapshot?.get?.("entryId"), 40);
-  if (!publicProfile || !entryId) return null;
-  return {
-    ...publicProfile,
-    entryId,
-    ownerUid: snapshot.id,
-  };
-}
-
-function publicServerOverallRow(entry, rank) {
-  if (!entry) return null;
-  const { ownerUid, ...publicEntry } = entry;
-  return { ...publicEntry, rank };
-}
-
-async function loadServerOverallStanding(uid, initialProfileSnapshot) {
-  const profileRef = serverRankingProfileRef(uid);
-  const rankedQuery = serverOverallProfilesQuery();
-  let profileSnapshot = initialProfileSnapshot;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const key = serverOverallRankingKey(profileSnapshot?.data?.());
-    if (!key) {
-      const [participantCountSnapshot, leadingSnapshot] = await Promise.all([
-        rankedQuery.count().get(),
-        rankedQuery.limit(7).get(),
-      ]);
-      return {
-        rank: 0,
-        participantCount: aggregateCount(participantCountSnapshot),
-        rating: Number(profileSnapshot?.get?.("rating") || 1000),
-        nextSeatGap: 0,
-        neighbors: leadingSnapshot.docs
-          .map(publicServerOverallSnapshot)
-          .filter(Boolean)
-          .map((entry, index) => publicServerOverallRow(entry, index + 1)),
-      };
-    }
-
-    const beforeQuery = rankedQuery.endBefore(key.rating, key.entryId);
-    const afterQuery = rankedQuery.startAfter(key.rating, key.entryId);
-    const [participantCountSnapshot, betterCountSnapshot, beforeSnapshot, afterSnapshot] = await Promise.all([
-      rankedQuery.count().get(),
-      beforeQuery.count().get(),
-      beforeQuery.limitToLast(3).get(),
-      afterQuery.limit(3).get(),
-    ]);
-    const verifiedProfileSnapshot = await profileRef.get();
-    const verifiedKey = serverOverallRankingKey(verifiedProfileSnapshot.data());
-    if (!sameServerOverallRankingKey(key, verifiedKey)) {
-      profileSnapshot = verifiedProfileSnapshot;
-      continue;
-    }
-
-    const ownEntry = publicServerOverallSnapshot(profileSnapshot);
-    const participantCount = aggregateCount(participantCountSnapshot);
-    const rank = aggregateCount(betterCountSnapshot) + 1;
-    if (!ownEntry || participantCount < rank) {
-      return {
-        rank: 0,
-        participantCount,
-        rating: key.rating,
-        nextSeatGap: 0,
-        neighbors: [],
-      };
-    }
-    const beforeEntries = beforeSnapshot.docs.map(publicServerOverallSnapshot).filter(Boolean);
-    const afterEntries = afterSnapshot.docs.map(publicServerOverallSnapshot).filter(Boolean);
-    const neighborEntries = [...beforeEntries, ownEntry, ...afterEntries];
-    const neighborStartRank = rank - beforeEntries.length;
-    const nextSeat = beforeEntries.at(-1);
-    return {
-      rank,
-      participantCount,
-      rating: key.rating,
-      nextSeatGap: nextSeat
-        ? Math.max(1, Number(nextSeat.rating || 0) - key.rating + 1)
-        : 0,
-      neighbors: neighborEntries.map((entry, index) => (
-        publicServerOverallRow(entry, neighborStartRank + index)
-      )),
-    };
-  }
-
-  const participantCountSnapshot = await rankedQuery.count().get();
-  return {
-    rank: 0,
-    participantCount: aggregateCount(participantCountSnapshot),
-    rating: Number(profileSnapshot?.get?.("rating") || 1000),
-    nextSeatGap: 0,
-    neighbors: [],
-  };
-}
-
 function rankingDependencyErrorCode(error) {
   return cleanText(error?.code || error?.details || error?.message || "unknown", 80) || "unknown";
 }
@@ -2865,7 +2658,7 @@ async function maskPlayerRankingEntries(uid, rows) {
   }));
 }
 
-async function getRankingDashboard(uid) {
+async function getRankingDashboard(uid, { includePresentation = false } = {}) {
   const now = Date.now();
   const dailyKey = periodKey("daily", now);
   const runRef = isCrownCircuitPeriod("daily", dailyKey)
@@ -2878,43 +2671,23 @@ async function getRankingDashboard(uid) {
     rating: 1000,
     updatedAt: now,
   });
-  const [standingResult, customizationResult, spotlightResult] = await Promise.allSettled([
-    loadServerOverallStanding(uid, profileSnapshot),
-    loadCrownCustomizationOptions(uid),
-    realtime.ref("online/rankingSpotlights/current").get(),
+  const [customizationResult, spotlightResult] = await Promise.allSettled([
+    includePresentation ? loadCrownCustomizationOptions(uid) : Promise.resolve(fallbackCrownCustomization(profile)),
+    includePresentation ? realtime.ref("online/rankingSpotlights/current").get() : Promise.resolve(null),
   ]);
-  const standingAvailable = standingResult.status === "fulfilled";
-  const standing = standingAvailable
-    ? standingResult.value
-    : fallbackServerOverallStanding(profile.rating);
   const customization = customizationResult.status === "fulfilled"
     ? customizationResult.value
     : fallbackCrownCustomization(profile);
   const spotlightSnapshot = spotlightResult.status === "fulfilled" ? spotlightResult.value : null;
-  if (!standingAvailable
-      || customizationResult.status === "rejected"
+  if (customizationResult.status === "rejected"
       || spotlightResult.status === "rejected") {
     console.warn("ranking dashboard optional context unavailable", {
-      standing: standingAvailable ? "ok" : rankingDependencyErrorCode(standingResult.reason),
       customization: customizationResult.status === "fulfilled"
         ? "ok"
         : rankingDependencyErrorCode(customizationResult.reason),
       spotlight: spotlightResult.status === "fulfilled"
         ? "ok"
         : rankingDependencyErrorCode(spotlightResult.reason),
-    });
-  }
-  const { rank, participantCount } = standing;
-  const bestRank = rank
-    ? (profile.bestOverallRank ? Math.min(profile.bestOverallRank, rank) : rank)
-    : profile.bestOverallRank;
-  if (rank && bestRank !== profile.bestOverallRank) {
-    await serverRankingProfileRef(uid).set({
-      bestOverallRank: bestRank,
-    }, { merge: true }).catch((error) => {
-      console.warn("ranking dashboard best-rank update deferred", {
-        code: rankingDependencyErrorCode(error),
-      });
     });
   }
   const crownRun = runSnapshot?.exists
@@ -2927,24 +2700,9 @@ async function getRankingDashboard(uid) {
       rating: profile.rating,
       serverMatches: profile.serverMatches,
       provisional: profile.serverMatches < 10,
-      rateFloorEnabled: profile.rateFloorEnabled,
-      rateFloorEligible: Boolean(publicServerRateFloorProfile(profile)),
     },
-    overall: {
-      rank,
-      participantCount,
-      percentile: rank && participantCount
-        ? Math.round((100 * (participantCount - rank + 1)) / participantCount)
-        : 0,
-      topPercent: rank && participantCount
-        ? Math.max(1, Math.ceil((100 * rank) / participantCount))
-        : 0,
-      bestRank,
-      rating: standing.rating,
-      nextSeatGap: standing.nextSeatGap,
-      neighbors: await maskPlayerRankingEntries(uid, standing.neighbors),
-      contextAvailable: standingAvailable,
-    },
+    presentationIncluded: includePresentation,
+    overall: { rating: profile.rating },
     crownRun,
     customization: {
       crownTheme: profile.crownTheme,
@@ -3051,7 +2809,6 @@ async function setCrownCustomization(uid, data) {
     const next = {
       ...previous,
       crownTheme,
-      rateFloorRevision: nextServerRateFloorRevision(previous.rateFloorRevision),
       updatedAt: now,
     };
     if (crownSignatureId) next.crownSignatureId = crownSignatureId;
@@ -3059,7 +2816,6 @@ async function setCrownCustomization(uid, data) {
     transaction.set(profileRef, {
       crownTheme,
       crownSignatureId: crownSignatureId || FieldValue.delete(),
-      rateFloorRevision: next.rateFloorRevision,
       updatedAt: now,
     }, { merge: true });
     return next;
@@ -3098,7 +2854,6 @@ async function setCrownCustomization(uid, data) {
   });
   if (Object.keys(mirroredEntries).length) await batch.commit();
   await Promise.all([
-    mirrorServerOverallProfiles({ [uid]: profile }),
     mirrorCrownCircuitEntries({ [uid]: mirroredEntries }),
     syncRankingSpotlightConsent(profile),
   ]);
@@ -5780,7 +5535,6 @@ async function recordVerifiedMatch(uid, data) {
           ),
           serverMatches: serverProfile.serverMatches + 1,
           competitiveMatches: serverProfile.serverMatches + 1,
-          rateFloorRevision: nextServerRateFloorRevision(serverProfile.rateFloorRevision),
           firstRatedAt: serverProfile.firstRatedAt || now,
           updatedAt: now,
         }
@@ -5854,9 +5608,6 @@ async function recordVerifiedMatch(uid, data) {
   ]);
   if (Object.keys(serverRankingEntryResults).length) {
     postMatchOperations.push(mirrorServerRankingEntries(serverRankingEntryResults));
-  }
-  if (Object.keys(serverRankingProfileResults).length) {
-    postMatchOperations.push(mirrorServerOverallProfiles(serverRankingProfileResults));
   }
   if (Object.keys(crownRunResults).length) {
     postMatchOperations.push(mirrorCrownCircuitEntries(crownRunResults));
@@ -11106,7 +10857,9 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "set_server_ranking_participation") return await setServerRankingParticipation(uid, request.data);
     if (action === "set_rate_floor_participation") return await setServerRateFloorParticipation(uid, request.data);
     if (action === "get_server_ranking_awards") return await getServerRankingAwards(uid);
-    if (action === "get_ranking_dashboard") return await getRankingDashboard(uid);
+    if (action === "get_ranking_dashboard") return await getRankingDashboard(uid, {
+      includePresentation: request.data?.includePresentation === true,
+    });
     if (action === "start_crown_run") return await startRankingCrownRun(uid, request.data);
     if (action === "set_crown_customization") return await setCrownCustomization(uid, request.data);
     if (action === "get_match_tip") return await getPostMatchTip(uid, request.data);

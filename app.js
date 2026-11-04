@@ -34,23 +34,6 @@
   const GAME_AUDIO_MAX_OUTPUT_BYTES = 480 * 1024;
   const OFFICIAL_GAME_URL = "https://hariaistadium.com/";
   const FREE_TABLE_INVITE_QUERY_KEY = "freeTableInvite";
-  const OVERALL_RATING_CLASSES = Object.freeze([
-    { key: "beginner", label: "Beginner", emblem: "◇", min: 100, max: 1024, range: "100–1024" },
-    { key: "great", label: "Great", emblem: "✦", min: 1025, max: 1049, range: "1025–1049" },
-    { key: "expert", label: "Expert", emblem: "◆", min: 1050, max: 1099, range: "1050–1099" },
-    { key: "veteran", label: "Veteran", emblem: "✧", min: 1100, max: 1149, range: "1100–1149" },
-    { key: "ultra", label: "Ultra", emblem: "★", min: 1150, max: 1199, range: "1150–1199" },
-    { key: "master", label: "Master", emblem: "♛", min: 1200, max: 1299, range: "1200–1299" },
-    { key: "legend", label: "Legend", emblem: "♛", min: 1300, max: 3000, range: "1300+" },
-  ]);
-  const BEYOND_RATING_CLASS = Object.freeze({
-    key: "beyond",
-    label: "BEYOND",
-    emblem: "✺",
-    min: 1400,
-    max: 3000,
-    range: "1400+ / 月間TOP10",
-  });
   const CROWN_SIGNATURES = Object.freeze({
     upset: Object.freeze({ label: "番狂わせ", icon: "⚡", description: "期待勝率25％以下の相手に勝利" }),
     triple_unbeaten: Object.freeze({ label: "三戦無敗", icon: "✦", description: "三戦証明を無敗で完走" }),
@@ -480,37 +463,6 @@
     return Math.min(3000, Math.max(100, Math.round(Number.isFinite(rating) ? rating : 1000)));
   }
 
-  function overallRatingClass(value) {
-    const rating = normalizeOverallRating(value);
-    return OVERALL_RATING_CLASSES.find((ratingClass) => rating <= ratingClass.max) || OVERALL_RATING_CLASSES.at(-1);
-  }
-
-  function renderOverallRatingClassBadge(ratingClass, rating, { decorative = false, monthlyRank = 0 } = {}) {
-    const beyond = ratingClass.key === BEYOND_RATING_CLASS.key;
-    const accessibleAttributes = decorative
-      ? 'aria-hidden="true"'
-      : beyond
-        ? `aria-label="BEYONDクラス、月間総合ランキング${monthlyRank}位、総合RATE ${normalizeOverallRating(rating)}" title="BEYONDクラス / 月間${monthlyRank}位・総合RATE ${normalizeOverallRating(rating)}"`
-        : `aria-label="総合RATEクラス ${ratingClass.label}、総合RATE ${normalizeOverallRating(rating)}" title="${ratingClass.label}クラス / 総合RATE ${ratingClass.range}"`;
-    return `<span class="rating-class-badge class-${ratingClass.key}" ${accessibleAttributes}>
-      <span class="rating-class-emblem" aria-hidden="true">${ratingClass.emblem}</span>
-      <span class="rating-class-name">${ratingClass.label}</span>
-      ${beyond ? `<span class="rating-class-rank">${decorative ? "TOP 10" : `M#${monthlyRank}`}</span>` : ""}
-    </span>`;
-  }
-
-  function renderOverallRatingClassGuide() {
-    const classItems = [...OVERALL_RATING_CLASSES, BEYOND_RATING_CLASS].map((ratingClass) => `<li>
-      ${renderOverallRatingClassBadge(ratingClass, ratingClass.min, { decorative: true })}
-      <small>RATE ${ratingClass.range}</small>
-    </li>`).join("");
-    return `<details class="rating-class-guide">
-      <summary><span><small>OVERALL RATE CLASS</small><strong>総合RATEクラス</strong></span><em>ランキング限定表示</em></summary>
-      <p>基本クラスはリセットされない総合RATEで判定します。BEYONDはRATE 1400以上かつ当月マンスリー総合ランキング10位以内の間だけ有効です。クラスは対戦画面には表示されません。</p>
-      <ol>${classItems}</ol>
-    </details>`;
-  }
-
   function showToast(message) {
     toast.textContent = message;
     toast.classList.add("show");
@@ -784,7 +736,7 @@
     } else if (rankingCommentIdentityStatus !== "ready") {
       composer = `<div class="ranking-comment-auth"><p>ランキング参加者は、このプレイヤーへ1件コメントできます。</p><button class="button button-ghost button-small" type="button" data-ranking-comment-auth="${escapeHtml(entryId)}">投稿資格を確認</button></div>`;
     } else if (!rankingCommentIdentity?.canPost) {
-      composer = `<p class="ranking-comment-guide">コメントするには、いずれかのオンライン対戦準備画面またはランキング画面で「オンライン総合ランキングに参加する」を有効にしてください。</p>`;
+      composer = `<p class="ranking-comment-guide">コメントするには、いずれかのオンライン対戦準備画面またはランキング画面で「オンラインランキングに参加する」を有効にしてください。</p>`;
     } else if (identityEntryId === entryId) {
       composer = `<p class="ranking-comment-guide">自分の欄には投稿できません。寄せられたコメントは削除できます。</p>`;
     } else {
@@ -1035,72 +987,6 @@
     return `<span class="ranking-signature crown-theme-${escapeHtml(theme)} ${large ? "is-large" : ""}" title="${escapeHtml(signature.description)}"><i aria-hidden="true">${escapeHtml(signature.icon)}</i><span><small>SIGNATURE</small>${escapeHtml(signature.label)}</span></span>`;
   }
 
-  function renderOverallLeaderboardSection() {
-    const entries = window.HariaiOnline?.getOverallLeaderboard?.() || [];
-    const status = window.HariaiOnline?.getOverallLeaderboardStatus?.() || "idle";
-    const dashboard = window.HariaiOnline?.getRankingDashboard?.();
-    const ownEntryId = String(dashboard?.entryId || "");
-    const rows = entries.length ? entries.map((entry, index) => {
-      const entryId = String(entry.entryId || "");
-      const expanded = expandedRankingEntryId === entryId;
-      const commentsEnabled = entry.commentsEnabled !== false;
-      const overallRating = normalizeOverallRating(entry.rating);
-      const monthlyBeyondRank = Number(window.HariaiOnline?.getMonthlyBeyondRank?.(entryId, overallRating) || 0);
-      const ratingClass = monthlyBeyondRank > 0 ? BEYOND_RATING_CLASS : overallRatingClass(overallRating);
-      const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating, { monthlyRank: monthlyBeyondRank });
-      const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
-      const activeAward = entry.rankingAwardLabel && Number(entry.rankingAwardUntil || 0) > Date.now()
-        ? `<span class="ranking-award-earned">${escapeHtml(entry.rankingAwardLabel)}</span>`
-        : "";
-      const theme = Object.hasOwn(CROWN_THEMES, entry.crownTheme) ? entry.crownTheme : "rose";
-      return `<article class="ranking-entry overall-ranking-entry ranking-class-${ratingClass.key} crown-theme-${escapeHtml(theme)} ${entryId === ownEntryId ? "is-self" : ""} ${expanded ? "is-expanded" : ""}">
-        <div class="ranking-row">
-          <strong class="ranking-position">#${index + 1}</strong>
-          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${Math.max(0, Number(entry.serverMatches || 0))}戦の検証済みRATE</small>${activeAward}${renderCrownSignature(entry)}${achievementBadges}</div>
-          <div class="ranking-rating"><strong>${overallRating}</strong><small>OVERALL RATE</small></div>
-          <div class="ranking-record"><span>${entryId === ownEntryId ? "あなたの現在席" : `上位 ${index + 1}席`}</span><div class="ranking-overall-rate">${ratingClassBadge}</div></div>
-          ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}
-        </div>
-        ${expanded ? renderRankingCommentPanel(entry) : ""}
-      </article>`;
-    }).join("") : status === "error"
-      ? `<div class="ranking-empty">総合RATEランキングを取得できませんでした。<br /><button class="button button-ghost button-small" id="overallRankingRetryButton">もう一度取得</button></div>`
-      : status === "ready"
-        ? `<div class="ranking-empty">総合RATEを公開しているプレイヤーはまだいません。</div>`
-        : `<div class="ranking-empty">総合RATEランキングを取得しています…</div>`;
-    return `<section class="ranking-overall-section" id="rankingOverallBoard" aria-labelledby="overallRateRankingTitle">
-      <div class="ranking-board-head"><div><span class="eyebrow">PERMANENT STRENGTH / TOP 10</span><h2 id="overallRateRankingTitle">総合RATEランキング</h2></div><p>期間でリセットされない、通常型・戦略型1on1の上位10席です。</p></div>
-      <div class="ranking-list" aria-label="総合RATEランキング TOP10">${rows}</div>
-    </section>`;
-  }
-
-  function renderRateFloorLeaderboardSection() {
-    const entries = window.HariaiOnline?.getRateFloorLeaderboard?.() || [];
-    const status = window.HariaiOnline?.getRateFloorLeaderboardStatus?.() || "idle";
-    const rows = entries.length ? entries.map((entry) => {
-      const signature = renderCrownSignature(entry);
-      const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
-      const showcase = signature || achievementBadges
-        ? `<div class="rate-floor-showcase">${signature}${achievementBadges}</div>`
-        : "";
-      return `<article class="rate-floor-entry">
-      <strong class="rate-floor-position">FLOOR #${Math.max(1, Number(entry.rank || 1))}</strong>
-      <div class="rate-floor-player"><b>${escapeHtml(entry.name)}</b><small>${Math.max(0, Number(entry.serverMatches || 0))}戦の検証済みRATE</small></div>
-      <div class="rate-floor-rating"><strong>${normalizeOverallRating(entry.rating)}</strong><small>RATE</small></div>
-      ${showcase}
-    </article>`;
-    }).join("") : status === "error"
-      ? `<div class="ranking-empty">下限チャレンジを取得できませんでした。<br /><button class="button button-ghost button-small" id="rateFloorRankingRetryButton">もう一度取得</button></div>`
-      : status === "ready"
-        ? `<div class="ranking-empty">下限チャレンジの公開参加者はまだいません。</div>`
-        : `<div class="ranking-empty">下限チャレンジを取得しています…</div>`;
-    return `<section class="rate-floor-section" id="rankingRateFloorBoard" aria-labelledby="rateFloorRankingTitle">
-      <div class="ranking-board-head"><div><span class="eyebrow">RATE FLOOR / LOWEST 10</span><h2 id="rateFloorRankingTitle">下限チャレンジ</h2></div><p>本人が参加を選んだプレイヤーだけを、現在の総合RATEが低い順に最大10席表示します。参加者1名から公開します。</p></div>
-      <div class="rate-floor-list" aria-label="下限チャレンジ RATEが低い順の最大10席">${rows}</div>
-      <p class="rate-floor-note">検証済みRATE戦10戦以上が対象です。同RATEは同順位。下限順位による追加報酬・専用実績の付与はありません。獲得済みのSIGNATURE・公開実績は表示されます。対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映されます。</p>
-    </section>`;
-  }
-
   function renderRankingSpotlight() {
     const dashboard = window.HariaiOnline?.getRankingDashboard?.();
     const spotlight = dashboard?.spotlight;
@@ -1202,33 +1088,12 @@
     const dashboard = window.HariaiOnline?.getRankingDashboard?.();
     const statusState = window.HariaiOnline?.getRankingDashboardStatus?.() || { status: "idle", error: "", busy: false };
     if (!dashboard && (statusState.status === "idle" || statusState.status === "loading")) {
-      return `<section class="ranking-dashboard is-loading"><p>自分の順位と三戦証明を読み込んでいます…</p></section>`;
+      return `<section class="ranking-dashboard is-loading"><p>三戦証明を読み込んでいます…</p></section>`;
     }
     if (!dashboard && statusState.status === "error") {
-      return `<section class="ranking-dashboard is-error"><p>${escapeHtml(statusState.error || "自分の順位情報を取得できませんでした。")}</p><button class="button button-ghost button-small" id="rankingDashboardRetryButton" type="button">もう一度取得</button></section>`;
+      return `<section class="ranking-dashboard is-error"><p>${escapeHtml(statusState.error || "三戦証明を取得できませんでした。")}</p><button class="button button-ghost button-small" id="rankingDashboardRetryButton" type="button">もう一度取得</button></section>`;
     }
-    const overall = dashboard?.overall || {};
-    const rank = Number(overall.rank || 0);
-    const participants = Number(overall.participantCount || 0);
-    const topPercent = rank > 0 && participants > 0
-      ? Math.max(1, Math.ceil(Number(overall.topPercent || (rank / participants) * 100)))
-      : 0;
-    const neighbors = Array.isArray(overall.neighbors) ? overall.neighbors : [];
-    const neighborRows = neighbors.length ? neighbors.map((entry) => {
-      const own = String(entry.entryId || "") === String(dashboard.entryId || "");
-      return `<li class="${own ? "is-self" : ""}"><strong>#${Number(entry.rank || 0) || "—"}</strong><span>${escapeHtml(entry.name)}${own ? "<small>あなた</small>" : ""}</span><b>${Number(entry.rating || 1000)}<small>RATE</small></b></li>`;
-    }).join("") : `<li class="is-empty">前後席は正式順位が付くと表示されます。</li>`;
-    const nextSeatCopy = rank > 1
-      ? `ひとつ上の席まで <strong>+${Math.max(1, Number(overall.nextSeatGap || 1))} RATE</strong>`
-      : rank === 1 ? "<strong>現在、第1席です</strong>" : "正式順位を測定中です";
-    const contextNotice = overall.contextAvailable === false
-      ? `<p class="ranking-dashboard-context-notice" role="status">順位の周辺情報だけを更新中です。三戦証明と対戦はそのまま利用できます。</p>`
-      : "";
-    return `<section class="ranking-dashboard" aria-labelledby="rankingDashboardTitle">
-      <div class="ranking-dashboard-head"><div><span class="eyebrow">YOUR RIVAL ZONE</span><h2 id="rankingDashboardTitle">あなたの現在地</h2></div><div class="ranking-dashboard-rank"><strong>${rank ? `#${rank}` : "—"}</strong><span>${topPercent ? `上位${topPercent}%` : "測定中"}</span></div></div>
-      <div class="ranking-dashboard-summary"><span><small>総合RATE</small><strong>${Number(overall.rating || 1000)}</strong></span><span><small>自己最高</small><strong>${Number(overall.bestRank || 0) ? `#${Number(overall.bestRank)}` : "—"}</strong></span><p>${nextSeatCopy}</p></div>
-      ${contextNotice}
-      <ol class="ranking-neighbor-list" aria-label="自分の前後3人">${neighborRows}</ol>
+    return `<section class="ranking-dashboard" aria-label="三戦証明と王座設定">
       ${renderCrownRunPanel(dashboard)}
       ${renderCrownCustomization(dashboard)}
     </section>`;
@@ -1295,9 +1160,7 @@
 
   function refreshRankingSurfaces() {
     refreshSelectedRankingPeriod();
-    window.HariaiOnline?.refreshOverallLeaderboard?.();
-    window.HariaiOnline?.refreshRateFloorLeaderboard?.();
-    window.HariaiOnline?.refreshRankingDashboard?.();
+    window.HariaiOnline?.refreshRankingDashboard?.({ includePresentation: true });
   }
 
   function selectRankingPeriod(period) {
@@ -1319,21 +1182,15 @@
 
   function rankingJumpSurfacesSettled() {
     const selectedStatus = window.HariaiOnline?.getLeaderboardStatus?.() || "idle";
-    const overallStatus = window.HariaiOnline?.getOverallLeaderboardStatus?.() || "idle";
-    const rateFloorStatus = window.HariaiOnline?.getRateFloorLeaderboardStatus?.() || "idle";
     const dashboardStatus = window.HariaiOnline?.getRankingDashboardStatus?.()?.status || "idle";
     return !["idle", "loading"].includes(selectedStatus)
-      && !["idle", "loading"].includes(overallStatus)
-      && !["idle", "loading"].includes(rateFloorStatus)
       && !["idle", "loading"].includes(dashboardStatus);
   }
 
   function applyPendingRankingJump() {
     const targetName = pendingRankingJump;
     if (!targetName || currentScreen !== "ranking") return;
-    const selector = targetName === "overall"
-      ? "#rankingOverallBoard"
-      : targetName === "floor" ? "#rankingRateFloorBoard" : "#rankingCircuitBoard";
+    const selector = "#rankingCircuitBoard";
     window.requestAnimationFrame(() => {
       if (pendingRankingJump !== targetName || currentScreen !== "ranking") return;
       document.querySelector(selector)?.scrollIntoView({ behavior: "auto", block: "start" });
@@ -1343,16 +1200,6 @@
 
   function navigateRankingSection(target) {
     const selected = String(target || "");
-    if (selected === "overall") {
-      pendingRankingJump = "overall";
-      applyPendingRankingJump();
-      return;
-    }
-    if (selected === "floor") {
-      pendingRankingJump = "floor";
-      applyPendingRankingJump();
-      return;
-    }
     if (!["daily", "weekly", "monthly"].includes(selected)) return;
     pendingRankingJump = "circuit";
     selectRankingPeriod(selected);
@@ -1360,7 +1207,7 @@
   }
 
   function refreshRankingAtPeriodBoundary() {
-    if (currentScreen !== "ranking") return;
+    if (currentScreen !== "ranking" || document.visibilityState !== "visible") return;
     const info = rankingPeriodInfo();
     if (!viewingFinalizedWeekly(info)
         && info.key
@@ -1369,7 +1216,7 @@
       return;
     }
     const monthlyLoad = window.HariaiOnline?.getMonthlyBeyondLoadState?.();
-    if (monthlyLoad?.currentPeriodKey
+    if (rankingPeriod === "monthly" && monthlyLoad?.currentPeriodKey
         && !monthlyLoad.ready
         && Date.now() >= Number(monthlyLoad.retryAt || 0)) {
       window.HariaiOnline?.refreshMonthlyBeyondRanking?.().catch((error) => console.error(error));
@@ -1404,13 +1251,7 @@
 
   function bindRankingDashboardEvents() {
     document.querySelector("#rankingDashboardRetryButton")?.addEventListener("click", () => {
-      window.HariaiOnline?.refreshRankingDashboard?.();
-    });
-    document.querySelector("#overallRankingRetryButton")?.addEventListener("click", () => {
-      window.HariaiOnline?.refreshOverallLeaderboard?.();
-    });
-    document.querySelector("#rateFloorRankingRetryButton")?.addEventListener("click", () => {
-      window.HariaiOnline?.refreshRateFloorLeaderboard?.();
+      window.HariaiOnline?.refreshRankingDashboard?.({ includePresentation: true });
     });
     document.querySelector("#crownRunStartButton")?.addEventListener("click", beginDailyCrownRun);
     document.querySelector("#crownRunSoloButton")?.addEventListener("click", startOnlineBattle);
@@ -1466,9 +1307,6 @@
       const expanded = expandedRankingEntryId === entryId;
       const commentsEnabled = entry.commentsEnabled !== false;
       const overallRating = normalizeOverallRating(entry.rating);
-      const monthlyBeyondRank = Number(window.HariaiOnline?.getMonthlyBeyondRank?.(entryId, overallRating) || 0);
-      const ratingClass = monthlyBeyondRank > 0 ? BEYOND_RATING_CLASS : overallRatingClass(overallRating);
-      const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating, { monthlyRank: monthlyBeyondRank });
       const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
       const activeAward = entry.rankingAwardLabel && Number(entry.rankingAwardUntil || 0) > Date.now()
         ? `<span class="ranking-award-earned">${escapeHtml(entry.rankingAwardLabel)}</span>`
@@ -1492,12 +1330,12 @@
         const modeBreakdown = periodInfo.period === "daily"
           ? `<span class="ranking-mode-points" aria-label="証明に使ったモード"><em>通常 ${Number(entry.modeMatches?.solo || 0)}戦</em><em>戦略 ${Number(entry.modeMatches?.strategy || 0)}戦</em></span>`
           : "";
-        return `<article class="ranking-entry crown-ranking-entry ranking-class-${ratingClass.key} crown-theme-${escapeHtml(theme)} is-server-verified ${provisional ? "is-provisional" : ""} ${expanded ? "is-expanded" : ""}">
+        return `<article class="ranking-entry crown-ranking-entry crown-theme-${escapeHtml(theme)} is-server-verified ${provisional ? "is-provisional" : ""} ${expanded ? "is-expanded" : ""}">
           <div class="ranking-row">
             <strong class="ranking-position">${seat ? `#${seat}` : "審査中"}</strong>
             <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${provisional ? `${proofCount}${periodInfo.period === "daily" ? "戦" : periodInfo.period === "weekly" ? "日" : "週"} / 成立条件まで挑戦中` : "王座スコア成立"}</small>${renderCrownSignature(entry)}${achievementBadges}</div>
             <div class="ranking-rating"><strong>${score}</strong><small>${scoreLabel}</small></div>
-            <div class="ranking-record"><span>${recordCopy}</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
+            <div class="ranking-record"><span>${recordCopy}</span>${modeBreakdown}</div>
             ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}
           </div>
           ${expanded ? renderRankingCommentPanel(entry) : ""}
@@ -1512,12 +1350,12 @@
       const modeBreakdown = `<span class="ranking-mode-points" aria-label="モード別期間スコア"><em>通常 ${modePoints.solo}</em><em>戦略 ${modePoints.strategy}</em></span>`;
       const provisional = matches < Number(periodInfo.minimumMatches || 1);
       const awardPreview = rankingAwardPreview(periodInfo, index + 1, matches);
-      return `<article class="ranking-entry ranking-class-${ratingClass.key} ${periodInfo.serverAuthoritative ? "is-server-verified" : "is-legacy-ranking"} ${expanded ? "is-expanded" : ""}">
+      return `<article class="ranking-entry ${periodInfo.serverAuthoritative ? "is-server-verified" : "is-legacy-ranking"} ${expanded ? "is-expanded" : ""}">
         <div class="ranking-row">
           <strong class="ranking-position">${index + 1}</strong>
           <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small>${activeAward}${awardPreview}${achievementBadges}</div>
           <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD SCORE</small></div>
-          <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
+          <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span>${modeBreakdown}</div>
           ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}
         </div>
         ${expanded ? renderRankingCommentPanel(entry) : ""}
@@ -1563,15 +1401,13 @@
       : resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : "";
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
-        <div><span class="eyebrow">STRENGTH / PROOF / PERSONAL CROWN</span><h1>オンライン総合ランキング</h1>
-          <p>期間で消えない総合RATEを主役に、通常型・戦略型1on1で今日の王座を証明します。</p></div>
+        <div><span class="eyebrow">DAILY / WEEKLY / MONTHLY</span><h1>オンラインランキング</h1>
+          <p>通常型・戦略型1on1の成績を、デイリー・ウィークリー・マンスリーで競います。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
       <nav class="ranking-jump-nav" aria-label="ランキング内の移動">
         <span><strong>公開TOP10</strong><small>見たいランキングへすぐ移動</small></span>
         <div>
-          <button type="button" data-ranking-jump="overall">総合RATE</button>
-          <button type="button" data-ranking-jump="floor">下限</button>
           <button type="button" data-ranking-jump="daily">デイリー</button>
           <button type="button" data-ranking-jump="weekly">ウィークリー</button>
           <button type="button" data-ranking-jump="monthly">マンスリー</button>
@@ -1580,9 +1416,6 @@
       ${participationMenu}
       ${renderRankingDashboardPanel()}
       ${renderRankingSpotlight()}
-      ${renderOverallLeaderboardSection()}
-      ${renderRateFloorLeaderboardSection()}
-      ${renderOverallRatingClassGuide()}
       <section class="ranking-circuit-section" id="rankingCircuitBoard" aria-labelledby="crownCircuitRankingTitle">
         <div class="ranking-circuit-head"><div><span class="eyebrow">CROWN CIRCUIT / TOP 10</span><h2 id="crownCircuitRankingTitle">期間王座サーキット</h2></div><p>公開は上位10席。挑むと決めた日の短期決戦で、デイリーの好成績が週間・月間へ昇格します。</p></div>
         <div class="ranking-period-tabs" role="tablist" aria-label="ランキング期間">
@@ -1598,7 +1431,7 @@
         </div>
         ${monthlyOpeningNotice}
         <div class="ranking-list" aria-label="期間王座ランキング">${rows}</div>
-        <p class="ranking-casual-note">${periodInfo.crownCircuit ? "デイリーは毎日3戦で完結。週間は成立したデイリーの上位3日、月間は成立した週間の上位3週だけを採用します。参加しない日は減点されず、総合RATEもリセットされません。" : "移行前に確定した期間スコアは当時の記録として保持します。新しい集計対象は通常型・戦略型1on1だけです。"} BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。</p>
+        <p class="ranking-casual-note">${periodInfo.crownCircuit ? "デイリーは毎日3戦で完結。週間は成立したデイリーの上位3日、月間は成立した週間の上位3週だけを採用します。参加しない日は減点されません。" : "移行前に確定した期間スコアは当時の記録として保持します。新しい集計対象は通常型・戦略型1on1だけです。"}</p>
       </section>
       ${renderMonthlyHallOfFame()}
       ${renderRankingAwardsPanel()}
@@ -1620,6 +1453,7 @@
     window.HariaiOnline?.bindOverallRankingParticipation?.({
       controlId: "rankingOverallParticipation",
       onUpdate: () => {
+        if (currentScreen !== "ranking") return;
         renderRankingScreen({ preserveScroll: true });
         refreshRankingSurfaces();
       },

@@ -35,25 +35,6 @@ function loadRateFloorNormalizer(achievements = loadAchievements()) {
   `)({ HariaiAchievements: achievements });
 }
 
-function renderRateFloor(entries, { achievements = loadAchievements(), status = "ready" } = {}) {
-  const app = read("app.js");
-  return Function("window", `
-    const INITIAL_RATING = 1000;
-    ${sourceBetween(app, "const CROWN_SIGNATURES", "const CROWN_CIRCUIT_START_LABEL")}
-    ${sourceBetween(app, "function escapeHtml", "\n  }\n")}\n}
-    ${sourceBetween(app, "function normalizeOverallRating", "\n  }\n")}\n}
-    ${sourceBetween(app, "function crownSignaturePresentation", "function renderOverallLeaderboardSection")}
-    ${sourceBetween(app, "function renderRateFloorLeaderboardSection", "function renderRankingSpotlight")}
-    return renderRateFloorLeaderboardSection();
-  `)({
-    HariaiAchievements: achievements,
-    HariaiOnline: {
-      getRateFloorLeaderboard: () => entries,
-      getRateFloorLeaderboardStatus: () => status,
-    },
-  });
-}
-
 function loadShowcaseActions({ failSave = false, failRefresh = false } = {}) {
   const online = read("online.js");
   const calls = [];
@@ -74,7 +55,7 @@ function loadShowcaseActions({ failSave = false, failRefresh = false } = {}) {
       calls.push("floor");
       if (failRefresh) throw new Error("再取得エラー");
     },
-    async refreshLeaderboard(period, options) { calls.push({ period, options }); },
+    async refreshLeaderboard(period, options) { calls.push({ period, options }); if (failRefresh) throw new Error("再取得エラー"); },
     applyAchievementPayload(value) { calls.push({ appliedAchievements: value }); },
     showToast(value) { toasts.push(value); },
     render() {},
@@ -119,12 +100,12 @@ test("public boards display TOP 10 while complex legacy points ordering keeps it
     "async function readCachedPeriodPublicTop10",
   );
   assert.match(legacyRead, /limit: LEGACY_PERIOD_QUERY_LIMIT/);
-  assert.match(app, /PERMANENT STRENGTH \/ TOP 10/);
+  assert.doesNotMatch(app, /PERMANENT STRENGTH/);
   assert.match(app, /CROWN CIRCUIT \/ TOP 10/);
   assert.doesNotMatch(app, /TOP 50/);
 });
 
-test("overall tenth-seat ties use Firebase key order and only fetch the missing boundary seats", () => {
+test("Firebase key ordering remains deterministic for period tie breaks", () => {
   const online = read("online.js");
   const keyComparator = sourceBetween(
     online,
@@ -151,23 +132,6 @@ test("overall tenth-seat ties use Firebase key order and only fetch the missing 
     "z000000000000000",
   ]);
 
-  const overallRead = sourceBetween(
-    online,
-    "async function readOverallPublicTop10",
-    "async function readCrownCircuitPublicTop10",
-  );
-  assert.match(overallRead, /limit: PUBLIC_RANKING_LIMIT/);
-  assert.match(overallRead, /boundarySeats = Math\.max\(0, PUBLIC_RANKING_LIMIT - higherEntries\.length\)/);
-  assert.match(overallRead, /equalToValue: boundaryRating/);
-  assert.match(overallRead, /limit: boundarySeats/);
-  assert.match(overallRead, /limitDirection: "first"/);
-  const overallNormalize = sourceBetween(
-    online,
-    "function normalizeOverallLeaderboardRecords",
-    "function crownCircuitEntryIsQualified",
-  );
-  assert.match(overallNormalize, /compareFirebaseKeys\(first\.entryId, second\.entryId\)/);
-  assert.doesNotMatch(overallNormalize, /localeCompare/);
 });
 
 test("RATE FLOOR reads the lowest ten deterministically and uses competition ranks for ties", () => {
@@ -208,59 +172,8 @@ test("RATE FLOOR reads the lowest ten deterministically and uses competition ran
     "achievementShowcase", "crownSignatureId", "crownTheme", "entryId", "name", "rank", "rating", "serverMatches",
   ]);
 
-  const publicRead = sourceBetween(
-    online,
-    "async function readRateFloorPublicTop10",
-    "async function readCrownCircuitPublicTop10",
-  );
-  assert.match(publicRead, /online\/serverRateFloorLeaderboard/);
-  assert.match(publicRead, /orderByChildKey: "rating"/);
-  assert.match(publicRead, /limit: PUBLIC_RANKING_LIMIT/);
-  assert.match(publicRead, /limitDirection: "first"/);
 });
 
-test("RATE FLOOR keeps its server-backed opt-in and ten-match wait while showing existing public decorations", () => {
-  const online = read("online.js");
-  const app = read("app.js");
-  const setting = sourceBetween(
-    online,
-    "function renderRateFloorParticipation",
-    "function renderOverallRankingParticipation",
-  );
-  const action = sourceBetween(
-    online,
-    "async function setRateFloorParticipation",
-    "async function startCrownRun",
-  );
-  const board = sourceBetween(
-    app,
-    "function renderRateFloorLeaderboardSection",
-    "function renderRankingSpotlight",
-  );
-
-  assert.match(setting, /下限チャレンジを公開する/);
-  assert.match(setting, /検証済みRATE戦10戦以上/);
-  assert.match(setting, /公開参加者が1名でも表示/);
-  assert.match(setting, /下限順位による追加報酬・専用実績の付与はありません。獲得済みのSIGNATURE・公開実績は表示されます/);
-  assert.match(setting, /対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映/);
-  assert.match(action, /action: "set_rate_floor_participation"/);
-  assert.match(action, /enabled: Boolean\(enabled\)/);
-  assert.doesNotMatch(online, /RATE_FLOOR_PUBLIC_KEY/);
-
-  assert.match(board, /RATE FLOOR \/ LOWEST 10/);
-  assert.match(board, /FLOOR #/);
-  assert.match(board, /entry\.rank/);
-  assert.match(board, /entry\.name/);
-  assert.match(board, /entry\.rating/);
-  assert.match(board, /entry\.serverMatches/);
-  assert.match(board, /下限順位による追加報酬・専用実績の付与はありません。獲得済みのSIGNATURE・公開実績は表示されます/);
-  assert.match(board, /対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映/);
-  assert.match(board, /renderCrownSignature\(entry\)/);
-  assert.match(board, /renderBadges\?\.\(entry\.achievementShowcase\)/);
-  assert.doesNotMatch(board, /renderRankingXLink|ranking-comment/i);
-  assert.match(app, /data-ranking-jump="floor"/);
-  assert.match(app, /refreshRateFloorLeaderboard/);
-});
 
 test("RATE FLOOR only preserves validated public decorations and caps the showcase at three", () => {
   const achievements = loadAchievements();
@@ -294,41 +207,19 @@ test("RATE FLOOR safely handles missing, invalid and hidden public decorations",
     assert.equal(entry.crownTheme, "rose");
     assert.equal(entry.crownSignatureId, "");
     assert.deepEqual(entry.achievementShowcase, []);
-    assert.doesNotMatch(renderRateFloor([entry]), /class="rate-floor-showcase"|class="ranking-signature|class="achievement-badge/);
   }
   assert.deepEqual(normalize({ hidden: { ...base, rateFloorHidden: true, crownSignatureId: "upset" }, invalid: null }), []);
   assert.deepEqual(normalize(null), []);
   const [unavailable] = loadRateFloorNormalizer(null)({ player: { ...base, achievementShowcase: "battle_total_10" } });
   assert.deepEqual(unavailable.achievementShowcase, []);
-  assert.doesNotMatch(renderRateFloor([unavailable], { achievements: null }), /class="rate-floor-showcase"/);
-  assert.match(renderRateFloor([]), /公開参加者はまだいません/);
-  assert.match(renderRateFloor([], { status: "error" }), /id="rateFloorRankingRetryButton"/);
 });
 
-test("RATE FLOOR renders the shared SIGNATURE, FINAL and SECRET badges with escaped player names", () => {
-  const achievements = loadAchievements();
-  const final = achievements.catalog.find((entry) => entry.level === 10 && !entry.secret);
-  const secret = achievements.catalog.find((entry) => entry.secret);
-  const entries = loadRateFloorNormalizer(achievements)({ player: {
-    name: "<b>Player</b>", rating: 700, serverMatches: 12,
-    crownTheme: "gold", crownSignatureId: "daily_champion",
-    achievementShowcase: [final.id, secret.id],
-  } });
-  const html = renderRateFloor(entries, { achievements });
-  assert.match(html, /class="ranking-signature crown-theme-gold/);
-  assert.match(html, /デイリー王者/);
-  assert.match(html, /FINAL Lv\.10/);
-  assert.match(html, /SECRET/);
-  assert.match(html, /&lt;b&gt;Player&lt;\/b&gt;/);
-  assert.ok(html.includes(achievements.renderBadges(entries[0].achievementShowcase)));
-  assert.doesNotMatch(html, /ranking-x-link|ranking-comment/);
-});
 
-test("saved crown customization refreshes RATE FLOOR and keeps successful saves successful when a read fails", async () => {
+test("saved crown customization refreshes only the selected period and tolerates refresh failures", async () => {
   const actions = loadShowcaseActions({ failRefresh: true });
   assert.deepEqual(await actions.setCrownCustomization({ crownTheme: "gold", crownSignatureId: "upset" }), { updated: true });
   assert.deepEqual(actions.calls[0], { action: "set_crown_customization", crownTheme: "gold", crownSignatureId: "upset" });
-  assert.deepEqual(actions.calls.filter((call) => typeof call === "string"), ["overall", "floor"]);
+  assert.deepEqual(actions.calls.filter((call) => typeof call === "string"), []);
   assert.deepEqual(actions.calls.at(-1), { period: "weekly", options: { force: true, key: "2026-09-14" } });
   assert.equal(actions.isBusy(), false);
   const rejected = loadShowcaseActions({ failSave: true });
@@ -337,11 +228,11 @@ test("saved crown customization refreshes RATE FLOOR and keeps successful saves 
   assert.equal(rejected.isBusy(), false);
 });
 
-test("saved achievement selections refresh RATE FLOOR but rejected saves do not publish or report success", async () => {
+test("saved achievement selections refresh only the selected period and rejected saves do not publish", async () => {
   const actions = loadShowcaseActions({ failRefresh: true });
   await actions.saveAchievementShowcase([]);
   assert.deepEqual(actions.calls[0], { action: "set_achievement_showcase", achievementIds: [] });
-  assert.deepEqual(actions.calls.filter((call) => typeof call === "string"), ["overall", "floor"]);
+  assert.deepEqual(actions.calls.filter((call) => typeof call === "string"), []);
   assert.deepEqual(actions.toasts, ["ランキングの実績ショーケースを更新しました。"]);
   assert.equal(actions.state.achievementsBusy, false);
   const rejected = loadShowcaseActions({ failSave: true });
@@ -393,7 +284,8 @@ test("period revisits, monthly BEYOND, and Hall of Fame reuse bounded session ca
     "async function ensureAuthenticated",
   );
   assert.match(refresh, /readCachedPeriodPublicTop10\(periodInfo, selectedPeriod, \{ force \}\)/);
-  assert.match(refresh, /refreshMonthlyBeyondCache\(\)\.catch\(\(\) => null\)/);
+  assert.doesNotMatch(refresh, /supportingMonthlyPromise/);
+  assert.match(refresh, /selectedPeriod === "monthly"/);
   assert.match(refresh, /refreshMonthlyHallOfFame\(\)\.catch\(\(\) => null\)/);
   assert.doesNotMatch(refresh, /readPublicDatabasePath\(/);
 
@@ -437,14 +329,14 @@ test("an empty monthly read is successful and failures retry monthly only after 
   const monthlyRecovery = sourceBetween(
     online,
     "async function refreshMonthlyBeyondRanking",
-    "async function refreshOverallLeaderboard",
+    "async function refreshRankingDashboard",
   );
   assert.match(monthlyRecovery, /leaderboardPeriod === "monthly"/);
   assert.match(monthlyRecovery, /leaderboardEntries = entries/);
   assert.match(monthlyRecovery, /leaderboardStatus = "ready"/);
 });
 
-test("top navigation reaches all four boards while Rival Zone and personal run remain visible", () => {
+test("top navigation reaches exactly three periods while personal proof remains visible", () => {
   const app = read("app.js");
   const styles = read("styles.css");
   const navigation = sourceBetween(
@@ -456,13 +348,13 @@ test("top navigation reaches all four boards while Rival Zone and personal run r
   const jumpIndex = rankingScreen.indexOf('class="ranking-jump-nav"');
   const dashboardIndex = rankingScreen.indexOf("${renderRankingDashboardPanel()}");
   assert.ok(jumpIndex >= 0 && jumpIndex < dashboardIndex);
-  for (const target of ["overall", "daily", "weekly", "monthly"]) {
+  for (const target of ["daily", "weekly", "monthly"]) {
     assert.match(rankingScreen, new RegExp(`data-ranking-jump="${target}"`));
   }
-  assert.match(app, /YOUR RIVAL ZONE/);
+  assert.doesNotMatch(app, /YOUR RIVAL ZONE|あなたの現在地|data-ranking-jump="(?:overall|floor)"/);
   assert.match(app, /renderCrownRunPanel\(dashboard\)/);
   assert.match(navigation, /getLeaderboardStatus/);
-  assert.match(navigation, /getOverallLeaderboardStatus/);
+  assert.doesNotMatch(navigation, /getOverallLeaderboardStatus|getRateFloorLeaderboardStatus/);
   assert.match(navigation, /getRankingDashboardStatus/);
   assert.match(navigation, /pendingRankingJump = "circuit"/);
   assert.match(navigation, /applyPendingRankingJump\(\)/);
@@ -480,14 +372,11 @@ test("all changed browser assets share the ranking TOP 10 cache marker", () => {
   assert.match(html, /online\.js\?v=[^"]*ranking-top10-v3/);
 });
 
-test("all RATE FLOOR browser assets share a cache marker", () => {
+test("updated ranking assets share the period-only cache marker", () => {
   const html = read("index.html");
-  assert.match(html, /styles\.css\?v=[^"]*rate-floor-v1/);
-  assert.match(html, /app\.js\?v=[^"]*rate-floor-v1/);
-  assert.match(html, /online\.js\?v=[^"]*rate-floor-v1/);
-  assert.match(html, /styles\.css\?v=[^"]*rate-floor-showcase-v1/);
-  assert.match(html, /app\.js\?v=[^"]*rate-floor-showcase-v1/);
-  assert.match(html, /online\.js\?v=[^"]*rate-floor-showcase-v1/);
+  for (const asset of ["app", "online", "strategy"]) {
+    assert.match(html, new RegExp(`${asset}\\.js\\?v=[^"]*period-rankings-only-v1`));
+  }
 });
 
 test("Crown proof remains usable when optional personal ranking context is unavailable", () => {
@@ -497,7 +386,7 @@ test("Crown proof remains usable when optional personal ranking context is unava
   const applyRun = sourceBetween(
     online,
     "function applyCrownRunToRankingDashboard",
-    "function getOverallLeaderboard",
+    "function getRankingDashboard",
   );
   const startRun = sourceBetween(
     online,
@@ -505,8 +394,8 @@ test("Crown proof remains usable when optional personal ranking context is unava
     "async function setCrownCustomization",
   );
 
-  assert.match(online, /contextAvailable: overallSource\.contextAvailable !== false/);
-  assert.match(app, /順位の周辺情報だけを更新中です。三戦証明と対戦はそのまま利用できます。/);
+  assert.doesNotMatch(online, /contextAvailable: overallSource/);
+  assert.doesNotMatch(app, /順位の周辺情報/);
   assert.match(applyRun, /if \(!rankingDashboard\)/);
   assert.match(applyRun, /enabled: true/);
   assert.match(applyRun, /contextAvailable: false/);

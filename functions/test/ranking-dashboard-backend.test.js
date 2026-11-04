@@ -101,20 +101,10 @@ test("crown run signature storage remains array-only as in the prior reader", ()
   assert.match(functionsSource, /signatureIds:\s*run\.signatureIds/);
 });
 
-test("dashboard uses aggregate rank counts and bounded neighbor queries", () => {
-  assert.doesNotMatch(functionsSource, /\.where\("enabled", "==", true\)\s*\.limit\(2_000\)/);
-  assert.match(
-    functionsSource,
-    /\.where\("enabled", "==", true\)[\s\S]*?\.orderBy\("rating", "desc"\)[\s\S]*?\.orderBy\("entryId", "asc"\)/,
-  );
-  assert.match(functionsSource, /beforeQuery\.count\(\)\.get\(\)/);
-  assert.match(functionsSource, /beforeQuery\.limitToLast\(3\)\.get\(\)/);
-  assert.match(functionsSource, /afterQuery\.limit\(3\)\.get\(\)/);
-  assert.match(functionsSource, /sameServerOverallRankingKey\(key, verifiedKey\)/);
-  assert.match(functionsSource, /Promise\.allSettled\(\[\s*loadServerOverallStanding/);
-  assert.match(functionsSource, /fallbackServerOverallStanding\(profile\.rating\)/);
-  assert.match(functionsSource, /contextAvailable:\s*standingAvailable/);
-  assert.doesNotMatch(functionsSource, /top:\s*rankedProfiles\.slice/);
+test("dashboard no longer calculates overall standing or writes best rank", () => {
+  assert.doesNotMatch(functionsSource, /loadServerOverallStanding|serverOverallProfilesQuery|beforeQuery|afterQuery/);
+  assert.doesNotMatch(functionsSource, /bestOverallRank: bestRank/);
+  assert.match(functionsSource, /includePresentation \? loadCrownCustomizationOptions/);
 });
 
 test("ranking failures no longer surface as AnjuPay failures", () => {

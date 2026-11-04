@@ -262,6 +262,7 @@ const fxLayer = document.querySelector("#fxLayer");
 let active = false;
 let state = createState();
 let lastRenderedScreen = "";
+let lastRenderedAuthReady = false;
 let strategyMatchmakingGenerationCounter = 0;
 let strategyQueueDisconnectOperations = Promise.resolve();
 let resultNavigationBusy = false;
@@ -1396,10 +1397,6 @@ async function ensureAuthenticated() {
   render();
   targetState.initialDeckRestorePromise = restoreStoredStrategyDeck({ quiet: true });
   await targetState.initialDeckRestorePromise;
-  if (!active || state !== targetState) return;
-  if (window.HariaiOnline?.getOverallRankingPreference?.().enabled) {
-    window.HariaiOnline.refreshRankingDashboard?.().catch((error) => console.error(error));
-  }
 }
 
 function normalizeProfile(value) {
@@ -1510,6 +1507,8 @@ function render() {
   if (!active) return;
   syncStrategySafetyContact();
   const screenChanged = lastRenderedScreen !== state.screen;
+  const refreshCrownDashboard = state.screen === "profile" && state.authReady
+    && (screenChanged || !lastRenderedAuthReady);
   const focused = document.activeElement;
   const focusId = !screenChanged && focused && app.contains(focused) && focused.id ? focused.id : "";
   const selection = focusId && typeof focused.selectionStart === "number" ? [focused.selectionStart, focused.selectionEnd] : null;
@@ -1551,6 +1550,7 @@ function render() {
   app.querySelector(".screen")?.insertAdjacentHTML("afterbegin", renderStrategyIdleNotice());
   updateStrategyIdleNotice();
   lastRenderedScreen = state.screen;
+  lastRenderedAuthReady = state.authReady;
   // 同じ画面の描き直しでは登場アニメーションを再生しない（対戦スレッドが点滅しないように）。
   if (!screenChanged) app.querySelector(".screen")?.classList.add("is-refresh");
   if (state.screen === "battle") state.battleViewKey = battleViewKey();
@@ -1576,6 +1576,7 @@ function render() {
     reportStrategySeenChats();
   }
   restoreStrategyKeptScroll(keptScroll);
+  if (refreshCrownDashboard) window.HariaiOnline?.refreshVisibleRankingDashboard?.().catch((error) => console.error(error));
 }
 
 function renderProfile() {
@@ -8157,7 +8158,7 @@ async function commitStrategyStats() {
     });
     if (overallUpdate) {
       const overallResult = await overallUpdate.catch(() => {
-        showToast("総合ランキングを更新できませんでした。");
+        showToast("ランキングを更新できませんでした。");
         return null;
       });
       if (overallResult?.economyBalance !== null
@@ -8653,6 +8654,12 @@ window.addEventListener("resize", () => {
   if (!active || state.screen !== "battle") return;
   if (crossed) render();
   else settleStrategyThreadLayout();
+});
+
+window.addEventListener("hariai-online-ready", () => {
+  if (active && state.screen === "profile" && state.authReady) {
+    window.HariaiOnline?.refreshVisibleRankingDashboard?.().catch((error) => console.error(error));
+  }
 });
 
 window.HariaiStrategy = { start, isActive, requestHome, destroyRoom };

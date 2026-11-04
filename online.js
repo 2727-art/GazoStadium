@@ -453,6 +453,7 @@ let active = false;
 let state;
 let economyInitialization = null;
 let lastRenderedScreen = "";
+let lastRenderedAuthReady = false;
 let finishCutInGeneration = 0;
 // 通常型1on1の対戦はDMスレッドで進める。スレッドは一番下に追従し、上を読んでいる間は追従を止める。
 const DM_SCENES = Object.freeze(["select", "waitingPick", "waitingImage", "reveal", "score", "waitingScore", "result", "waitingContinue"]);
@@ -514,16 +515,11 @@ let monthlyHallOfFameLoadedAt = 0;
 let monthlyHallOfFameLastAttemptAt = 0;
 let monthlyHallOfFameRequest = null;
 let monthlyHallOfFameSessionRestored = false;
-let overallLeaderboardEntries = [];
-let overallLeaderboardStatus = "idle";
-let overallLeaderboardRequestId = 0;
-let rateFloorLeaderboardEntries = [];
-let rateFloorLeaderboardStatus = "idle";
-let rateFloorLeaderboardRequestId = 0;
 let rankingDashboard = null;
 let rankingDashboardStatus = "idle";
 let rankingDashboardError = "";
 let rankingDashboardRequestId = 0;
+let rankingDashboardRequest = null;
 let rankingDashboardBusy = false;
 let publicServerTimeOffset = 0;
 let publicServerTimeOffsetReady = false;
@@ -1552,33 +1548,6 @@ function normalizeRankingControlId(controlId) {
   return /^[A-Za-z][A-Za-z0-9_.-]*$/.test(String(controlId)) ? String(controlId) : "overallRankingParticipation";
 }
 
-function renderRateFloorParticipation(safeControlId) {
-  const dashboard = getRankingDashboard();
-  const dashboardState = getRankingDashboardStatus();
-  const floor = dashboard?.rateFloor || {};
-  const ready = dashboardState.status === "ready" && dashboard?.rateFloor;
-  const overallEnabled = ready && dashboard?.enabled === true;
-  const enabled = ready && floor.enabled === true;
-  const minimumMatches = Math.max(1, Number(floor.minimumMatches || RATE_FLOOR_MINIMUM_MATCHES));
-  const serverMatches = Math.max(0, Number(floor.serverMatches || 0));
-  const eligible = enabled && floor.eligible === true;
-  const statusCopy = ready && !overallEnabled
-    ? "総合ランキング参加後に設定できます"
-    : dashboardState.status === "error"
-      ? "公開設定を取得できませんでした"
-      : !ready
-        ? "公開設定を確認中"
-        : enabled
-          ? eligible ? "● 公開中" : `○ 公開待ち ${serverMatches} / ${minimumMatches}戦`
-          : "○ 非公開";
-  const disabled = !ready || !overallEnabled || dashboardState.busy;
-  return `<section class="rate-floor-participation ${enabled ? "is-enabled" : "is-disabled"}">
-    <div class="rate-floor-participation-copy"><span class="eyebrow">RATE FLOOR</span><div><strong>下限チャレンジ</strong><p>総合RATEの別枠として、低いRATEへ挑む意思を本人が公開する表示です。</p></div></div>
-    <div class="rate-floor-participation-control"><span>${escapeHtml(statusCopy)}</span><button class="button ${enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}RateFloor" aria-pressed="${enabled}"${disabled ? " disabled" : ""}>${enabled ? "公開をやめる" : "下限チャレンジを公開する"}</button></div>
-    <small>検証済みRATE戦10戦以上で掲載され、条件を満たす公開参加者が1名でも表示されます。同RATEは同順位です。下限順位による追加報酬・専用実績の付与はありません。獲得済みのSIGNATURE・公開実績は表示されます。対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映されます。</small>
-  </section>`;
-}
-
 function renderOverallRankingParticipation({ controlId = "overallRankingParticipation" } = {}) {
   const settings = getOverallRankingPreference();
   const safeControlId = normalizeRankingControlId(controlId);
@@ -1597,13 +1566,12 @@ function renderOverallRankingParticipation({ controlId = "overallRankingParticip
     <p>Xを公開すると匿名性が下がります。入賞時だけ紹介枠にも同じリンクを表示します。フォロワー数や反応は順位へ影響しません。</p>
   </details>` : "";
   return `<section class="overall-ranking-panel ${settings.enabled ? "is-enabled" : "is-disabled"}">
-    <div class="overall-ranking-copy"><span class="eyebrow">ONLINE OVERALL RANKING</span><div><strong>オンライン総合ランキング</strong>
-      <p>${settings.enabled ? "通常型・戦略型1on1の総合RATEと、任意で挑む王座サーキットを公開しています。" : "戦績と総合RATEは非公開で保持され、王座サーキットへは参加しません。"}</p></div></div>
+    <div class="overall-ranking-copy"><span class="eyebrow">ONLINE PERIOD RANKING</span><div><strong>オンラインランキング</strong>
+      <p>${settings.enabled ? "通常型・戦略型1on1のデイリー・ウィークリー・マンスリーランキングに参加しています。" : "戦績と総合RATEは非公開で保持され、王座サーキットへは参加しません。"}</p></div></div>
     <div class="overall-ranking-control"><span class="overall-ranking-status">${settings.enabled ? "● 参加中" : "○ 非参加"}</span>
       <button class="button ${settings.enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}" aria-pressed="${settings.enabled}">${settings.enabled ? "参加をやめる" : "参加する"}</button></div>
-    <small>強さの順位と三戦証明は通常型1on1・戦略型1on1だけが対象です。匿名UIDとルーム履歴は公開しません。確定済みの番号王座と歴代記録は、参加終了後も名誉記録として残ります。</small>
+    <small>期間ランキングと三戦証明は通常型1on1・戦略型1on1だけが対象です。匿名UIDとルーム履歴は公開しません。確定済みの番号王座と歴代記録は、参加終了後も名誉記録として残ります。</small>
     ${publicSettings}
-    ${renderRateFloorParticipation(safeControlId)}
   </section>`;
 }
 
@@ -1616,7 +1584,7 @@ function bindOverallRankingParticipation({ controlId = "overallRankingParticipat
     try {
       const displayName = typeof name === "function" ? name() : name;
       await setOverallRankingParticipation(nextEnabled, displayName);
-      showToast(nextEnabled ? "オンライン総合ランキングへの参加を有効にしました。" : "オンライン総合ランキングから非公開にしました。");
+      showToast(nextEnabled ? "オンラインランキングへの参加を有効にしました。" : "オンラインランキングから非公開にしました。");
     } catch (error) {
       showToast(error?.message || "ランキング設定を更新できませんでした。");
     } finally {
@@ -1639,24 +1607,6 @@ function bindOverallRankingParticipation({ controlId = "overallRankingParticipat
     } catch (error) {
       saveButton.disabled = false;
       showToast(error?.message || "ランキングの公開設定を更新できませんでした。");
-    }
-  });
-  const rateFloorButton = document.getElementById(`${safeControlId}RateFloor`);
-  rateFloorButton?.addEventListener("click", async () => {
-    const nextEnabled = getRankingDashboard()?.rateFloor?.enabled !== true;
-    rateFloorButton.disabled = true;
-    try {
-      const dashboard = await setRateFloorParticipation(nextEnabled);
-      const floor = dashboard?.rateFloor || {};
-      showToast(nextEnabled
-        ? floor.eligible
-          ? "下限チャレンジを公開しました。"
-          : `下限チャレンジを公開待ちにしました。検証済み${Number(floor.minimumMatches || RATE_FLOOR_MINIMUM_MATCHES)}戦で掲載されます。`
-        : "下限チャレンジを非公開にしました。");
-    } catch (error) {
-      showToast(error?.message || "下限チャレンジの公開設定を更新できませんでした。");
-    } finally {
-      onUpdate?.();
     }
   });
 }
@@ -2596,7 +2546,7 @@ async function readPublicDatabasePath(path, {
     publicServerTimeOffsetReady = true;
   }
   const value = snapshot.val();
-  if (/^online\/(?:leaderboard(?:\/|$)|leaderboardPeriods\/|serverOverallLeaderboard(?:\/|$)|serverRateFloorLeaderboard(?:\/|$)|serverLeaderboardPeriods\/|crownCircuitPeriods\/|rankingSpotlights(?:\/|$)|crownCircuitHallOfFame\/|serverRankingHallOfFame\/)/.test(path) && value && auth.currentUser) {
+  if (/^online\/(?:leaderboard(?:\/|$)|leaderboardPeriods\/|serverLeaderboardPeriods\/|crownCircuitPeriods\/|rankingSpotlights(?:\/|$)|crownCircuitHallOfFame\/|serverRankingHallOfFame\/)/.test(path) && value && auth.currentUser) {
     return maskPublicRankingTree(value, path.split("/").at(-1));
   }
   return value;
@@ -2736,9 +2686,7 @@ function watchDailyDateRollover() {
     const nextDateKey = currentDailyDateKey();
     if (nextDateKey === observedDateKey) return;
     observedDateKey = nextDateKey;
-    if (getOverallRankingPreference().enabled) {
-      refreshRankingDashboard().catch((error) => console.error(error));
-    }
+    refreshVisibleRankingDashboard({ onlyIfStale: true }).catch((error) => console.error(error));
     if (!active || !state.uid || !state.authReady) return;
     initializeEconomy().then(() => {
       state.periodRewardReminderShown = false;
@@ -2955,22 +2903,12 @@ function normalizeRankingDashboard(value) {
   const source = value?.dashboard && typeof value.dashboard === "object" ? value.dashboard : value || {};
   const profileSource = source.profile && typeof source.profile === "object" ? source.profile : {};
   const overallSource = source.overall || source.context || {};
-  const rateFloorSource = source.rateFloor && typeof source.rateFloor === "object" ? source.rateFloor : {};
   const runSource = source.run || source.crownRun || source.proof || null;
   const customizationSource = source.customization || {};
   const rulesSource = source.rules && typeof source.rules === "object" ? source.rules : {};
-  const neighborsSource = Array.isArray(overallSource.neighbors)
-    ? overallSource.neighbors
-    : Array.isArray(source.neighbors) ? source.neighbors : [];
-  const participantCount = Math.max(0, Math.floor(Number(
-    overallSource.participantCount
-      ?? overallSource.total
-      ?? source.participantCount
-      ?? 0,
-  )));
-  const rank = Math.max(0, Math.floor(Number(overallSource.rank || source.rank || 0)));
   const rating = Math.min(3000, Math.max(100, Math.floor(Number(
-    overallSource.rating
+    profileSource.rating
+      ?? overallSource.rating
       ?? source.rating
       ?? INITIAL_RATING,
   ))));
@@ -2989,60 +2927,11 @@ function normalizeRankingDashboard(value) {
       || runSource?.crownSignatureId
       || "",
   );
-  const nextSeatSource = overallSource.nextSeat && typeof overallSource.nextSeat === "object"
-    ? overallSource.nextSeat
-    : {};
-  const rateFloorMinimumMatches = Math.max(1, Math.floor(Number(
-    rateFloorSource.minimumMatches
-      ?? profileSource.minimumMatches
-      ?? RATE_FLOOR_MINIMUM_MATCHES,
-  )));
-  const rateFloorServerMatches = Math.max(0, Math.floor(Number(
-    rateFloorSource.serverMatches
-      ?? profileSource.serverMatches
-      ?? 0,
-  )));
-  const rateFloorEnabled = rateFloorSource.enabled === true
-    || profileSource.rateFloorEnabled === true;
   return {
     enabled: source.enabled === true,
     entryId: String(source.entryId || overallSource.entryId || ""),
     rulesetVersion: Math.max(0, Math.floor(Number(source.rulesetVersion || 2))),
-    overall: {
-      rank,
-      participantCount,
-      contextAvailable: overallSource.contextAvailable !== false,
-      percentile: Math.min(100, Math.max(0, Number(
-        overallSource.percentile
-          ?? (
-            rank > 0 && participantCount > 0
-              ? ((participantCount - rank + 1) / participantCount) * 100
-              : 0
-          ),
-      ))),
-      topPercent: Math.min(100, Math.max(0, Math.ceil(Number(
-        overallSource.topPercent
-          ?? (rank > 0 && participantCount > 0 ? (rank / participantCount) * 100 : 0),
-      )))),
-      bestRank: Math.max(0, Math.floor(Number(overallSource.bestRank || source.bestRank || 0))),
-      rating,
-      nextSeatGap: Math.max(0, Math.floor(Number(
-        overallSource.nextSeatGap
-          ?? nextSeatSource.gap
-          ?? source.nextSeatGap
-          ?? 0,
-      ))),
-      nextSeat: Object.keys(nextSeatSource).length ? normalizeDashboardPerson(nextSeatSource) : null,
-      neighbors: neighborsSource.map((entry, index) => normalizeDashboardPerson(entry, index + 1)),
-    },
-    rateFloor: {
-      enabled: rateFloorEnabled,
-      eligible: rateFloorSource.eligible === true
-        || profileSource.rateFloorEligible === true
-        || (rateFloorEnabled && rateFloorServerMatches >= rateFloorMinimumMatches),
-      serverMatches: rateFloorServerMatches,
-      minimumMatches: rateFloorMinimumMatches,
-    },
+    overall: { rating },
     run: runSource ? {
       key: String(runSource.key || ""),
       status: runStatus,
@@ -3105,7 +2994,11 @@ function dispatchRankingDashboardUpdated() {
 }
 
 function applyRankingDashboard(value) {
-  rankingDashboard = normalizeRankingDashboard(value);
+  // A preparation-screen refresh must not erase already loaded presentation.
+  const source = value?.presentationIncluded === false && rankingDashboard
+    ? { ...value, customization: rankingDashboard.customization, spotlight: rankingDashboard.spotlight }
+    : value;
+  rankingDashboard = normalizeRankingDashboard(source);
   rankingDashboardStatus = "ready";
   rankingDashboardError = "";
   dispatchRankingDashboardUpdated();
@@ -3154,34 +3047,11 @@ function applyCrownRunToRankingDashboard(value) {
   });
 }
 
-function getOverallLeaderboard() {
-  return overallLeaderboardEntries.map((entry) => ({ ...entry }));
-}
-
-function getOverallLeaderboardStatus() {
-  return overallLeaderboardStatus;
-}
-
-function getRateFloorLeaderboard() {
-  return rateFloorLeaderboardEntries.map((entry) => ({ ...entry }));
-}
-
-function getRateFloorLeaderboardStatus() {
-  return rateFloorLeaderboardStatus;
-}
-
 function getRankingDashboard() {
   if (!rankingDashboard) return null;
   return {
     ...rankingDashboard,
-    overall: {
-      ...rankingDashboard.overall,
-      nextSeat: rankingDashboard.overall.nextSeat
-        ? { ...rankingDashboard.overall.nextSeat }
-        : null,
-      neighbors: rankingDashboard.overall.neighbors.map((entry) => ({ ...entry })),
-    },
-    rateFloor: { ...rankingDashboard.rateFloor },
+    overall: { ...rankingDashboard.overall },
     run: rankingDashboard.run
       ? {
         ...rankingDashboard.run,
@@ -3380,7 +3250,7 @@ function focusCrownRankingParticipation(controlId) {
   const button = document.getElementById(normalizeRankingControlId(controlId));
   button?.scrollIntoView({ behavior: "smooth", block: "center" });
   button?.focus({ preventScroll: true });
-  showToast("先にオンライン総合ランキングへの参加を有効にしてください。");
+  showToast("先にオンラインランキングへの参加を有効にしてください。");
   return Boolean(button);
 }
 
@@ -3428,50 +3298,6 @@ function normalizeCrownWeeklySeatHistoryRecords(value) {
     }))
     .sort((first, second) => first.displayRank - second.displayRank)
     .slice(0, PUBLIC_RANKING_LIMIT);
-}
-
-async function readOverallPublicTop10() {
-  const path = "online/serverOverallLeaderboard";
-  const seed = publicRankingRecordMap(await readPublicDatabasePath(path, {
-    orderByChildKey: "rating",
-    limit: PUBLIC_RANKING_LIMIT,
-  }));
-  const seedEntries = Object.entries(seed).filter(([, entry]) => Number.isFinite(Number(entry?.rating)));
-  if (seedEntries.length < PUBLIC_RANKING_LIMIT) return normalizeOverallLeaderboardRecords(seed);
-
-  const boundaryRating = Math.min(...seedEntries.map(([, entry]) => Number(entry.rating)));
-  const higherEntries = seedEntries.filter(([, entry]) => Number(entry.rating) > boundaryRating);
-  const boundarySeats = Math.max(0, PUBLIC_RANKING_LIMIT - higherEntries.length);
-  if (!Number.isFinite(boundaryRating) || boundarySeats <= 0) {
-    return normalizeOverallLeaderboardRecords(Object.fromEntries(higherEntries));
-  }
-  // RTDB resolves equal child values by key. Fetching the first missing keys makes
-  // the client comparator (rating desc, entryId asc) exact at the tenth-seat tie.
-  const boundaryEntries = publicRankingRecordMap(await readPublicDatabasePath(path, {
-    orderByChildKey: "rating",
-    equalToValue: boundaryRating,
-    limit: boundarySeats,
-    limitDirection: "first",
-    readServerTimeOffset: false,
-  }));
-  return normalizeOverallLeaderboardRecords({
-    ...Object.fromEntries(higherEntries),
-    ...boundaryEntries,
-  });
-}
-
-async function readRateFloorPublicTop10() {
-  const records = publicRankingRecordMap(await readPublicDatabasePath(
-    "online/serverRateFloorLeaderboard",
-    {
-      orderByChildKey: "rating",
-      limit: PUBLIC_RANKING_LIMIT,
-      limitDirection: "first",
-    },
-  ));
-  // Firebase orders equal RATE values by key, matching the local deterministic
-  // tie order while keeping the public board to at most ten rows.
-  return normalizeRateFloorLeaderboardRecords(records);
 }
 
 async function readCrownCircuitPublicTop10(path, period) {
@@ -3768,61 +3594,25 @@ async function refreshMonthlyBeyondRanking({ force = false } = {}) {
   }
 }
 
-async function refreshOverallLeaderboard() {
-  if (useOfflineMarketPreview) {
-    overallLeaderboardEntries = [];
-    overallLeaderboardStatus = "ready";
-    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
-    return [];
-  }
-  const requestId = ++overallLeaderboardRequestId;
-  overallLeaderboardStatus = "loading";
-  window.dispatchEvent(new Event("hariai-leaderboard-updated"));
-  try {
-    const records = await readOverallPublicTop10();
-    if (requestId !== overallLeaderboardRequestId) return overallLeaderboardEntries;
-    overallLeaderboardEntries = records;
-    overallLeaderboardStatus = "ready";
-  } catch {
-    if (requestId !== overallLeaderboardRequestId) return overallLeaderboardEntries;
-    overallLeaderboardEntries = [];
-    overallLeaderboardStatus = "error";
-  } finally {
-    if (requestId === overallLeaderboardRequestId) {
-      window.dispatchEvent(new Event("hariai-leaderboard-updated"));
-    }
-  }
-  return getOverallLeaderboard();
+function rankingDashboardVisibleSurface() {
+  if (document.visibilityState !== "visible") return "";
+  if (document.querySelector(".ranking-screen")) return "ranking";
+  if (document.querySelector("#soloCrownMatchmakingActions, #strategyCrownMatchmakingActions")) return "preparation";
+  return "";
 }
 
-async function refreshRateFloorLeaderboard() {
-  if (useOfflineMarketPreview) {
-    rateFloorLeaderboardEntries = [];
-    rateFloorLeaderboardStatus = "ready";
-    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
-    return [];
-  }
-  const requestId = ++rateFloorLeaderboardRequestId;
-  rateFloorLeaderboardStatus = "loading";
-  window.dispatchEvent(new Event("hariai-leaderboard-updated"));
-  try {
-    const records = await readRateFloorPublicTop10();
-    if (requestId !== rateFloorLeaderboardRequestId) return rateFloorLeaderboardEntries;
-    rateFloorLeaderboardEntries = records;
-    rateFloorLeaderboardStatus = "ready";
-  } catch {
-    if (requestId !== rateFloorLeaderboardRequestId) return rateFloorLeaderboardEntries;
-    rateFloorLeaderboardEntries = [];
-    rateFloorLeaderboardStatus = "error";
-  } finally {
-    if (requestId === rateFloorLeaderboardRequestId) {
-      window.dispatchEvent(new Event("hariai-leaderboard-updated"));
-    }
-  }
-  return getRateFloorLeaderboard();
+async function refreshVisibleRankingDashboard({ onlyIfStale = false } = {}) {
+  const surface = rankingDashboardVisibleSurface();
+  if (!surface || (surface === "preparation" && !getOverallRankingPreference().enabled)) return getRankingDashboard();
+  if (onlyIfStale && rankingDashboardStatus === "ready"
+      && getRankingDashboard()?.rules.dailyKey === getLeaderboardPeriodInfo("daily").key) return getRankingDashboard();
+  return refreshRankingDashboard({ includePresentation: surface === "ranking" });
 }
 
-async function refreshRankingDashboard() {
+async function refreshRankingDashboard({ includePresentation = false } = {}) {
+  const initialSurface = rankingDashboardVisibleSurface();
+  if (!initialSurface) return getRankingDashboard();
+  includePresentation = includePresentation && initialSurface === "ranking";
   if (useOfflineMarketPreview) {
     rankingDashboard = normalizeRankingDashboard({ enabled: false });
     rankingDashboardStatus = "ready";
@@ -3830,63 +3620,44 @@ async function refreshRankingDashboard() {
     dispatchRankingDashboardUpdated();
     return getRankingDashboard();
   }
+  const dailyKey = getLeaderboardPeriodInfo("daily").key;
+  if (rankingDashboardRequest?.dailyKey === dailyKey
+      && (rankingDashboardRequest.includePresentation || !includePresentation)) return rankingDashboardRequest.promise;
   const requestId = ++rankingDashboardRequestId;
+  const previousStatus = rankingDashboardStatus === "loading" ? "idle" : rankingDashboardStatus;
+  const previousError = rankingDashboardError;
   rankingDashboardStatus = "loading";
   rankingDashboardError = "";
-  dispatchRankingDashboardUpdated();
-  try {
-    await ensureRankingCommentUser();
-    const response = await economyActionCallable({ action: "get_ranking_dashboard" });
-    if (requestId !== rankingDashboardRequestId) return getRankingDashboard();
-    return applyRankingDashboard(response.data || {});
-  } catch (error) {
-    if (requestId !== rankingDashboardRequestId) return getRankingDashboard();
-    rankingDashboardStatus = "error";
-    rankingDashboardError = error?.message || "自分の順位情報を取得できませんでした。";
-    dispatchRankingDashboardUpdated();
-    return null;
-  }
-}
-
-async function setRateFloorParticipation(enabled) {
-  if (!getOverallRankingPreference().enabled && getRankingDashboard()?.enabled !== true) {
-    throw new Error("先にオンライン総合ランキングへの参加を有効にしてください。");
-  }
-  if (rankingDashboardBusy) return getRankingDashboard();
-  rankingDashboardBusy = true;
-  dispatchRankingDashboardUpdated();
-  try {
-    await ensureRankingCommentUser();
-    const response = await economyActionCallable({
-      action: "set_rate_floor_participation",
-      enabled: Boolean(enabled),
-    });
-    const result = response.data || {};
-    if (typeof result.rateFloorEnabled !== "boolean") {
-      throw new Error("下限チャレンジの公開設定を確認できませんでした。");
+  const promise = (async () => {
+    try {
+      await ensureRankingCommentUser();
+      if (requestId !== rankingDashboardRequestId) return getRankingDashboard();
+      // Authentication may finish after the user has left the screen.
+      const surface = rankingDashboardVisibleSurface();
+      if (!surface) {
+        rankingDashboardStatus = previousStatus;
+        rankingDashboardError = previousError;
+        dispatchRankingDashboardUpdated();
+        return getRankingDashboard();
+      }
+      const requestPresentation = includePresentation && surface === "ranking";
+      rankingDashboardRequest.includePresentation = requestPresentation;
+      const response = await economyActionCallable({ action: "get_ranking_dashboard", includePresentation: requestPresentation });
+      if (requestId !== rankingDashboardRequestId) return getRankingDashboard();
+      return applyRankingDashboard(response.data || {});
+    } catch (error) {
+      if (requestId !== rankingDashboardRequestId) return getRankingDashboard();
+      rankingDashboardStatus = "error";
+      rankingDashboardError = error?.message || "三戦証明を取得できませんでした。";
+      dispatchRankingDashboardUpdated();
+      return null;
     }
-    const current = rankingDashboard || {};
-    applyRankingDashboard({
-      ...current,
-      enabled: true,
-      overall: {
-        ...(current.overall || {}),
-        rating: result.rating ?? current.overall?.rating,
-      },
-      rateFloor: {
-        enabled: result.rateFloorEnabled,
-        eligible: result.rateFloorEligible === true,
-        rating: result.rating,
-        serverMatches: result.serverMatches,
-        minimumMatches: result.minimumMatches,
-      },
-    });
-    await refreshRateFloorLeaderboard();
-    return getRankingDashboard();
-  } finally {
-    rankingDashboardBusy = false;
-    dispatchRankingDashboardUpdated();
-  }
+  })().finally(() => {
+    if (rankingDashboardRequest?.promise === promise) rankingDashboardRequest = null;
+  });
+  rankingDashboardRequest = { dailyKey, includePresentation, promise };
+  dispatchRankingDashboardUpdated();
+  return promise;
 }
 
 async function startCrownRun() {
@@ -3903,7 +3674,7 @@ async function startCrownRun() {
     if (result.dashboard) applyRankingDashboard(result.dashboard);
     else if (result.run || result.crownRun) {
       applyCrownRunToRankingDashboard(result.run || result.crownRun);
-    } else await refreshRankingDashboard();
+    } else await refreshRankingDashboard({ includePresentation: true });
     refreshLeaderboard("daily", { force: true }).catch((error) => console.error(error));
     return getRankingDashboard();
   } finally {
@@ -3929,10 +3700,8 @@ async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "
     });
     const result = response.data || {};
     if (result.dashboard) applyRankingDashboard(result.dashboard);
-    else await refreshRankingDashboard();
+    else await refreshRankingDashboard({ includePresentation: true });
     await Promise.allSettled([
-      refreshOverallLeaderboard(),
-      refreshRateFloorLeaderboard(),
       refreshLeaderboard(leaderboardPeriod, {
         force: true,
         key: leaderboardPeriod === "weekly" ? leaderboardPeriodKey : "",
@@ -3946,6 +3715,7 @@ async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "
 }
 
 async function refreshLeaderboard(period = leaderboardPeriod, { force = false, key = "" } = {}) {
+  if (rankingDashboardVisibleSurface() !== "ranking") return;
   const selectedPeriod = normalizeLeaderboardPeriod(period);
   const periodInfo = leaderboardPeriodInfoFor(
     selectedPeriod,
@@ -3979,13 +3749,9 @@ async function refreshLeaderboard(period = leaderboardPeriod, { force = false, k
     const selectedEntriesPromise = selectedPeriod === "monthly"
       ? refreshMonthlyBeyondCache({ force })
       : readCachedPeriodPublicTop10(periodInfo, selectedPeriod, { force });
-    const supportingMonthlyPromise = selectedPeriod === "monthly"
-      ? selectedEntriesPromise
-      : refreshMonthlyBeyondCache().catch(() => null);
     const hallOfFamePromise = refreshMonthlyHallOfFame().catch(() => null);
     const [entries] = await Promise.all([
       selectedEntriesPromise,
-      supportingMonthlyPromise,
       hallOfFamePromise,
     ]);
     if (requestId !== leaderboardRequestId) return;
@@ -4033,7 +3799,7 @@ async function ensureAuthenticated() {
     state.overallProfile = await ensureOverallProfileSeeded(state.uid, state.name, state.profile);
   } catch (error) {
     console.error(error);
-    showToast("総合ランキング情報を読み込めませんでした。対戦機能は利用できます。");
+    showToast("ランキング情報を読み込めませんでした。対戦機能は利用できます。");
   }
   state.authReady = true;
   refreshSoloFamiliarBook({ renderAfter: true }).catch((error) => console.error(error));
@@ -4054,9 +3820,6 @@ async function ensureAuthenticated() {
     }
   } else {
     loadServerRankingAwards().catch((error) => console.error(error));
-  }
-  if (state.leaderboardPublic) {
-    refreshRankingDashboard().catch((error) => console.error(error));
   }
   setOnlineChrome("ONLINE READY");
   render();
@@ -4217,8 +3980,6 @@ async function saveAchievementShowcase(idsValue) {
     if (response.data?.saved !== true) throw new Error("実績ショーケースの保存を確認できませんでした。");
     applyAchievementPayload(response.data?.achievements);
     await Promise.allSettled([
-      refreshOverallLeaderboard(),
-      refreshRateFloorLeaderboard(),
       refreshLeaderboard(leaderboardPeriod, {
         force: true,
         key: leaderboardPeriod === "weekly" ? leaderboardPeriodKey : "",
@@ -4241,6 +4002,8 @@ function render() {
   const chatFocus = captureDmChatFocus();
   const threadNodes = collectDmThreadNodes(appRoot);
   syncGazeWithScreen(lastRenderedScreen);
+  const refreshCrownDashboard = state.screen === "setup" && state.authReady
+    && (screenChanged || !lastRenderedAuthReady);
   const renderers = {
     setup: renderSetup,
     familiarBook: renderSoloFamiliarBook,
@@ -4270,6 +4033,7 @@ function render() {
   appRoot.innerHTML = renderContactControls("solo") + (renderers[state.screen] || renderSetup)();
   reuseDmThreadNodes(threadNodes, appRoot);
   lastRenderedScreen = state.screen;
+  lastRenderedAuthReady = state.authReady;
   bindScreenEvents();
   if (screenChanged) {
     window.scrollTo(0, 0);
@@ -4279,6 +4043,7 @@ function render() {
   restoreDmChatFocus(chatFocus);
   settleDmLayout({ follow: screenChanged });
   playBattleSceneFx();
+  if (refreshCrownDashboard) refreshVisibleRankingDashboard().catch((error) => console.error(error));
 }
 
 // 入力中に画面が進んでも、チャットの入力欄のフォーカスと選択位置を戻す（スマホでキーボードを閉じない）。
@@ -8264,7 +8029,6 @@ async function setOverallRankingParticipation(enabled, name = "") {
     applyOverallRankingPreferenceToState(saved);
     dispatchOverallRankingPreference(saved);
     Promise.all([
-      refreshOverallLeaderboard(),
       refreshRankingDashboard(),
     ]).catch((refreshError) => console.error(refreshError));
     return saved;
@@ -8278,7 +8042,7 @@ async function setOverallRankingParticipation(enabled, name = "") {
 
 async function saveOverallRankingPublicSettings({ xHandle = "", xPublic = false, commentsEnabled = true, name = "" } = {}) {
   const previous = getOverallRankingPreference();
-  if (!previous.enabled) throw new Error("先にオンライン総合ランキングへの参加を有効にしてください。");
+  if (!previous.enabled) throw new Error("先にオンラインランキングへの参加を有効にしてください。");
   const normalizedHandle = normalizeXHandle(xHandle);
   if (normalizedHandle && !X_HANDLE_PATTERN.test(normalizedHandle)) throw new Error("Xのユーザー名は半角英数字と_で15文字以内にしてください。");
   if (xPublic && !normalizedHandle) throw new Error("公開するXのユーザー名を入力してください。");
@@ -8299,9 +8063,8 @@ async function saveOverallRankingPublicSettings({ xHandle = "", xPublic = false,
     applyOverallRankingPreferenceToState(saved);
     dispatchOverallRankingPreference(saved);
     Promise.all([
-      refreshOverallLeaderboard(),
       refreshRankingDashboard(),
-      refreshLeaderboard(leaderboardPeriod, {
+      rankingDashboardVisibleSurface() === "ranking" && refreshLeaderboard(leaderboardPeriod, {
         force: true,
         key: leaderboardPeriod === "weekly" ? leaderboardPeriodKey : "",
       }),
@@ -13218,12 +12981,7 @@ document.addEventListener("visibilitychange", () => {
   });
   cancelUnavailableAutomaticMatchmaking();
   state.soloHiddenWaitGuard?.sync();
-  const currentDashboard = getRankingDashboard();
-  if (document.visibilityState === "visible"
-      && getOverallRankingPreference().enabled
-      && currentDashboard?.rules.dailyKey !== getLeaderboardPeriodInfo("daily").key) {
-    refreshRankingDashboard().catch((error) => console.error(error));
-  }
+  refreshVisibleRankingDashboard().catch((error) => console.error(error));
 });
 
 window.addEventListener("hariai-player-safety-updated", () => {
@@ -13320,10 +13078,6 @@ window.HariaiOnline = {
   syncBattlePresenceCheckPanels,
   resetBattlePresenceCheck,
   getLeaderboard,
-  getOverallLeaderboard,
-  getOverallLeaderboardStatus,
-  getRateFloorLeaderboard,
-  getRateFloorLeaderboardStatus,
   getRankingDashboard,
   getRankingDashboardStatus,
   getCrownMatchmakingState,
@@ -13344,9 +13098,8 @@ window.HariaiOnline = {
   isCrownCircuitPeriod,
   refreshLeaderboard,
   refreshMonthlyBeyondRanking,
-  refreshOverallLeaderboard,
-  refreshRateFloorLeaderboard,
   refreshRankingDashboard,
+  refreshVisibleRankingDashboard,
   startCrownRun,
   setCrownCustomization,
   getLeaderboardComments,
@@ -13358,7 +13111,6 @@ window.HariaiOnline = {
   renderOverallRankingParticipation,
   bindOverallRankingParticipation,
   setOverallRankingParticipation,
-  setRateFloorParticipation,
   saveOverallRankingPublicSettings,
 };
 window.dispatchEvent(new Event("hariai-online-ready"));

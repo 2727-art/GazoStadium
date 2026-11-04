@@ -129,7 +129,7 @@ test("frontend reads V2 public boards while private spotlight data stays behind 
   assert.match(online, /monthly:\s*"2026-08"/);
   assert.match(online, /Object\.freeze\(\["solo", "strategy"\]\)/);
   assert.match(online, /CROWN_DAILY_MATCH_LIMIT\s*=\s*3/);
-  assert.match(online, /online\/serverOverallLeaderboard/);
+  assert.doesNotMatch(online, /online\/serverOverallLeaderboard|online\/serverRateFloorLeaderboard/);
   assert.match(online, /online\/\$\{root\}\/\$\{period\}\/\$\{periodInfo\.key\}/);
   assert.match(online, /"crownCircuitPeriods"/);
   assert.match(online, /online\/crownCircuitHallOfFame\/monthly/);
@@ -149,7 +149,7 @@ test("frontend reads V2 public boards while private spotlight data stays behind 
   assert.doesNotMatch(legacyRecording, /ACTIVE_BATTLE_MODES\.includes\(mode\)/);
 });
 
-test("ranking actions use the callable contract and top-percent semantics", () => {
+test("ranking actions preserve proof controls without overall percentile data", () => {
   const online = read("online.js");
   const app = read("app.js");
 
@@ -160,12 +160,12 @@ test("ranking actions use the callable contract and top-percent semantics", () =
   assert.match(online, /action:\s*"set_crown_customization"/);
   assert.match(online, /crownTheme:\s*normalizedTheme/);
   assert.match(online, /crownSignatureId:\s*normalizedSignatureId/);
-  assert.match(online, /topPercent:/);
-  assert.match(app, /overall\.topPercent/);
+  assert.doesNotMatch(online, /topPercent:/);
+  assert.doesNotMatch(app, /overall\.topPercent/);
   assert.doesNotMatch(app, /上位\$\{percentile\}/);
 });
 
-test("overall RATE and proof dashboard precede the period circuit without retired ranking modes", () => {
+test("proof dashboard precedes the three period rankings without overall RATE boards", () => {
   const app = read("app.js");
   const rankingScreen = sourceBetween(
     app,
@@ -179,7 +179,7 @@ test("overall RATE and proof dashboard precede the period circuit without retire
 
   assert.ok(dashboardIndex >= 0 && dashboardIndex < periodTabsIndex);
   assert.ok(spotlightIndex >= 0 && spotlightIndex < periodTabsIndex);
-  assert.ok(overallIndex >= 0 && overallIndex < periodTabsIndex);
+  assert.equal(overallIndex, -1);
   assert.match(rankingScreen, /宣言後の3戦だけ/);
   assert.match(rankingScreen, /成立デイリーのBEST/);
   assert.match(rankingScreen, /成立ウィークリーのBEST/);
@@ -333,7 +333,7 @@ test("proof matchmaking starts only after confirmation and never creates a secon
   assert.match(strategy, /matchmakingLaunchGeneration/);
   assert.match(online, /pendingSampleMatchmakingLaunch = null/);
   assert.match(online, /confirmed && crownMatchmakingLaunchIsCurrent\(context\)/);
-  assert.match(online, /currentDashboard\?\.rules\.dailyKey !== getLeaderboardPeriodInfo\("daily"\)\.key/);
+  assert.match(online, /getRankingDashboard\(\)\?\.rules\.dailyKey === getLeaderboardPeriodInfo\("daily"\)\.key/);
 });
 
 test("proof matchmaking waits for declaration, blocks the queue on rejection, and ignores late completion", async () => {
