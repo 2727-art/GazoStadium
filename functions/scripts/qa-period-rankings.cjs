@@ -60,16 +60,15 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.evaluate(() => window.__rankingLoadEvents), 0, "top page never starts dashboard refresh on midnight or tab return");
     const topPageDashboardLoads = await page.evaluate(() => window.__rankingLoadEvents);
     await page.evaluate(() => {
-      if (window.HariaiOnline.refreshOverallLeaderboard || window.HariaiOnline.refreshRateFloorLeaderboard) {
+      if (window.HariaiOnline.refreshOverallLeaderboard || window.HariaiOnline.refreshRateFloorLeaderboard || window.HariaiOnline.setCrownCustomization) {
         throw new Error("Retired public board API still exported");
       }
       const periodInfo = window.HariaiOnline.getLeaderboardPeriodInfo("daily");
       const dashboard = {
         enabled: true, entryId: "fixture-own", overall: { rating: 1350 },
         run: { key: periodInfo.key, status: "active", matchCount: 1, crownPower: 1380, ratingAtStart: 1350,
-          uniqueOpponents: 1, modeMatches: { solo: 1, strategy: 0 }, signatureIds: [], endsAt: periodInfo.nextResetAt },
-        customization: { crownTheme: "gold", crownSignatureId: "daily_champion", availableThemes: ["rose", "gold"],
-          availableSignatureIds: ["daily_champion"] }, rules: { dailyKey: periodInfo.key },
+          uniqueOpponents: 1, modeMatches: { solo: 1, strategy: 0 }, signatureIds: ["upset"], endsAt: periodInfo.nextResetAt },
+        rules: { dailyKey: periodInfo.key },
       };
       const state = { period: "weekly", status: "ready", reads: [], dashboardRequests: [] };
       window.__periodRankingQA = state;
@@ -99,6 +98,9 @@ const server = http.createServer((request, response) => {
     assert.doesNotMatch(await page.locator(".ranking-screen").innerText(), /あなたの現在地|総合RATEランキング|下限チャレンジ|総合RATEクラス/);
     assert.equal(await page.locator("#crownRunSoloButton").count(), 1);
     assert.equal(await page.locator("#crownRunStrategyButton").count(), 1);
+    assert.equal(await page.locator(".crown-customization, #crownCustomizationSave, #crownThemeSelect, #crownSignatureSelect").count(), 0);
+    assert.doesNotMatch(await page.locator(".ranking-screen").innerText(), /CROWN CUSTOMIZATION|王座の見せ方/);
+    assert.match(await page.locator(".crown-proof-signatures").innerText(), /番狂わせ/);
     const viewports = [];
     for (const [width, height] of [[1440, 1000], [390, 844], [320, 568]]) {
       await page.setViewportSize({ width, height });

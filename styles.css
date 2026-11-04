@@ -2129,8 +2129,7 @@ button:disabled {
 .ranking-board-head h2,
 .ranking-circuit-head h2,
 .ranking-dashboard-head h2,
-.crown-proof-head h2,
-.crown-customization h3 {
+.crown-proof-head h2 {
   margin: 4px 0 0;
   color: var(--text);
   font-size: 1.18rem;
@@ -2436,53 +2435,6 @@ button:disabled {
 .crown-run-complete span {
   color: #c7b78e;
   font-size: 0.64rem;
-}
-
-.crown-customization {
-  --crown-color: #ff8aaa;
-  --crown-glow: rgba(255, 105, 148, 0.13);
-  display: grid;
-  grid-template-columns: minmax(200px, 0.65fr) minmax(0, 1fr);
-  gap: 16px;
-  margin-top: 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--crown-color);
-  border-radius: 14px;
-  background: linear-gradient(135deg, var(--crown-glow), rgba(10, 12, 20, 0.64));
-}
-
-.crown-customization p {
-  margin: 6px 0 0;
-  color: var(--muted);
-  font-size: 0.66rem;
-  line-height: 1.55;
-}
-
-.crown-customization-controls {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(110px, 1fr)) auto;
-  align-items: end;
-  gap: 8px;
-}
-
-.crown-customization-controls label {
-  display: grid;
-  gap: 5px;
-  color: #aab5c5;
-  font-size: 0.58rem;
-  font-weight: 900;
-}
-
-.crown-customization-controls select {
-  min-width: 0;
-  height: 40px;
-  padding: 0 9px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 9px;
-  color: var(--text);
-  background: #111724;
-  font: inherit;
-  font-size: 0.68rem;
 }
 
 .crown-theme-rose,
@@ -8564,15 +8516,6 @@ button:disabled {
   .crown-run-complete {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .crown-customization {
-    grid-template-columns: 1fr;
-    padding: 13px 11px;
-  }
-
-  .crown-customization-controls {
-    grid-template-columns: 1fr;
   }
 
   .crown-spotlight {

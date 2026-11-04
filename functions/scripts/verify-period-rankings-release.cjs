@@ -7,9 +7,10 @@ const { ORIGINS, sha256LF } = require("./verify-player-safety-release.cjs");
 const { createAdminReader } = require("./verify-image-preference-functions.cjs");
 const { assetUrl } = require("./verify-strategy-dm-thread-release.cjs");
 const root = path.resolve(__dirname, "../..");
-const changed = ["app.js", "online.js", "strategy.js"];
-const retained = ["tribute.js", "strategy.css", "feature-loader.js", "normal-dm-gaze.mjs"];
-const marker = "ranking-screen-load-v1";
+const customizationRetired = process.argv.includes("--customization-retired");
+const changed = customizationRetired ? ["app.js", "online.js", "styles.css"] : ["app.js", "online.js", "strategy.js"];
+const retained = ["tribute.js", "strategy.css", "feature-loader.js", "normal-dm-gaze.mjs", ...(customizationRetired ? ["strategy.js"] : [])];
+const marker = customizationRetired ? "retire-crown-customization-v1" : "ranking-screen-load-v1";
 const previousMarkers = ["strategy-dm-gaze-v1", "monthly-single-champion-v1", "mirage-achievement-link-v1", "ranch-premium-icons-v3", "mobile-loading-v1"];
 
 async function read(url) {
@@ -38,7 +39,7 @@ async function main() {
   const admin = await createAdminReader();
   const deployed = await admin("https://cloudfunctions.googleapis.com/v2/projects/gazostadium/locations/us-central1/functions?pageSize=100");
   const source = await fs.readFile(path.join(root, "functions/index.js"), "utf8");
-  const targets = [...source.matchAll(/^exports\.(\w+)\s*=/gm)].map(match => match[1]);
+  const targets = customizationRetired ? ["economyAction"] : [...source.matchAll(/^exports\.(\w+)\s*=/gm)].map(match => match[1]);
   const functions = targets.map(name => {
     const fn = deployed.functions.find(value => value.name.endsWith(`/${name}`));
     return { name, state: fn?.state, revision: fn?.serviceConfig?.revision, updatedAt: fn?.updateTime,
@@ -61,7 +62,8 @@ async function main() {
   const report = { checkedAt: new Date().toISOString(), since, project: "gazostadium", readOnly: true, marker,
     routes, functions, rulesMatch, retired, authBoundary,
     ok: routes.every(route => route.ok) && functions.every(fn => fn.ok) && rulesMatch && retired.every(item => item.denied) && authBoundary.ok };
-  await fs.writeFile(path.join(root, "functions/docs/PERIOD_RANKINGS_RELEASE_QA.json"), JSON.stringify(report, null, 2) + "\n");
+  const reportName = customizationRetired ? "CROWN_CUSTOMIZATION_RELEASE_QA.json" : "PERIOD_RANKINGS_RELEASE_QA.json";
+  await fs.writeFile(path.join(root, "functions/docs", reportName), JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ok: report.ok, routes: routes.map(({ origin, ok }) => ({ origin, ok })),
     functionsActive: functions.filter(fn => fn.ok).length, functionsExpected: functions.length, rulesMatch, retired, authBoundary }, null, 2));
   if (!report.ok) process.exitCode = 1;

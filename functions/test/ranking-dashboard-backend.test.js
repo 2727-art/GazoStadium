@@ -104,7 +104,7 @@ test("crown run signature storage remains array-only as in the prior reader", ()
 test("dashboard no longer calculates overall standing or writes best rank", () => {
   assert.doesNotMatch(functionsSource, /loadServerOverallStanding|serverOverallProfilesQuery|beforeQuery|afterQuery/);
   assert.doesNotMatch(functionsSource, /bestOverallRank: bestRank/);
-  assert.match(functionsSource, /includePresentation \? loadCrownCustomizationOptions/);
+  assert.doesNotMatch(functionsSource, /loadCrownCustomizationOptions|fallbackCrownCustomization|crownCustomizationOptions/);
 });
 
 test("ranking failures no longer surface as AnjuPay failures", () => {
@@ -113,13 +113,13 @@ test("ranking failures no longer surface as AnjuPay failures", () => {
   assert.match(functionsSource, /economyActionInternalMessage\(action\)/);
 });
 
-test("crown customization uses fixed existence queries instead of 90 plus 90 scans", () => {
+test("retired crown customization no longer issues existence queries", () => {
   assert.doesNotMatch(functionsSource, /collection\("crownRuns"\)[\s\S]{0,160}\.limit\(90\)/);
   assert.doesNotMatch(functionsSource, /collection\("awards"\)[\s\S]{0,160}\.limit\(90\)/);
-  assert.match(functionsSource, /where\("matchCount", ">=", CROWN_DAILY_MATCH_LIMIT\)\.limit\(1\)/);
-  assert.match(functionsSource, /where\("signatureIds", "array-contains", signatureId\)\.limit\(1\)/);
-  assert.match(functionsSource, /where\("rank", "in", \[1, 2, 3\]\)/);
-  assert.match(functionsSource, /where\("tier", "==", tier\)\.limit\(1\)/);
+  assert.doesNotMatch(functionsSource, /where\("matchCount", ">=", CROWN_DAILY_MATCH_LIMIT\)\.limit\(1\)/);
+  assert.doesNotMatch(functionsSource, /where\("signatureIds", "array-contains", signatureId\)\.limit\(1\)/);
+  assert.doesNotMatch(functionsSource, /where\("rank", "in", \[1, 2, 3\]\)/);
+  assert.doesNotMatch(functionsSource, /where\("tier", "==", tier\)\.limit\(1\)/);
 });
 
 test("required Firestore indexes are declared", () => {

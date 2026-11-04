@@ -1058,31 +1058,6 @@
     </section>`;
   }
 
-  function renderCrownCustomization(dashboard) {
-    if (!dashboard?.enabled) return "";
-    const customization = dashboard.customization || {};
-    const selectedTheme = Object.hasOwn(CROWN_THEMES, customization.crownTheme)
-      ? customization.crownTheme
-      : "rose";
-    const availableThemes = Array.isArray(customization.availableThemes) && customization.availableThemes.length
-      ? customization.availableThemes.filter((theme) => Object.hasOwn(CROWN_THEMES, theme))
-      : Object.keys(CROWN_THEMES);
-    const availableSignatureIds = Array.isArray(customization.availableSignatureIds)
-      ? customization.availableSignatureIds.filter((id) => crownSignaturePresentation(id))
-      : [];
-    const selectedSignatureId = crownSignaturePresentation(customization.crownSignatureId)
-      ? customization.crownSignatureId
-      : "";
-    const themeOptions = availableThemes.map((theme) => `<option value="${escapeHtml(theme)}" ${theme === selectedTheme ? "selected" : ""}>${escapeHtml(CROWN_THEMES[theme])}</option>`).join("");
-    const signatureOptions = [
-      `<option value="" ${selectedSignatureId ? "" : "selected"}>SIGNATUREを表示しない</option>`,
-      ...availableSignatureIds.map((id) => `<option value="${escapeHtml(id)}" ${id === selectedSignatureId ? "selected" : ""}>${escapeHtml(CROWN_SIGNATURES[id].label)}</option>`),
-    ].join("");
-    return `<section class="crown-customization crown-theme-${escapeHtml(selectedTheme)}" aria-labelledby="crownCustomizationTitle">
-      <div><span class="eyebrow">CROWN CUSTOMIZATION</span><h3 id="crownCustomizationTitle">王座の見せ方</h3><p>獲得済みのSIGNATUREと王座色を、自分で選んで公開できます。</p></div>
-      <div class="crown-customization-controls"><label>王座色<select id="crownThemeSelect">${themeOptions}</select></label><label>SIGNATURE<select id="crownSignatureSelect">${signatureOptions}</select></label><button class="button button-ghost button-small" id="crownCustomizationSave" type="button">表示を保存</button></div>
-    </section>`;
-  }
 
   function renderRankingDashboardPanel() {
     const dashboard = window.HariaiOnline?.getRankingDashboard?.();
@@ -1093,9 +1068,8 @@
     if (!dashboard && statusState.status === "error") {
       return `<section class="ranking-dashboard is-error"><p>${escapeHtml(statusState.error || "三戦証明を取得できませんでした。")}</p><button class="button button-ghost button-small" id="rankingDashboardRetryButton" type="button">もう一度取得</button></section>`;
     }
-    return `<section class="ranking-dashboard" aria-label="三戦証明と王座設定">
+    return `<section class="ranking-dashboard" aria-label="今日の三戦証明">
       ${renderCrownRunPanel(dashboard)}
-      ${renderCrownCustomization(dashboard)}
     </section>`;
   }
 
@@ -1235,19 +1209,6 @@
     }
   }
 
-  async function saveCrownCustomization() {
-    const crownTheme = document.querySelector("#crownThemeSelect")?.value || "rose";
-    const crownSignatureId = document.querySelector("#crownSignatureSelect")?.value || "";
-    try {
-      setBusy(true, "王座の見せ方を保存しています…");
-      await window.HariaiOnline?.setCrownCustomization?.({ crownTheme, crownSignatureId });
-      showToast("王座の見せ方を保存しました。");
-    } catch (error) {
-      showToast(error?.message || "王座の見せ方を保存できませんでした。");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   function bindRankingDashboardEvents() {
     document.querySelector("#rankingDashboardRetryButton")?.addEventListener("click", () => {
@@ -1256,7 +1217,6 @@
     document.querySelector("#crownRunStartButton")?.addEventListener("click", beginDailyCrownRun);
     document.querySelector("#crownRunSoloButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#crownRunStrategyButton")?.addEventListener("click", startStrategyLab);
-    document.querySelector("#crownCustomizationSave")?.addEventListener("click", saveCrownCustomization);
   }
 
   function renderRankingScreen({ refresh = false, preserveScroll = false } = {}) {

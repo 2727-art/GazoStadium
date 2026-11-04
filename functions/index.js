@@ -245,10 +245,6 @@ const {
   startCrownRun,
 } = require("./crown-circuit");
 const {
-  crownCustomizationOptions,
-  fallbackCrownCustomization,
-} = require("./ranking-dashboard");
-const {
   SERVER_RATE_FLOOR_MINIMUM_MATCHES,
   isServerRateFloorEntryId,
   normalizeServerRateFloorRevision,
@@ -2610,38 +2606,6 @@ async function getServerRankingAwards(uid) {
   };
 }
 
-async function loadCrownCustomizationOptions(uid) {
-  const profileRef = serverRankingProfileRef(uid);
-  const runs = profileRef.collection("crownRuns");
-  const awards = profileRef.collection("awards");
-  const championTiers = ["daily_champion", "weekly_champion", "monthly_champion"];
-  const [completedRunSnapshot, runSignatureSnapshots, topThreeSnapshot, championSnapshots] = await Promise.all([
-    runs.where("matchCount", ">=", CROWN_DAILY_MATCH_LIMIT).limit(1).get(),
-    Promise.all(CROWN_SIGNATURE_IDS.map((signatureId) => (
-      runs.where("signatureIds", "array-contains", signatureId).limit(1).get()
-    ))),
-    awards
-      .where("rank", "in", [1, 2, 3])
-      .where("participantCount", ">=", 2)
-      .limit(1)
-      .get(),
-    Promise.all(championTiers.map((tier) => (
-      awards.where("tier", "==", tier).limit(1).get()
-    ))),
-  ]);
-  const signatures = new Set();
-  runSignatureSnapshots.forEach((snapshot, index) => {
-    if (!snapshot.empty) signatures.add(CROWN_SIGNATURE_IDS[index]);
-  });
-  championSnapshots.forEach((snapshot, index) => {
-    if (!snapshot.empty) signatures.add(championTiers[index]);
-  });
-  return crownCustomizationOptions({
-    completedRun: !completedRunSnapshot.empty,
-    topThreeAward: !topThreeSnapshot.empty,
-    signatureIds: normalizeSignatureIds([...signatures]),
-  });
-}
 
 function rankingDependencyErrorCode(error) {
   return cleanText(error?.code || error?.details || error?.message || "unknown", 80) || "unknown";
@@ -2671,24 +2635,16 @@ async function getRankingDashboard(uid, { includePresentation = false } = {}) {
     rating: 1000,
     updatedAt: now,
   });
-  const [customizationResult, spotlightResult] = await Promise.allSettled([
-    includePresentation ? loadCrownCustomizationOptions(uid) : Promise.resolve(fallbackCrownCustomization(profile)),
-    includePresentation ? realtime.ref("online/rankingSpotlights/current").get() : Promise.resolve(null),
-  ]);
-  const customization = customizationResult.status === "fulfilled"
-    ? customizationResult.value
-    : fallbackCrownCustomization(profile);
-  const spotlightSnapshot = spotlightResult.status === "fulfilled" ? spotlightResult.value : null;
-  if (customizationResult.status === "rejected"
-      || spotlightResult.status === "rejected") {
-    console.warn("ranking dashboard optional context unavailable", {
-      customization: customizationResult.status === "fulfilled"
-        ? "ok"
-        : rankingDependencyErrorCode(customizationResult.reason),
-      spotlight: spotlightResult.status === "fulfilled"
-        ? "ok"
-        : rankingDependencyErrorCode(spotlightResult.reason),
-    });
+  let spotlightSnapshot = null;
+  // Presentation now consists only of the separate champion spotlight.
+  if (includePresentation) {
+    try {
+      spotlightSnapshot = await realtime.ref("online/rankingSpotlights/current").get();
+    } catch (error) {
+      console.warn("ranking dashboard spotlight unavailable", {
+        spotlight: rankingDependencyErrorCode(error),
+      });
+    }
   }
   const crownRun = runSnapshot?.exists
     ? publicCrownCircuitEntry(runSnapshot.data())
@@ -2704,11 +2660,6 @@ async function getRankingDashboard(uid, { includePresentation = false } = {}) {
     presentationIncluded: includePresentation,
     overall: { rating: profile.rating },
     crownRun,
-    customization: {
-      crownTheme: profile.crownTheme,
-      crownSignatureId: profile.crownSignatureId || "",
-      ...customization,
-    },
     rules: {
       rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
       modes: [...CROWN_CIRCUIT_MODES],
@@ -2785,85 +2736,9 @@ async function startRankingCrownRun(uid, data) {
   };
 }
 
-async function setCrownCustomization(uid, data) {
-  const crownTheme = cleanText(data?.crownTheme, 16);
-  const crownSignatureId = cleanText(data?.crownSignatureId, 40);
-  if (!CROWN_THEMES.includes(crownTheme)) {
-    throw new HttpsError("invalid-argument", "王冠テーマを確認できませんでした。");
-  }
-  const options = await loadCrownCustomizationOptions(uid);
-  if (!options.availableThemes.includes(crownTheme)) {
-    throw new HttpsError("failed-precondition", "まだ獲得していない王冠テーマです。");
-  }
-  if (crownSignatureId && !options.availableSignatureIds.includes(crownSignatureId)) {
-    throw new HttpsError("failed-precondition", "まだ獲得していないSIGNATUREです。");
-  }
-  const now = Date.now();
-  const profileRef = serverRankingProfileRef(uid);
-  const profile = await firestore.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(profileRef);
-    if (!snapshot.exists) {
-      throw new HttpsError("failed-precondition", "ランキングプロフィールがありません。");
-    }
-    const previous = normalizeServerRankingProfile(snapshot.data());
-    const next = {
-      ...previous,
-      crownTheme,
-      updatedAt: now,
-    };
-    if (crownSignatureId) next.crownSignatureId = crownSignatureId;
-    else delete next.crownSignatureId;
-    transaction.set(profileRef, {
-      crownTheme,
-      crownSignatureId: crownSignatureId || FieldValue.delete(),
-      updatedAt: now,
-    }, { merge: true });
-    return next;
-  });
-  const periodInfos = SERVER_RANKING_PERIODS
-    .map((period) => ({ period, key: periodKey(period, now) }))
-    .filter(({ period, key }) => isCrownCircuitPeriod(period, key));
-  const entryRefs = periodInfos.map(({ period, key }) => (
-    crownCircuitPeriodEntryRef(uid, period, key)
-  ));
-  const runRef = isCrownCircuitPeriod("daily", periodKey("daily", now))
-    ? crownCircuitRunRef(uid, periodKey("daily", now))
-    : null;
-  const refs = [...entryRefs, ...(runRef ? [runRef] : [])];
-  const snapshots = refs.length ? await firestore.getAll(...refs) : [];
-  const batch = firestore.batch();
-  const mirroredEntries = {};
-  snapshots.forEach((snapshot, index) => {
-    if (!snapshot.exists) return;
-    const source = {
-      ...snapshot.data(),
-      crownTheme,
-      updatedAt: now,
-    };
-    if (crownSignatureId) source.crownSignatureId = crownSignatureId;
-    else delete source.crownSignatureId;
-    batch.set(snapshot.ref, {
-      crownTheme,
-      crownSignatureId: crownSignatureId || FieldValue.delete(),
-      updatedAt: now,
-    }, { merge: true });
-    const info = index < periodInfos.length
-      ? periodInfos[index]
-      : { period: "daily", key: periodKey("daily", now) };
-    mirroredEntries[`${info.period}:${info.key}`] = source;
-  });
-  if (Object.keys(mirroredEntries).length) await batch.commit();
-  await Promise.all([
-    mirrorCrownCircuitEntries({ [uid]: mirroredEntries }),
-    syncRankingSpotlightConsent(profile),
-  ]);
-  return {
-    customization: {
-      crownTheme,
-      crownSignatureId,
-      ...options,
-    },
-  };
+async function setCrownCustomization() {
+  // Reject clients loaded before retirement without reading or updating data.
+  throw new HttpsError("failed-precondition", "王座の見せ方のカスタマイズは提供を終了しました。");
 }
 
 async function getAchievements(uid, { syncPublic = false, deferTributeBackfill = false } = {}) {

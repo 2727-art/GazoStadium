@@ -5,7 +5,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const crown = require("../crown-circuit");
-const { fallbackCrownCustomization } = require("../ranking-dashboard");
 
 const root = path.resolve(__dirname, "../..");
 const server = fs.readFileSync(path.join(root, "functions/index.js"), "utf8");
@@ -37,12 +36,6 @@ function dashboardHarness({ enabled = true, run = true, presentationFails = fals
     } }),
     normalizeServerRankingProfile: (value) => value,
     publicCrownCircuitEntry: (value) => value,
-    fallbackCrownCustomization,
-    loadCrownCustomizationOptions: async () => {
-      calls.push("customization.read");
-      if (presentationFails) throw new Error("unavailable");
-      return { availableThemes: ["rose", "gold"], availableSignatureIds: ["daily_champion"] };
-    },
     realtime: { ref: (key) => {
       assert.equal(key, "online/rankingSpotlights/current");
       return { get: async () => {
@@ -74,20 +67,24 @@ test("preparation dashboard reads only the profile and today's run, retaining in
     assert.deepEqual(result.overall, { rating: 1375 });
     assert.equal(result.presentationIncluded, false);
     assert.equal(result.spotlight, null);
+    assert.equal("customization" in result, false);
     assert.equal("rateFloorEnabled" in result.profile, false);
     assert.equal(result.crownRun, options.run === false ? null : harness.crownRun);
     assert.deepEqual(result.rules.modes, ["solo", "strategy"]);
   }
 });
 
-test("ranking screen explicitly loads crown presentation without calculating overall ranks", async () => {
+test("ranking screen reads only profile, proof and spotlight without customization queries", async () => {
   const harness = dashboardHarness();
   const result = await harness.get("viewer", { includePresentation: true });
-  assert.deepEqual(harness.calls, ["profile.read", "run.read", "customization.read", "spotlight.read", "spotlight.mask"]);
+  assert.deepEqual(harness.calls, ["profile.read", "run.read", "spotlight.read", "spotlight.mask"]);
   assert.equal(result.presentationIncluded, true);
   assert.equal(result.spotlight.name, "Champion");
   assert.deepEqual(result.overall, { rating: 1375 });
   assert.equal(harness.profile.bestOverallRank, 1);
+  assert.equal("customization" in result, false);
+  assert.equal(harness.profile.crownTheme, "gold");
+  assert.equal(harness.profile.crownSignatureId, "daily_champion");
 });
 
 test("unavailable presentation still returns the current proof run and internal rating", async () => {
@@ -96,7 +93,7 @@ test("unavailable presentation still returns the current proof run and internal 
   assert.equal(result.crownRun, harness.crownRun);
   assert.equal(result.profile.rating, 1375);
   assert.equal(result.spotlight, null);
-  assert.deepEqual(result.customization.availableThemes, ["rose", "gold"]);
+  assert.equal("customization" in result, false);
 });
 
 test("daily and weekly fetch only the selected period; monthly stays available on demand", async () => {
@@ -144,8 +141,8 @@ test("ranking refresh requests only the selected period and presentation dashboa
   assert.deepEqual(calls, ["selected-period", { includePresentation: true }]);
 });
 
-test("a lightweight refresh preserves the already loaded crown presentation", () => {
-  const presentation = { customization: { availableThemes: ["rose", "gold"] }, spotlight: { name: "Champion" } };
+test("a lightweight refresh preserves the already loaded spotlight", () => {
+  const presentation = { spotlight: { name: "Champion" } };
   const harness = Function("initial", `
     let rankingDashboard = initial, rankingDashboardStatus = "idle", rankingDashboardError = "";
     const normalizeRankingDashboard = (value) => value;
@@ -154,7 +151,7 @@ test("a lightweight refresh preserves the already loaded crown presentation", ()
     return applyRankingDashboard;
   `)(presentation);
   const result = harness({ presentationIncluded: false, overall: { rating: 1400 }, crownRun: { matchCount: 2 } });
-  assert.deepEqual(result.customization, presentation.customization);
+  assert.equal("customization" in result, false);
   assert.deepEqual(result.spotlight, presentation.spotlight);
   assert.equal(result.crownRun.matchCount, 2);
   assert.equal(result.overall.rating, 1400);

@@ -73,9 +73,8 @@ function loadShowcaseActions({ failSave = false, failRefresh = false } = {}) {
     const leaderboardPeriodKey = "2026-09-14";
     ${sourceBetween(online, "const CROWN_THEMES", "const SERVER_RANKING_AWARD_MINIMUM_MATCHES")}
     ${sourceBetween(online, "function normalizeCrownTheme", "function normalizeCrownSignatureIds")}
-    ${sourceBetween(online, "async function setCrownCustomization", "async function refreshLeaderboard")}
     ${sourceBetween(online, "async function saveAchievementShowcase", "function render()")}
-    return { setCrownCustomization, saveAchievementShowcase, state, isBusy: () => rankingDashboardBusy };
+    return { saveAchievementShowcase, state, isBusy: () => rankingDashboardBusy };
   `)(harness);
   return { ...actions, calls, toasts };
 }
@@ -214,19 +213,6 @@ test("RATE FLOOR safely handles missing, invalid and hidden public decorations",
   assert.deepEqual(unavailable.achievementShowcase, []);
 });
 
-
-test("saved crown customization refreshes only the selected period and tolerates refresh failures", async () => {
-  const actions = loadShowcaseActions({ failRefresh: true });
-  assert.deepEqual(await actions.setCrownCustomization({ crownTheme: "gold", crownSignatureId: "upset" }), { updated: true });
-  assert.deepEqual(actions.calls[0], { action: "set_crown_customization", crownTheme: "gold", crownSignatureId: "upset" });
-  assert.deepEqual(actions.calls.filter((call) => typeof call === "string"), []);
-  assert.deepEqual(actions.calls.at(-1), { period: "weekly", options: { force: true, key: "2026-09-14" } });
-  assert.equal(actions.isBusy(), false);
-  const rejected = loadShowcaseActions({ failSave: true });
-  await assert.rejects(rejected.setCrownCustomization(), /保存エラー/);
-  assert.equal(rejected.calls.includes("floor"), false);
-  assert.equal(rejected.isBusy(), false);
-});
 
 test("saved achievement selections refresh only the selected period and rejected saves do not publish", async () => {
   const actions = loadShowcaseActions({ failRefresh: true });
@@ -391,7 +377,7 @@ test("Crown proof remains usable when optional personal ranking context is unava
   const startRun = sourceBetween(
     online,
     "async function startCrownRun",
-    "async function setCrownCustomization",
+    "async function refreshLeaderboard",
   );
 
   assert.doesNotMatch(online, /contextAvailable: overallSource/);

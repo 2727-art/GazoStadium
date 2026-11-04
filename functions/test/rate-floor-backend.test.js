@@ -250,40 +250,19 @@ test("unchanged showcases avoid profile writes and missing profiles remain absen
   assert.equal(missing.state.commits.length, 0);
 });
 
-test("customization preserves earned options and removes signatures without retired mirror writes", async () => {
-  const harness = transactionHarness(eligibleProfile(), {});
-  let mirrored = null;
+test("retired customization rejects old clients before any data access", async () => {
   class HttpsError extends Error {
     constructor(code, message) { super(message); this.code = code; }
   }
+  // Supplying only HttpsError makes any database/query dependency fail this test.
   const customize = backendFunction(
-    "async function setCrownCustomization",
-    "async function getAchievements",
-    "setCrownCustomization",
-    {
-      ...harness.dependencies,
-      HttpsError,
-      loadCrownCustomizationOptions: async () => ({
-        availableThemes: ["rose", "gold"], availableSignatureIds: ["daily_champion"],
-      }),
-      SERVER_RANKING_PERIODS: [],
-      periodKey: () => "2026-09-17",
-      isCrownCircuitPeriod: () => false,
-      mirrorServerOverallProfiles: async (profiles) => { mirrored = profiles.player; },
-      mirrorCrownCircuitEntries: async () => {},
-      syncRankingSpotlightConsent: async () => {},
-    },
+    "async function setCrownCustomization", "async function getAchievements", "setCrownCustomization", { HttpsError },
   );
-  await assert.rejects(customize("player", { crownTheme: "aqua", crownSignatureId: "" }),
-    { code: "failed-precondition" });
-  await assert.rejects(customize("player", { crownTheme: "gold", crownSignatureId: "upset" }),
-    { code: "failed-precondition" });
-  assert.equal(harness.state.commits.length, 0);
-  await customize("player", { crownTheme: "rose", crownSignatureId: "" });
-  assert.equal(mirrored, null);
-  assert.equal(harness.state.ranking.crownTheme, "rose");
-  assert.equal(Object.hasOwn(harness.state.ranking, "crownSignatureId"), false);
-  assert.equal(harness.state.ranking.rateFloorRevision, 4);
+  for (const payload of [{ crownTheme: "gold", crownSignatureId: "daily_champion" }, {}, null]) {
+    await assert.rejects(customize("player", payload), {
+      code: "failed-precondition", message: "王座の見せ方のカスタマイズは提供を終了しました。",
+    });
+  }
 });
 
 test("achievement updates preserve period showcases without retired mirrors", () => {
