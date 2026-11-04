@@ -55,14 +55,31 @@ import {
   strategyTypingText,
 } from "./strategy-chat.mjs?v=strategy-persona-chat-v1";
 import {
+  LEGACY_STRATEGY_FEATURES,
+  STRATEGY_BATTLE_VIDEO_LIMIT,
+  STRATEGY_BATTLE_VOICE_LIMIT,
   STRATEGY_THREAD_CHAT_LIMIT,
   appendStrategyThreadEntries,
   collectStrategyThreadKeys,
+  normalizeStrategyFeatures,
+  normalizeStrategyReceipt,
   orderedStrategyThreadEntries,
   slotEventKeys,
+  strategyFeaturesMessage,
+  strategyReceiptMessage,
   strategyThreadKey,
   strategyThreadSignature,
-} from "./strategy-dm-thread.mjs?v=strategy-dm-thread-v1";
+} from "./strategy-dm-thread.mjs?v=strategy-dm-voice-v1";
+import {
+  STRATEGY_VOICE_MAX_SECONDS,
+  appendStrategyVoiceChunk,
+  createIncomingStrategyVoiceTransfer,
+  createStrategyVoiceTransferId,
+  finishIncomingStrategyVoiceTransfer,
+  releaseStrategyVoiceResource,
+  releaseStrategyVoiceResources,
+  sendStrategyVoice,
+} from "./strategy-voice-transfer.mjs?v=strategy-dm-voice-v1";
 import {
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitlePresentation,
@@ -257,6 +274,11 @@ let strategyThreadScrollTop = 0;
 let strategySheetFor = "";
 let strategySideOpen = false;
 let strategyToolsOpen = false;
+// 既読・再生済みのオン・オフ（端末に保存、既定はオン）。オフなら送らず、相手のものも見せない。
+const STRATEGY_RECEIPTS_KEY = "hariai-stadium-strategy-receipts-v1";
+let strategyReceiptsOn = readStrategyReceiptsSetting();
+// ボイスの再生は1本ずつ。再生中の吹き出しの位置を帯に映す。
+let strategyVoicePlayer = null;
 
 const matchAchievementShowcaseCallable = httpsCallable(functions, "matchAchievementShowcase");
 
@@ -370,8 +392,20 @@ function createState() {
     videoCaptureStarting: false,
     videoCaptureAbortController: null,
     incomingVideoTransfer: null,
-    videoSentPhases: new Set(),
-    videoReceivedPhases: new Set(),
+    videoSentCounts: { battle: 0, review: 0 },
+    videoReceivedCounts: { battle: 0, review: 0 },
+    peerFeatures: { ...LEGACY_STRATEGY_FEATURES },
+    voiceClips: [],
+    voiceRecording: null,
+    pendingVoice: null,
+    voiceSending: false,
+    voiceTransferProgress: 0,
+    voiceSentCount: 0,
+    voiceReceivedCount: 0,
+    incomingVoiceTransfer: null,
+    opponentSeenKeys: new Set(),
+    opponentPlayedKeys: new Set(),
+    sentReceiptKeys: new Set(),
     videoSending: false,
     videoTransferProgress: 0,
     videoChannel: null,
@@ -1041,9 +1075,9 @@ const STRATEGY_PREVIEW_STEPS = [
   ["video", "映像が届いた"],
 ];
 // プレビューでは、ルームへ書き込む操作とチャット・映像の送信を押しても実行しない。
-const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "#strategyAccept, #strategyWithdraw, #strategyBattleStart, [data-hariai-post], [data-hariai-break], [data-hariai-pass], [data-hariai-surrender], [data-hariai-score-submit], [data-hariai-right-skip], [data-hariai-right-submit], [data-hariai-answer], [data-hariai-finish-skip], [data-hariai-finish-submit], [data-hariai-penalty-submit], [data-hariai-penalty-done], .strategy-chat-panel button, .strategy-chat-panel input, [data-strategy-chat-reaction], [data-strategy-chat-stamp], [data-strategy-video-open]";
+const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "#strategyAccept, #strategyWithdraw, #strategyBattleStart, [data-hariai-post], [data-hariai-break], [data-hariai-pass], [data-hariai-surrender], [data-hariai-score-submit], [data-hariai-right-skip], [data-hariai-right-submit], [data-hariai-answer], [data-hariai-finish-skip], [data-hariai-finish-submit], [data-hariai-penalty-submit], [data-hariai-penalty-done], .strategy-chat-panel button, .strategy-chat-panel input, [data-strategy-chat-reaction], [data-strategy-chat-stamp], [data-strategy-video-open], [data-sd-mic], [data-sd-voice-send]";
 const STRATEGY_PREVIEW_SALT = "0123456789abcdef0123456789abcdef";
-const strategyPreview = { remote: [], scoutChat: [], battleChat: [], video: null };
+const strategyPreview = { remote: [], scoutChat: [], battleChat: [], video: null, voices: [] };
 
 // 見本の短尺映像。端末の中で1.6秒の映像を作るだけで、送信はしない。
 async function paintStrategyPreviewVideo(ownerUid) {
@@ -1088,9 +1122,10 @@ async function paintStrategyPreviewVideo(ownerUid) {
   見本のスレッドの並び。実際の対戦では届いた順に積むので、チャットと映像には「どの出来事の後に届いたか」（previewAfter）を持たせ、
   その順に並べる。置き場所のない発言は見本に出さない。
 */
-function strategyPreviewThread(slots, battleChat, clips) {
+function strategyPreviewThread(slots, battleChat, clips, voices = []) {
   const extras = [...battleChat.map((message) => ({ key: strategyThreadKey("chat", message.id), after: message.previewAfter, message })),
-    ...clips.map((clip) => ({ key: strategyThreadKey("video", clip.id), after: clip.previewAfter, clip }))];
+    ...clips.map((clip) => ({ key: strategyThreadKey("video", clip.id), after: clip.previewAfter, clip })),
+    ...voices.map((voice) => ({ key: strategyThreadKey("voice", voice.id), after: voice.previewAfter, voice }))];
   const keys = [...strategyPreview.scoutChat.map((message) => strategyThreadKey("chat", message.id)), strategyThreadKey("start")];
   const placed = [];
   const place = (key) => {
@@ -1105,7 +1140,36 @@ function strategyPreviewThread(slots, battleChat, clips) {
     log: appendStrategyThreadEntries([], keys),
     chats: placed.filter((extra) => extra.message).map((extra) => extra.message),
     clips: placed.filter((extra) => extra.clip).map((extra) => extra.clip),
+    voices: placed.filter((extra) => extra.voice).map((extra) => extra.voice),
   };
+}
+
+// 見本のボイス。端末の中で、上がり下がりする音の短い WAV（モノラル16bit）を作るだけで、送信はしない。
+function paintStrategyPreviewVoice(id, ownerUid, seconds, pitch, previewAfter) {
+  const rate = 22_050;
+  const samples = Math.round(rate * seconds);
+  const buffer = new ArrayBuffer(44 + samples * 2);
+  const view = new DataView(buffer);
+  const text = (offset, value) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
+  text(0, "RIFF");
+  view.setUint32(4, 36 + samples * 2, true);
+  text(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, "data");
+  view.setUint32(40, samples * 2, true);
+  for (let index = 0; index < samples; index += 1) {
+    const time = index / rate;
+    const envelope = Math.min(1, time * 8, (seconds - time) * 8) * (0.6 + 0.4 * Math.sin(time * 9));
+    view.setInt16(44 + index * 2, Math.round(Math.sin(2 * Math.PI * pitch * (1 + 0.15 * Math.sin(time * 3)) * time) * envelope * 9000), true);
+  }
+  const blob = new Blob([buffer], { type: "audio/wav" });
+  return { id, transferId: id, ownerUid, phase: "battle", round: 6, blob, url: URL.createObjectURL(blob), duration: seconds, createdAt: Date.now(), released: false, previewAfter };
 }
 
 function paintStrategyPreviewArt(index) {
@@ -1181,6 +1245,8 @@ async function startStrategyPreview() {
     weaknessIndex: 1,
     channelReady: true,
     videoChannelReady: true,
+    reviewAssetChannelReady: true,
+    peerFeatures: normalizeStrategyFeatures(strategyFeaturesMessage()),
     opponentOnline: true,
     main: urls.slice(0, 5).map((url, index) => ({ id: `preview-main-${index}`, url, used: false })),
     reserve: urls.slice(5, 10).map((url, index) => ({ id: `preview-reserve-${index}`, url, used: false })),
@@ -1196,8 +1262,14 @@ async function startStrategyPreview() {
     { id: "preview-chat-2", authorUid: me.uid, text: "ふーん、効いてるんだ？", phase: "battle", round: 4, effect: "emphasis", previewAfter: "score:4" },
     { id: "preview-chat-3", authorUid: rival.uid, text: "…べつに、効いてないし", phase: "battle", round: 4, effect: "tremble", previewAfter: "chat:preview-chat-2" },
     { id: "preview-chat-4", authorUid: me.uid, text: "待って、それはずるい", phase: "battle", round: 5, previewAfter: "post:5" },
+    { id: "preview-chat-5", authorUid: me.uid, text: "声まで送ってくるの、反則…", phase: "battle", round: 6, previewAfter: "voice:preview-voice-mine" },
   ];
   strategyPreview.video = null;
+  // 相手の映像の後に相手のボイス、こちらのボイス（再生済み）、こちらのチャット（既読）が続く。
+  strategyPreview.voices = [
+    paintStrategyPreviewVoice("preview-voice-rival", rival.uid, 3.4, 330, "video:preview-video-1"),
+    paintStrategyPreviewVoice("preview-voice-mine", me.uid, 2.2, 260, "voice:preview-voice-rival"),
+  ];
   strategyPreview.remote = urls.slice(10);
   mountStrategyPreviewBar();
   showStrategyPreviewStep("right");
@@ -1245,11 +1317,17 @@ async function showStrategyPreviewStep(step) {
   state.roomData = { moves };
   state.replay = replayHariai({ hostUid: host.uid, guestUid: guest.uid, firstUid: state.firstUid, moves });
   const clips = step === "video" && strategyPreview.video ? [strategyPreview.video] : [];
-  const thread = strategyPreviewThread(state.replay.slots, strategyPreview.battleChat, clips);
+  // 映像の見本では、相手のボイス・自分のボイス（再生済み）・自分の最後のチャット（既読）も見せる。
+  const voices = step === "video" ? strategyPreview.voices : [];
+  const thread = strategyPreviewThread(state.replay.slots, strategyPreview.battleChat, clips, voices);
   state.chatMessages = [...strategyPreview.scoutChat, ...thread.chats];
   state.videoClips = thread.clips;
+  state.voiceClips = thread.voices;
+  state.voiceSentCount = thread.voices.filter((voice) => voice.ownerUid === state.uid).length;
+  state.opponentPlayedKeys = new Set(step === "video" ? ["voice:preview-voice-mine"] : []);
+  state.opponentSeenKeys = new Set(step === "video" ? ["c:preview-chat-5"] : ["post:2", "post:4", "post:6"]);
   state.threadLog = thread.log;
-  state.threadFreshKeys = new Set(thread.clips.map((clip) => strategyThreadKey("video", clip.id)));
+  state.threadFreshKeys = new Set([...thread.clips.map((clip) => strategyThreadKey("video", clip.id)), ...thread.voices.map((voice) => strategyThreadKey("voice", voice.id))]);
   strategyThreadFollow = true;
   // 自分の番の見本は、操作のシートを開いた状態で見せる（映像の見本は帯だけ）。
   strategySheetFor = ["right", "act", "answer", "finish"].includes(step) ? strategySheetKey(state.replay.pending) : "";
@@ -1440,6 +1518,11 @@ function render() {
     strategyThreadFollow = true;
     strategyToolsOpen = false;
   }
+  // 対戦の画面を離れたら、録音中のマイクと再生中のボイスを止める。
+  if (screenChanged && lastRenderedScreen === "battle") {
+    stopStrategyVoiceRecording({ discard: true });
+    stopStrategyVoicePlayback();
+  }
   const threadNodes = screenChanged ? new Map() : collectStrategyThreadNodes();
   const keptScroll = screenChanged ? new Map() : captureStrategyKeptScroll();
   app.innerHTML = renderContactControls("strategy") + (renderers[state.screen] || renderProfile)();
@@ -1466,7 +1549,11 @@ function render() {
       }
     }
   }
-  if (state.screen === "battle") settleStrategyThreadLayout({ follow: screenChanged });
+  if (state.screen === "battle") {
+    settleStrategyThreadLayout({ follow: screenChanged });
+    syncStrategyVoiceButtons();
+    reportStrategySeenChats();
+  }
   restoreStrategyKeptScroll(keptScroll);
 }
 
@@ -1984,6 +2071,10 @@ function strategyThreadVideos() {
   return state.videoClips.filter((clip) => clip.phase === "battle" && !clip.released && clip.url && clip.id);
 }
 
+function strategyThreadVoices() {
+  return state.voiceClips.filter((clip) => !clip.released && clip.url && clip.id);
+}
+
 // 状態から分かる出来事のうち、まだスレッドに積んでいないものを末尾へ足す。最初に積む時は登場の動きを付けない。
 function syncStrategyThreadLog() {
   const previous = state.threadLog;
@@ -1991,6 +2082,7 @@ function syncStrategyThreadLog() {
     slots: state.replay?.slots || [],
     chats: strategyThreadChats(),
     videoIds: strategyThreadVideos().map((clip) => clip.id),
+    voiceIds: strategyThreadVoices().map((clip) => clip.id),
     outcome: Boolean(state.replay?.outcome),
   }));
   if (next === previous) return;
@@ -1998,14 +2090,33 @@ function syncStrategyThreadLog() {
   state.threadLog = next;
 }
 
+/*
+  既読は、スレッドの最後が自分の発言（チャット）か自分の手（貼った）の時だけ、その下に1つ出す（XのDMと同じ）。
+  チャットは相手の画面に表示された時、手は相手が画像を開いた時に既読になる。オフにしている時は出さない。
+*/
+function strategySeenReceiptFor(entry, chats, slots) {
+  if (!strategyReceiptsOn) return "";
+  if (entry.kind === "chat") {
+    const message = chats.get(entry.id);
+    return message?.authorUid === state.uid && state.opponentSeenKeys.has(`c:${entry.id}`) ? "既読" : "";
+  }
+  if (entry.kind === "post") {
+    const slot = slots.get(entry.slot);
+    return slot?.by === state.uid && state.opponentSeenKeys.has(`post:${entry.slot}`) ? "既読" : "";
+  }
+  return "";
+}
+
 function renderStrategyThreadItems() {
   const chats = new Map(strategyThreadChats().map((message) => [String(message.id), message]));
   const videos = new Map(strategyThreadVideos().map((clip) => [String(clip.id), clip]));
+  const voices = new Map(strategyThreadVoices().map((clip) => [String(clip.id), clip]));
   const slotList = state.replay?.slots || [];
   const slots = new Map(slotList.map((slot) => [slot.slot, slot]));
   const hearts = hariaiHeartBadges(slotList);
   let scoutShown = false;
-  return orderedStrategyThreadEntries(state.threadLog, { chatIds: [...chats.keys()], videoIds: [...videos.keys()] }).map((entry) => {
+  let lastEntry = null;
+  const items = orderedStrategyThreadEntries(state.threadLog, { chatIds: [...chats.keys()], videoIds: [...videos.keys()], voiceIds: [...voices.keys()] }).map((entry) => {
     let html = "";
     if (entry.kind === "chat") {
       const message = chats.get(entry.id);
@@ -2014,6 +2125,8 @@ function renderStrategyThreadItems() {
       if (scout) scoutShown = true;
     } else if (entry.kind === "video") {
       html = renderStrategyThreadVideo(videos.get(entry.id));
+    } else if (entry.kind === "voice") {
+      html = renderStrategyThreadVoice(voices.get(entry.id));
     } else if (entry.kind === "start") {
       html = renderStrategyThreadStart();
     } else if (entry.kind === "outcome") {
@@ -2022,9 +2135,12 @@ function renderStrategyThreadItems() {
       html = renderStrategySlotEvent(entry.kind, slots.get(entry.slot), hearts);
     }
     if (!html) return "";
+    lastEntry = entry;
     const arriving = state.threadFreshKeys.delete(entry.key);
     return `<li class="sd-item is-${entry.kind}${arriving ? " is-arriving" : ""}" data-thread-key="${escapeHtml(entry.key)}" data-thread-sig="${strategyThreadSignature(html)}">${html}</li>`;
   }).join("");
+  const receipt = lastEntry ? strategySeenReceiptFor(lastEntry, chats, slots) : "";
+  return receipt ? `${items}<li class="sd-receipt" data-thread-key="receipt" data-thread-sig="${strategyThreadSignature(`${lastEntry.key}:${receipt}`)}">${receipt}</li>` : items;
 }
 
 function renderStrategyThreadStart() {
@@ -2055,8 +2171,9 @@ function renderStrategyThreadVideo(clip) {
   if (!clip) return "";
   const player = playerByUid(clip.ownerUid);
   const round = Math.max(1, Math.min(HARIAI_MAX_SLOTS, Number(clip.round) || 1));
-  return hariaiMessage(player, `<figure class="sd-video"><video controls controlslist="nodownload noplaybackrate" disablepictureinpicture playsinline preload="metadata" src="${escapeHtml(clip.url)}"></video>
-    <figcaption>${round}手目のころ・${Number(clip.duration || 0).toFixed(1)}秒の映像</figcaption></figure>`, "sd-video-msg");
+  const played = clip.ownerUid === state.uid && strategyReceiptsOn && state.opponentPlayedKeys.has(`video:${clip.id}`);
+  return hariaiMessage(player, `<figure class="sd-video" data-sd-video="${escapeHtml(clip.id)}"><video controls controlslist="nodownload noplaybackrate" disablepictureinpicture playsinline preload="metadata" src="${escapeHtml(clip.url)}"></video>
+    <figcaption>${round}手目のころ・${Number(clip.duration || 0).toFixed(1)}秒の映像${played ? '<b class="sd-played">・再生済み</b>' : ""}</figcaption></figure>`, "sd-video-msg");
 }
 
 // 描き直しても、中身が同じ吹き出しは前の要素を使い回す（画像の読み直しと再生中の映像の停止を防ぐ）。
@@ -2086,6 +2203,8 @@ function refreshStrategyThread() {
   reuseStrategyThreadNodes(nodes, wrapper);
   list.replaceChildren(...wrapper.childNodes);
   stickStrategyThreadIfFollowing();
+  syncStrategyVoiceButtons();
+  reportStrategySeenChats();
   return true;
 }
 
@@ -2117,9 +2236,12 @@ function bindStrategyThreadEvents() {
   if (!thread) return;
   const jump = document.querySelector("[data-sd-jump]");
   thread.addEventListener("scroll", () => {
+    const wasFollowing = strategyThreadFollow;
     strategyThreadScrollTop = thread.scrollTop;
     strategyThreadFollow = thread.scrollHeight - thread.scrollTop - thread.clientHeight <= STRATEGY_THREAD_FOLLOW_SLACK_PX;
     if (strategyThreadFollow && jump) jump.hidden = true;
+    // 読み返しから一番下へ戻ってきたら、届いていたチャットを既読にする。
+    if (strategyThreadFollow && !wasFollowing) reportStrategySeenChats();
   }, { passive: true });
   // 画像・映像の読み込みで高さが変わっても、追従中なら一番下を保つ。
   thread.addEventListener("load", () => { if (strategyThreadFollow) thread.scrollTop = thread.scrollHeight; }, true);
@@ -2128,7 +2250,19 @@ function bindStrategyThreadEvents() {
     strategyThreadFollow = true;
     thread.scrollTop = thread.scrollHeight;
     jump.hidden = true;
+    reportStrategySeenChats();
   });
+  // ボイスの再生ボタン（吹き出しは描き直しで入れ替わるので、スレッドで受ける）。
+  thread.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-sd-voice-play]");
+    if (button) toggleStrategyVoice(button.dataset.sdVoicePlay);
+  });
+  // 相手の映像を再生し始めたら「再生済み」を送る（play は泡立たないので捕捉で受ける）。
+  thread.addEventListener("play", (event) => {
+    const id = event.target.closest?.("[data-sd-video]")?.dataset.sdVideo;
+    const clip = id && state.videoClips.find((item) => item.id === id);
+    if (clip && clip.ownerUid !== state.uid) sendStrategyReceipt("played", [`video:${id}`]);
+  }, true);
 }
 
 // 操作シート・メモの中のスクロール位置は、描き直しても戻す（手札を選ぶたびに上へ戻らないように）。
@@ -2186,6 +2320,7 @@ function renderStrategyDmHead() {
       <details class="vb-menu"><summary aria-label="対戦メニュー"><span aria-hidden="true">•••</span></summary>
         <div class="vb-menu-panel">
           <button class="avatar-visibility-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
+          <div class="vb-menu-switch"><span id="strategyReceiptsLabel">既読・再生済みを付ける<small>オフにすると相手のものも見えません</small></span><button type="button" role="switch" aria-checked="${strategyReceiptsOn}" aria-labelledby="strategyReceiptsLabel" data-sd-receipts><i aria-hidden="true"></i></button></div>
           <p class="vb-menu-room">ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())} · ${state.channelReady ? "P2P接続中" : "P2P接続待ち"} · ${state.videoChannelReady ? "映像P2P接続中" : "映像P2P接続なし"}</p>
         </div></details>
     </div>
@@ -2306,10 +2441,15 @@ function setStrategySideOpen(open) {
   document.querySelectorAll(".sd-memo-button[data-sd-side-toggle]").forEach((button) => button.setAttribute("aria-expanded", String(strategySideOpen)));
 }
 
-// 短尺映像を録れるか。対戦中1本・品評会1本（今と同じ）。
+// 短尺映像の本数。対戦中は3本（相手の画面が古い間は1本）、品評会は1本。
+function strategyVideoLimit(phase) {
+  return phase === "battle" ? Math.min(STRATEGY_BATTLE_VIDEO_LIMIT, state.peerFeatures?.battleVideos || 1) : 1;
+}
+
 function strategyVideoAvailability() {
   const phase = currentStrategyVideoPhase();
-  const alreadySent = phase ? state.videoSentPhases.has(phase) : false;
+  const remaining = phase ? Math.max(0, strategyVideoLimit(phase) - Number(state.videoSentCounts[phase] || 0)) : 0;
+  const alreadySent = Boolean(phase) && remaining <= 0;
   const reviewPermissionReady = phase !== "review" || state.opponentReviewMediaReceiving;
   const canRecord = Boolean(phase) && state.videoChannelReady && reviewPermissionReady && !alreadySent && !state.videoSending;
   const status = !state.videoChannelReady
@@ -2319,14 +2459,15 @@ function strategyVideoAvailability() {
     : alreadySent
       ? `● この${phase === "review" ? "品評会" : "対戦"}では送信済み`
       : "● 動画P2P接続済み";
-  return { phase, alreadySent, canRecord, status };
+  return { phase, remaining, alreadySent, canRecord, status };
 }
 
 function renderStrategyCameraButton() {
   const video = strategyVideoAvailability();
-  const reason = video.alreadySent ? "この対戦では映像を送信済み" : !state.videoChannelReady ? "映像のP2P接続を待っています" : "";
-  return `<button type="button" class="sd-camera" id="strategyCameraButton" data-strategy-video-open ${video.canRecord ? "" : "disabled"} aria-label="${escapeHtml(reason || "10秒の映像を録って送る")}" title="${escapeHtml(reason || "10秒の映像を録って送る")}">
-    <svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="6.5" width="13" height="11" rx="2.5"></rect><path d="M16 10.5l5-3v9l-5-3z"></path></svg></button>`;
+  const reason = video.alreadySent ? "この対戦の映像は送り切りました" : !state.videoChannelReady ? "映像のP2P接続を待っています" : "";
+  const label = reason || `10秒の映像を録って送る（あと${video.remaining}本）`;
+  return `<button type="button" class="sd-camera" id="strategyCameraButton" data-strategy-video-open ${video.canRecord ? "" : "disabled"} aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
+    <svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="6.5" width="13" height="11" rx="2.5"></rect><path d="M16 10.5l5-3v9l-5-3z"></path></svg>${video.canRecord ? `<span class="sd-count" aria-hidden="true">${video.remaining}</span>` : ""}</button>`;
 }
 
 function refreshStrategyCameraButton() {
@@ -2336,9 +2477,54 @@ function refreshStrategyCameraButton() {
   bindStrategyVideoPanelEvents();
 }
 
+/* ---------- 対戦中のボイス ---------- */
+
+// 対戦中に1人5本まで。相手の画面がボイスに対応していると知らせてくるまでは送らない。
+function strategyVoiceAvailability() {
+  const limit = Math.min(STRATEGY_BATTLE_VOICE_LIMIT, state.peerFeatures?.voice || 0);
+  const remaining = Math.max(0, limit - state.voiceSentCount);
+  const reason = state.playerSafetyStopped ? "交流を止めています"
+    : !limit ? "相手の画面がボイスに対応していません（相手の再読み込みで使えます）"
+    : !remaining ? "この対戦のボイスは送り切りました"
+    : !state.reviewAssetChannelReady ? "ボイスのP2P接続を待っています"
+    : currentStrategyVideoPhase() !== "battle" ? "対戦中だけ送れます"
+    : "";
+  return { limit, remaining, reason, canRecord: !reason && !state.voiceSending && !state.voiceRecording && !state.pendingVoice };
+}
+
+function renderStrategyMicButton() {
+  const voice = strategyVoiceAvailability();
+  const label = voice.reason || `ボイスを録って送る（最大${STRATEGY_VOICE_MAX_SECONDS}秒・あと${voice.remaining}本）`;
+  return `<button type="button" class="sd-mic" id="strategyMicButton" data-sd-mic ${voice.canRecord ? "" : "disabled"} aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
+    <svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"></path></svg>${voice.canRecord ? `<span class="sd-count" aria-hidden="true">${voice.remaining}</span>` : ""}</button>`;
+}
+
+// 録音中は入力欄の代わりに録音の帯。止めたら、聞き直してから送る。
+function renderStrategyVoiceRecorder() {
+  const note = '<small class="sd-recorder-note">声は相手の端末へ一時的に届き、保存されません。</small>';
+  if (state.voiceRecording) {
+    return `<div class="sd-recorder" role="group" aria-label="ボイスを録音中"><span class="sd-rec-dot" aria-hidden="true"></span>
+      <span class="sd-rec-label">録音中 <b id="strategyVoiceClock">0.0</b> / ${STRATEGY_VOICE_MAX_SECONDS.toFixed(1)}秒</span>
+      <button type="button" class="button button-primary button-small" data-sd-voice-stop>止める</button>
+      <button type="button" class="button button-ghost button-small" data-sd-voice-cancel>やめる</button></div>${note}`;
+  }
+  const voice = state.pendingVoice;
+  const sending = state.voiceSending;
+  return `<div class="sd-recorder is-ready" role="group" aria-label="録ったボイス">
+    <button type="button" class="sd-voice-play" data-sd-voice-play="pending" aria-pressed="false" aria-label="録ったボイスを聞く">${renderStrategyPlayIcon()}</button>
+    <span class="sd-rec-label">${Number(voice.duration || 0).toFixed(1)}秒のボイス</span>
+    <button type="button" class="button button-primary button-small" data-sd-voice-send ${sending ? "disabled" : ""}>${sending ? `送信中 <span id="strategyVoiceProgress">${state.voiceTransferProgress}</span>%` : "送る"}</button>
+    <button type="button" class="button button-ghost button-small" data-sd-voice-cancel ${sending ? "disabled" : ""}>やめる</button></div>${note}`;
+}
+
+function renderStrategyPlayIcon() {
+  return '<svg class="vb-dm-icon sd-play-icon" aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10.5-6.5z"></path></svg><svg class="vb-dm-icon sd-pause-icon" aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5.5" width="4" height="13" rx="1"></rect><rect x="13.5" y="5.5" width="4" height="13" rx="1"></rect></svg>';
+}
+
 function renderStrategyComposer() {
   const effect = normalizeChatEffect(state.chatEffect);
-  return `<div class="vb-dm-composer sd-composer" data-strategy-chat>
+  const recorder = state.voiceRecording || state.pendingVoice;
+  return `<div class="vb-dm-composer sd-composer${state.chatDraft ? " is-typing" : ""}${recorder ? " is-recording" : ""}" data-strategy-chat>
     <details class="vb-dm-tools" data-sd-tools${strategyToolsOpen ? " open" : ""}>
       <summary aria-label="言い方・ことば・スタンプ"><svg class="vb-dm-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></summary>
       <div class="vb-dm-tools-panel">
@@ -2346,10 +2532,349 @@ function renderStrategyComposer() {
         ${renderChatTools({ id: "strategy", textReactions: STRATEGY_CHAT_PROMPTS, stamps: getAvailableStamps(state.economy), textAttribute: "data-strategy-chat-reaction", stampAttribute: "data-strategy-chat-stamp" })}
       </div>
     </details>
-    ${renderStrategyCameraButton()}
+    ${recorder ? renderStrategyVoiceRecorder() : `${renderStrategyMicButton()}${renderStrategyCameraButton()}
     <form class="chat-form${effect ? " has-effect" : ""}" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="会話から本当の弱点を探る…" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
-      <button class="button button-primary button-small" type="submit">送信</button></form>
+      <button class="button button-primary button-small" type="submit">送信</button></form>`}
   </div>`;
+}
+
+// 録音・送信の状態が変わった時は、入力欄だけを描き直す（打ちかけの文と、操作シートの入力を消さない）。
+function refreshStrategyComposer() {
+  const composer = document.querySelector(".sd-composer");
+  if (!composer || state.screen !== "battle") return;
+  const input = composer.querySelector("#strategyChatInput");
+  const focus = input && document.activeElement === input ? [input.selectionStart, input.selectionEnd] : null;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderStrategyComposer();
+  composer.replaceWith(wrapper.firstElementChild);
+  bindStrategyChatEvents();
+  bindStrategyComposerEvents();
+  const next = focus && document.querySelector("#strategyChatInput");
+  if (next) {
+    next.focus({ preventScroll: true });
+    try { next.setSelectionRange(focus[0], focus[1]); } catch { /* 選択範囲を持たない入力もある */ }
+  }
+}
+
+function bindStrategyComposerEvents() {
+  const composer = document.querySelector(".sd-composer");
+  if (!composer) return;
+  composer.querySelector("[data-sd-tools]")?.addEventListener("toggle", (event) => { strategyToolsOpen = event.currentTarget.open; });
+  composer.querySelector("[data-sd-mic]")?.addEventListener("click", () => startStrategyVoiceRecording().catch(handleRecoverableError));
+  composer.querySelector("[data-sd-voice-stop]")?.addEventListener("click", () => stopStrategyVoiceRecording());
+  composer.querySelector("[data-sd-voice-cancel]")?.addEventListener("click", () => cancelStrategyVoice());
+  composer.querySelector("[data-sd-voice-send]")?.addEventListener("click", () => sendPendingStrategyVoice().catch(handleRecoverableError));
+  composer.querySelector("[data-sd-voice-play]")?.addEventListener("click", () => toggleStrategyVoice("pending"));
+  // 文字を打っている間は、マイクとカメラを隠して入力欄の幅を保つ。
+  composer.querySelector("#strategyChatInput")?.addEventListener("input", (event) => composer.classList.toggle("is-typing", Boolean(event.currentTarget.value)));
+}
+
+async function startStrategyVoiceRecording() {
+  if (!strategyVoiceAvailability().canRecord) return;
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder !== "function") {
+    showToast("このブラウザはマイク録音に対応していません。");
+    return;
+  }
+  const targetState = state;
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: { ideal: 1, max: 1 }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+  } catch (error) {
+    showToast(error?.name === "NotAllowedError" ? "マイクの使用が許可されませんでした。" : "マイク録音を開始できませんでした。");
+    return;
+  }
+  if (state !== targetState || state.screen !== "battle" || !strategyVoiceAvailability().canRecord) {
+    stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  const mimeType = preferredStrategyReviewAudioMime();
+  const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  const recording = { recorder, stream, chunks: [], startedAt: performance.now(), discarded: false, clockTimer: null, stopTimer: null };
+  recorder.addEventListener("dataavailable", (event) => { if (event.data?.size) recording.chunks.push(event.data); });
+  recorder.addEventListener("error", () => {
+    recording.discarded = true;
+    showToast("マイク録音中にエラーが発生しました。");
+    if (recorder.state === "recording") recorder.stop();
+  }, { once: true });
+  recorder.addEventListener("stop", () => finishStrategyVoiceRecording(targetState, recording, mimeType).catch(handleRecoverableError), { once: true });
+  state.voiceRecording = recording;
+  recorder.start(250);
+  recording.clockTimer = window.setInterval(() => {
+    const clock = document.querySelector("#strategyVoiceClock");
+    if (clock) clock.textContent = Math.min(STRATEGY_VOICE_MAX_SECONDS, (performance.now() - recording.startedAt) / 1000).toFixed(1);
+  }, 100);
+  recording.stopTimer = window.setTimeout(() => stopStrategyVoiceRecording(), STRATEGY_VOICE_MAX_SECONDS * 1000);
+  refreshStrategyComposer();
+}
+
+function stopStrategyVoiceRecording({ discard = false } = {}) {
+  const recording = state.voiceRecording;
+  if (!recording) return;
+  if (discard) recording.discarded = true;
+  window.clearTimeout(recording.stopTimer);
+  if (recording.recorder?.state === "recording") recording.recorder.stop();
+  else {
+    releaseStrategyReviewAudioRecording(recording);
+    state.voiceRecording = null;
+    refreshStrategyComposer();
+  }
+}
+
+// 録れた音を、品評会の音声と同じ10秒以下・モノラルWAVに変えて、聞き直せる状態にする。
+async function finishStrategyVoiceRecording(targetState, recording, mimeType) {
+  releaseStrategyReviewAudioRecording(recording);
+  if (targetState.voiceRecording === recording) targetState.voiceRecording = null;
+  if (state !== targetState || recording.discarded || state.screen !== "battle") {
+    if (state === targetState) refreshStrategyComposer();
+    return;
+  }
+  const blob = new Blob(recording.chunks, { type: recording.recorder.mimeType || mimeType || "audio/webm" });
+  if (!blob.size) {
+    showToast("ボイスを録音できませんでした。");
+    refreshStrategyComposer();
+    return;
+  }
+  let audio = null;
+  try {
+    audio = await processStrategyAudioFile(blob);
+  } catch (error) {
+    showToast(error?.message || "ボイスを準備できませんでした。");
+    refreshStrategyComposer();
+    return;
+  }
+  if (state !== targetState || state.screen !== "battle") {
+    releaseCardAudio(audio);
+    return;
+  }
+  targetState.pendingVoice = { blob: audio.audioBlob, url: audio.audioUrl, duration: Number(audio.audioDuration || 0) };
+  refreshStrategyComposer();
+}
+
+function cancelStrategyVoice() {
+  if (state.voiceSending) return;
+  if (state.voiceRecording) {
+    stopStrategyVoiceRecording({ discard: true });
+    return;
+  }
+  stopStrategyVoicePlayback();
+  if (state.pendingVoice?.url) URL.revokeObjectURL(state.pendingVoice.url);
+  state.pendingVoice = null;
+  refreshStrategyComposer();
+}
+
+async function sendPendingStrategyVoice() {
+  const voice = state.pendingVoice;
+  if (!voice || state.voiceSending) return;
+  const availability = strategyVoiceAvailability();
+  if (availability.reason) {
+    showToast(availability.reason);
+    return;
+  }
+  const targetState = state;
+  const channel = state.reviewAssetChannel;
+  stopStrategyVoicePlayback();
+  state.voiceSending = true;
+  state.voiceTransferProgress = 0;
+  refreshStrategyComposer();
+  try {
+    const transfer = await sendStrategyVoice(channel, voice, {
+      transferId: createStrategyVoiceTransferId(),
+      ownerUid: state.uid,
+      round: currentHariaiSlot(),
+      createdAt: firebaseNow(),
+    }, {
+      waitForBuffer: (target) => waitForStrategyReviewAssetBuffer(target, "ボイス"),
+      isActive: () => active && state === targetState && state.screen === "battle" && state.pendingVoice === voice && targetState.reviewAssetChannel === channel && channel.readyState === "open",
+      onProgress: (progress) => {
+        targetState.voiceTransferProgress = progress;
+        const output = document.querySelector("#strategyVoiceProgress");
+        if (output) output.textContent = String(progress);
+      },
+    });
+    targetState.voiceClips.push({
+      id: transfer.transferId,
+      transferId: transfer.transferId,
+      ownerUid: targetState.uid,
+      phase: "battle",
+      round: transfer.round,
+      blob: voice.blob,
+      url: voice.url,
+      duration: transfer.duration,
+      createdAt: transfer.createdAt,
+      released: false,
+    });
+    targetState.voiceSentCount += 1;
+    targetState.pendingVoice = null;
+  } catch (error) {
+    console.error(error);
+    if (state === targetState) showToast(error?.message || "ボイスを送れませんでした。チャットと対戦は続けられます。");
+  } finally {
+    targetState.voiceSending = false;
+    targetState.voiceTransferProgress = 0;
+    if (state === targetState) {
+      refreshStrategyComposer();
+      refreshStrategyThread();
+    }
+  }
+}
+
+// ボイスの吹き出し。再生ボタン・波形の帯（再生位置で色が変わる）・秒数。自分の側は「再生済み」も出す。
+function renderStrategyThreadVoice(clip) {
+  if (!clip) return "";
+  const player = playerByUid(clip.ownerUid);
+  const mine = clip.ownerUid === state.uid;
+  const round = Math.max(1, Math.min(HARIAI_MAX_SLOTS, Number(clip.round) || 1));
+  const played = mine && strategyReceiptsOn && state.opponentPlayedKeys.has(`voice:${clip.id}`);
+  const seconds = Number(clip.duration || 0).toFixed(1);
+  return hariaiMessage(player, `<div class="sd-voice ${mine ? "" : hariaiPersonaClass(player)}" data-sd-voice="${escapeHtml(clip.id)}">
+      <button type="button" class="sd-voice-play" data-sd-voice-play="${escapeHtml(clip.id)}" aria-pressed="false" aria-label="${escapeHtml(`${player?.name || ""}のボイスを再生（${seconds}秒）`)}">${renderStrategyPlayIcon()}</button>
+      <span class="sd-voice-wave" aria-hidden="true"></span><span class="sd-voice-time">${seconds}秒</span></div>
+    <small class="sd-media-note">${round}手目のころ・ボイス${played ? '<b class="sd-played">・再生済み</b>' : ""}</small>`, "sd-voice-msg");
+}
+
+function strategyVoiceSource(id) {
+  if (id === "pending") return state.pendingVoice ? { url: state.pendingVoice.url, ownerUid: state.uid } : null;
+  return state.voiceClips.find((clip) => clip.id === id && !clip.released && clip.url) || null;
+}
+
+function syncStrategyVoiceButtons() {
+  document.querySelectorAll("[data-sd-voice-play]").forEach((button) => {
+    const playing = strategyVoicePlayer?.id === button.dataset.sdVoicePlay && !strategyVoicePlayer.audio.paused;
+    button.classList.toggle("is-playing", playing);
+    button.setAttribute("aria-pressed", String(playing));
+    button.closest("[data-sd-voice]")?.classList.toggle("is-playing", playing);
+  });
+}
+
+function stopStrategyVoicePlayback() {
+  const current = strategyVoicePlayer;
+  strategyVoicePlayer = null;
+  if (current) {
+    current.audio.pause();
+    current.audio.removeAttribute("src");
+    document.querySelectorAll(`[data-sd-voice="${CSS.escape(current.id)}"]`).forEach((bubble) => bubble.style.removeProperty("--voice-progress"));
+  }
+  syncStrategyVoiceButtons();
+}
+
+// 1本ずつ再生する。相手のボイスを再生し始めたら「再生済み」を送る。自動再生はしない。
+function toggleStrategyVoice(id) {
+  if (strategyVoicePlayer?.id === id) {
+    if (strategyVoicePlayer.audio.paused) strategyVoicePlayer.audio.play().catch(() => {});
+    else strategyVoicePlayer.audio.pause();
+    syncStrategyVoiceButtons();
+    return;
+  }
+  stopStrategyVoicePlayback();
+  const source = strategyVoiceSource(id);
+  if (!source) return;
+  const audio = new Audio(source.url);
+  strategyVoicePlayer = { id, audio };
+  const paint = () => {
+    const progress = audio.duration > 0 ? Math.min(1, audio.currentTime / audio.duration) : 0;
+    document.querySelectorAll(`[data-sd-voice="${CSS.escape(id)}"]`).forEach((bubble) => bubble.style.setProperty("--voice-progress", progress.toFixed(3)));
+  };
+  audio.addEventListener("timeupdate", paint);
+  audio.addEventListener("play", syncStrategyVoiceButtons);
+  audio.addEventListener("pause", syncStrategyVoiceButtons);
+  audio.addEventListener("ended", () => { if (strategyVoicePlayer?.audio === audio) stopStrategyVoicePlayback(); });
+  audio.play().then(() => {
+    if (source.ownerUid && source.ownerUid !== state.uid) sendStrategyReceipt("played", [`voice:${id}`]);
+  }).catch(() => {
+    showToast("ボイスを再生できませんでした。もう一度押してください。");
+    stopStrategyVoicePlayback();
+  });
+}
+
+function releaseStrategyVoiceData() {
+  stopStrategyVoiceRecording({ discard: true });
+  stopStrategyVoicePlayback();
+  if (state.pendingVoice?.url) URL.revokeObjectURL(state.pendingVoice.url);
+  releaseStrategyVoiceResources(state.voiceClips);
+  Object.assign(state, {
+    pendingVoice: null,
+    voiceSending: false,
+    voiceTransferProgress: 0,
+    voiceSentCount: 0,
+    voiceReceivedCount: 0,
+    incomingVoiceTransfer: null,
+  });
+}
+
+/* ---------- 対応機能と既読・再生済み（P2Pだけ） ---------- */
+
+function readStrategyReceiptsSetting() {
+  try {
+    return localStorage.getItem(STRATEGY_RECEIPTS_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function setStrategyReceipts(on) {
+  strategyReceiptsOn = Boolean(on);
+  try {
+    localStorage.setItem(STRATEGY_RECEIPTS_KEY, strategyReceiptsOn ? "1" : "0");
+  } catch {
+    // 保存できなくても、この画面の間は切り替えを守る。
+  }
+  document.querySelectorAll("[data-sd-receipts]").forEach((button) => button.setAttribute("aria-checked", String(strategyReceiptsOn)));
+  if (strategyReceiptsOn) reportStrategySeenChats();
+  refreshStrategyThread();
+}
+
+function handleRemoteStrategyFeatures(message) {
+  state.peerFeatures = normalizeStrategyFeatures(message);
+  refreshStrategyComposer();
+}
+
+// 既読・再生済みを送る。同じものは1回だけ。相手が対応していない時と、オフの時は送らない。
+function sendStrategyReceipt(kind, keys) {
+  if (!strategyReceiptsOn || !state.peerFeatures?.receipts) return;
+  const fresh = keys.filter((key) => !state.sentReceiptKeys.has(`${kind}|${key}`));
+  if (!fresh.length) return;
+  if (!sendStrategyPeer(strategyReceiptMessage(kind, fresh))) return;
+  fresh.forEach((key) => state.sentReceiptKeys.add(`${kind}|${key}`));
+}
+
+// 相手のチャットが画面に出ている（画面が見えていて、スレッドの一番下を見ている）時に既読を送る。
+function reportStrategySeenChats() {
+  if (state.screen !== "battle" || document.visibilityState !== "visible" || !strategyThreadFollow) return;
+  const keys = strategyThreadChats().filter((message) => message.authorUid === state.opponentUid).map((message) => `c:${message.id}`);
+  if (keys.length) sendStrategyReceipt("seen", keys.slice(-20));
+}
+
+// 自分が書いた・送ったものの鍵だけを受け付ける（リアクションと同じ考え方）。
+function strategyReceiptKeyIsMine(key) {
+  const [kind, value] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+  if (kind === "c") return state.chatMessages.some((message) => message.id === value && message.authorUid === state.uid);
+  if (kind === "post") return (state.replay?.slots || []).some((slot) => slot.slot === Number(value) && slot.kind === "post" && slot.by === state.uid);
+  if (kind === "video") return state.videoClips.some((clip) => clip.id === value && clip.ownerUid === state.uid);
+  if (kind === "voice") return state.voiceClips.some((clip) => clip.id === value && clip.ownerUid === state.uid);
+  return false;
+}
+
+function handleRemoteStrategyReceipt(message) {
+  if (state.playerSafetyStopped) return;
+  const receipt = normalizeStrategyReceipt(message);
+  if (!receipt) return;
+  const target = receipt.kind === "seen" ? state.opponentSeenKeys : state.opponentPlayedKeys;
+  const accepted = receipt.keys.filter(strategyReceiptKeyIsMine);
+  if (!accepted.length) return;
+  accepted.forEach((key) => target.add(key));
+  refreshStrategyThread();
+}
+
+function resetStrategyPeerSignals(targetState = state) {
+  Object.assign(targetState, {
+    peerFeatures: { ...LEGACY_STRATEGY_FEATURES },
+    opponentSeenKeys: new Set(),
+    opponentPlayedKeys: new Set(),
+    sentReceiptKeys: new Set(),
+  });
 }
 
 function renderHariaiThread() {
@@ -2907,7 +3432,8 @@ function bindHariaiBattleEvents() {
   on("[data-hariai-memo]", "toggle", (event) => { hariaiMemoOpen = event.currentTarget.open; });
   on("[data-sd-sheet-toggle]", "click", () => setStrategySheetOpen(!strategySheetIsOpen()));
   on("[data-sd-side-toggle]", "click", () => setStrategySideOpen(!strategySideOpen));
-  on("[data-sd-tools]", "toggle", (event) => { strategyToolsOpen = event.currentTarget.open; });
+  on("[data-sd-receipts]", "click", () => setStrategyReceipts(!strategyReceiptsOn));
+  bindStrategyComposerEvents();
   bindStrategyThreadEvents();
   on("[data-hariai-right-tab]", "click", (event) => {
     const tab = event.currentTarget.dataset.hariaiRightTab;
@@ -3025,6 +3551,9 @@ async function openHariaiMedia(key) {
   // 採点を待っている1枚を開いたら、そのまま採点のシートを開く。
   const pending = state.replay?.pending;
   if (pending?.stage === "score" && pending.actor === state.uid && key === imageKey("move", pending.slot)) strategySheetFor = strategySheetKey(pending);
+  // 相手の1枚を開いたら、相手の画面に「既読」を出す。
+  const [kind, slot] = key.split(":");
+  if (kind === "move") sendStrategyReceipt("seen", [`post:${Number(slot)}`]);
   const item = state.remoteImages.get(key);
   render();
   if (item?.audioUrl) await playAudioUrl(item.audioUrl, 0, Number(item.audioDuration || 0));
@@ -4397,7 +4926,7 @@ function openStrategyVideoDialog() {
   if (!phase) return showToast("現在は短尺映像を送信できません。");
   if (!state.videoChannelReady) return showToast("動画用P2P接続がありません。チャットと対戦はそのまま続けられます。");
   if (phase === "review" && !state.opponentReviewMediaReceiving) return showToast("相手がメディア受信を停止しています。");
-  if (state.videoSentPhases.has(phase)) return showToast("短尺映像は対戦中・品評会中にそれぞれ1本までです。");
+  if (strategyVideoAvailability().alreadySent) return showToast(phase === "battle" ? `対戦中の短尺映像は${strategyVideoLimit(phase)}本までです。` : "品評会の短尺映像は1本までです。");
   renderStrategyVideoDialog();
   const dialog = ensureStrategyVideoDialog();
   if (!dialog.open) dialog.showModal();
@@ -4405,7 +4934,7 @@ function openStrategyVideoDialog() {
 
 async function beginStrategyVideoCapture() {
   const phase = currentStrategyVideoPhase();
-  if (!phase || state.videoSentPhases.has(phase) || state.videoCaptureStarting || state.videoRecording) return;
+  if (!phase || strategyVideoAvailability().alreadySent || state.videoCaptureStarting || state.videoRecording) return;
   const includeAudio = document.querySelector("#strategyVideoIncludeAudio")?.checked !== false;
   const controller = new AbortController();
   state.videoCaptureAbortController = controller;
@@ -4555,7 +5084,7 @@ async function sendPendingStrategyVideo() {
     });
     state.pendingVideo = null;
     state.videoClips.push(clip);
-    state.videoSentPhases.add(transfer.phase);
+    state.videoSentCounts[transfer.phase] = Number(state.videoSentCounts[transfer.phase] || 0) + 1;
     closeStrategyVideoDialog();
     showToast("短尺映像を相手へ一時送信しました。");
   } catch (error) {
@@ -4573,8 +5102,8 @@ function releaseStrategyVideoData() {
   stopStrategyVideoRecording({ discard: true });
   releaseStrategyVideoResources(state.videoClips);
   state.incomingVideoTransfer = null;
-  state.videoSentPhases.clear();
-  state.videoReceivedPhases.clear();
+  state.videoSentCounts = { battle: 0, review: 0 };
+  state.videoReceivedCounts = { battle: 0, review: 0 };
   state.videoSending = false;
   state.videoTransferProgress = 0;
   closeStrategyVideoDialog();
@@ -4859,11 +5388,12 @@ function discardPendingStrategyReviewAsset() {
   refreshStrategyReviewAssetPanel();
 }
 
-function waitForStrategyReviewAssetBuffer(channel) {
-  if (!channel || channel.readyState !== "open") return Promise.reject(new Error("品評会メディアのP2P接続が切れました。"));
+// 対戦中のボイスも同じチャネルを使うので、知らせの名前（label）だけを変えられる。
+function waitForStrategyReviewAssetBuffer(channel, label = "品評会メディア") {
+  if (!channel || channel.readyState !== "open") return Promise.reject(new Error(`${label}のP2P接続が切れました。`));
   if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => done(new Error("品評会メディア転送の待機時間を超えました。")), 10_000);
+    const timeout = window.setTimeout(() => done(new Error(`${label}転送の待機時間を超えました。`)), 10_000);
     const done = (error) => {
       window.clearTimeout(timeout);
       channel.removeEventListener("bufferedamountlow", onLow);
@@ -4872,7 +5402,7 @@ function waitForStrategyReviewAssetBuffer(channel) {
       else resolve();
     };
     const onLow = () => done();
-    const onClose = () => done(new Error("品評会メディアのP2P接続が切れました。"));
+    const onClose = () => done(new Error(`${label}のP2P接続が切れました。`));
     channel.addEventListener("bufferedamountlow", onLow, { once: true });
     channel.addEventListener("close", onClose, { once: true });
   });
@@ -6009,12 +6539,15 @@ function configureDataChannel(channel) {
   const targetState = state, roomId = state.roomId;
   const current = () => strategyIdleRoomIsCurrent(targetState, roomId) && targetState.channel === channel;
   state.channel = channel;
+  resetStrategyPeerSignals();
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
     if (!current()) { channel.close(); return; }
     state.channelReady = true;
     state.peerStatus = "● P2P接続済み";
+    // ボイス・映像の本数・既読に対応していることを知らせる（古い画面は知らない合図を無視する）。
+    sendStrategyPeer(strategyFeaturesMessage());
     sendProfileAvatar().catch(handleRecoverableError);
     if (state.screen === "connecting") state.screen = "intro";
     render();
@@ -6074,20 +6607,24 @@ function configureStrategyReviewAssetDataChannel(channel) {
     state.opponentReviewMediaReceiving = true;
     sendStrategyReviewMediaPermission();
     refreshStrategyReviewAssetPanel();
+    refreshStrategyComposer();
   };
   channel.onclose = () => {
     if (!current()) return;
     state.reviewAssetChannelReady = false;
     if (state.videoChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
     state.incomingReviewAssetTransfer = null;
+    state.incomingVoiceTransfer = null;
     refreshStrategyReviewAssetPanel();
     refreshStrategyVideoPanel();
+    refreshStrategyComposer();
   };
   channel.onerror = () => {
     if (!current()) return;
     state.reviewAssetChannelReady = false;
     if (state.videoChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
     state.incomingReviewAssetTransfer = null;
+    state.incomingVoiceTransfer = null;
     showToast("品評会メディアのP2P通信に失敗しました。チャットは続けられます。");
     refreshStrategyReviewAssetPanel();
     refreshStrategyVideoPanel();
@@ -6095,6 +6632,7 @@ function configureStrategyReviewAssetDataChannel(channel) {
   channel.onmessage = (event) => { if (!current()) return; return handleStrategyReviewAssetChannelMessage(event.data).catch((error) => {
     if (!current()) return;
     state.incomingReviewAssetTransfer = null;
+    state.incomingVoiceTransfer = null;
     console.error(error);
     showToast(error?.message || "品評会メディアを受信できませんでした。チャットは続けられます。");
   }); };
@@ -6111,6 +6649,32 @@ async function handleStrategyReviewAssetChannelMessage(data) {
       }
       refreshStrategyReviewAssetPanel();
       refreshStrategyVideoPanel();
+      return;
+    }
+    // 対戦中のボイス。品評会のメディアと同じチャネルを使う（対戦中は品評会のメディアが流れない）。
+    if (message.type === "strategy-voice-start") {
+      if (state.playerSafetyStopped || currentStrategyVideoPhase() !== "battle") throw new Error("対戦中以外のボイスは受け取りません。");
+      if (state.voiceReceivedCount >= STRATEGY_BATTLE_VOICE_LIMIT) throw new Error(`相手からのボイスは対戦中${STRATEGY_BATTLE_VOICE_LIMIT}本までです。`);
+      if (state.incomingReviewAssetTransfer) throw new Error("別のメディアを受信中です。");
+      state.incomingVoiceTransfer = createIncomingStrategyVoiceTransfer(message, {
+        currentTransfer: state.incomingVoiceTransfer,
+        expectedOwnerUid: state.opponentUid,
+        now: firebaseNow(),
+      });
+      return;
+    }
+    if (message.type === "strategy-voice-end") {
+      const transfer = state.incomingVoiceTransfer;
+      if (!transfer) return;
+      state.incomingVoiceTransfer = null;
+      const clip = await finishIncomingStrategyVoiceTransfer(transfer, message);
+      if (currentStrategyVideoPhase() !== "battle" || state.voiceReceivedCount >= STRATEGY_BATTLE_VOICE_LIMIT) {
+        releaseStrategyVoiceResource(clip);
+        return;
+      }
+      state.voiceReceivedCount += 1;
+      state.voiceClips.push(clip);
+      refreshStrategyThread();
       return;
     }
     if (message.type === "strategy-review-asset-start") {
@@ -6146,6 +6710,15 @@ async function handleStrategyReviewAssetChannelMessage(data) {
     }
     return;
   }
+  if (state.incomingVoiceTransfer) {
+    try {
+      await appendStrategyVoiceChunk(state.incomingVoiceTransfer, data);
+    } catch (error) {
+      state.incomingVoiceTransfer = null;
+      throw error;
+    }
+    return;
+  }
   if (!state.incomingReviewAssetTransfer) return;
   try {
     await appendStrategyReviewAssetChunk(state.incomingReviewAssetTransfer, data);
@@ -6153,6 +6726,15 @@ async function handleStrategyReviewAssetChannelMessage(data) {
     state.incomingReviewAssetTransfer = null;
     throw error;
   }
+}
+
+// 受け取る映像は、対戦中は3本・品評会は1本まで（相手の画面の新旧に関係なく、自分の上限で受け付ける）。
+function strategyVideoReceivedFull(phase) {
+  return Number(state.videoReceivedCounts[phase] || 0) >= (phase === "battle" ? STRATEGY_BATTLE_VIDEO_LIMIT : 1);
+}
+
+function strategyVideoReceiveLimitMessage(phase) {
+  return phase === "battle" ? `相手からの短尺映像は対戦中${STRATEGY_BATTLE_VIDEO_LIMIT}本までです。` : "相手からの短尺映像は品評会では1本までです。";
 }
 
 async function handleVideoChannelMessage(data) {
@@ -6169,7 +6751,7 @@ async function handleVideoChannelMessage(data) {
       const phase = currentStrategyVideoPhase();
       if (!phase || message.phase !== phase) throw new Error("現在のフェーズでは短尺映像を受信できません。");
       if (phase === "review" && !state.reviewMediaReceiving) throw new Error("現在は品評会メディアを受信しません。");
-      if (state.videoReceivedPhases.has(phase)) throw new Error("相手からの短尺映像は各フェーズ1本までです。");
+      if (strategyVideoReceivedFull(phase)) throw new Error(strategyVideoReceiveLimitMessage(phase));
       state.incomingVideoTransfer = createIncomingStrategyVideoTransfer(message, {
         currentTransfer: state.incomingVideoTransfer,
         expectedOwnerUid: state.opponentUid,
@@ -6188,14 +6770,15 @@ async function handleVideoChannelMessage(data) {
         releaseStrategyVideoResource(clip);
         return;
       }
-      if (state.videoReceivedPhases.has(clip.phase)) {
+      if (strategyVideoReceivedFull(clip.phase)) {
         releaseStrategyVideoResource(clip);
-        throw new Error("相手からの短尺映像は各フェーズ1本までです。");
+        throw new Error(strategyVideoReceiveLimitMessage(clip.phase));
       }
-      state.videoReceivedPhases.add(clip.phase);
+      state.videoReceivedCounts[clip.phase] = Number(state.videoReceivedCounts[clip.phase] || 0) + 1;
       state.videoClips.push(clip);
       refreshStrategyVideoPanel();
-      showToast("相手から短尺映像を受信しました。自動再生はしません。");
+      // 対戦中はスレッドに吹き出しで届くので、知らせは品評会の時だけ。
+      if (clip.phase !== "battle") showToast("相手から短尺映像を受信しました。自動再生はしません。");
     }
     return;
   }
@@ -6290,6 +6873,10 @@ async function handleChannelMessage(data) {
       handleRemoteStrategyShareConsentRequest(message);
     } else if (message.type === "strategy-share-consent") {
       handleRemoteStrategyShareConsent(message);
+    } else if (message.type === "strategy-features") {
+      handleRemoteStrategyFeatures(message);
+    } else if (message.type === "strategy-receipt") {
+      handleRemoteStrategyReceipt(message);
     }
     return;
   }
@@ -7562,9 +8149,11 @@ function releaseMatchMedia() {
   state.remoteImages.clear();
   releaseRemoteAvatar();
   releaseStrategyVideoData();
+  releaseStrategyVoiceData();
   releaseStrategyReviewAssetData();
   state.chatMessages = [];
   state.seenChatIds.clear();
+  resetStrategyPeerSignals(state);
   resetStrategyPersonaChatState(state);
 }
 
@@ -7605,6 +8194,8 @@ document.addEventListener("visibilitychange", () => {
   state.searchIdleGuard?.sync();
   state.prestartGuard?.sync();
   updateStrategyIdleNotice();
+  // 画面に戻ってきた時に、届いていたチャットを既読にする。
+  reportStrategySeenChats();
 });
 
 window.addEventListener("hariai-ranking-dashboard-updated", () => {
