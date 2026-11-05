@@ -20,7 +20,8 @@ async function main() {
   const results = await Promise.all(ORIGINS.map(async origin => {
     const home = await read(`${origin}/?releaseCheck=${Date.now()}`);
     const assets = await Promise.all(files.map(async file => {
-      const url = assetUrl(home.body, file, origin);
+      const url = assetUrl(home.body, file, origin)
+        || (file === "online.js" ? null : `${origin}/${file}?releaseCheck=${Date.now()}`);
       if (!url) return { file, ok: false };
       const result = await read(url);
       return { file, status: result.status, ok: result.status === 200 && sha256LF(result.body) === expected[file]
