@@ -667,7 +667,7 @@ function createOnlineState() {
     latestQueue: {},
     pendingOffer: null,
     matchmakingGeneration: 0,
-    matchTimer: null,
+    hostOfferWatch: null,
     matchScopeTimer: null,
     matchScopeAvailable: false,
     matchScopeExpanded: false,
@@ -708,7 +708,6 @@ function createOnlineState() {
     offerRecoveryTimer: null,
     offerRecoveryAttempt: 0,
     ownOfferUnsubscribe: null,
-    hostStatusPollTimer: null,
     matchUnsubscribers: [],
     roomUnsubscribers: [],
     roundUnsubscribe: null,
@@ -9210,14 +9209,77 @@ async function attemptSoloServerMatch(generation = state.matchmakingGeneration) 
   }
 }
 
+function soloHostedOfferWatchIsCurrent(watch) {
+  return Boolean(watch && active && state === watch.expectedState
+    && state.screen === "matching" && !state.roomId
+    && state.matchmakingGeneration === watch.generation
+    && state.hostOfferWatch === watch
+    && state.pendingOffer?.roomId === watch.roomId);
+}
+
+function stopSoloHostedOfferWatch(watch) {
+  if (!watch) return;
+  watch.stopped = true;
+  watch.unsubscribe?.();
+  watch.unsubscribe = null;
+  window.clearInterval(watch.pollTimer);
+  window.clearTimeout(watch.expireTimer);
+  watch.pollTimer = null;
+  watch.expireTimer = null;
+}
+
+function scheduleHostedOfferRecovery(watch, error) {
+  if (!soloHostedOfferWatchIsCurrent(watch)) return;
+  stopSoloHostedOfferWatch(watch);
+  if (error) notifySoloMatchRecovery(error, watch.expectedState);
+  const timer = window.setTimeout(() => {
+    if (watch.expireTimer !== timer || !soloHostedOfferWatchIsCurrent(watch)) return;
+    watch.expireTimer = null;
+    expireOffer(watch.roomId, watch.targetUid);
+  }, MATCH_TIMEOUT_MS);
+  watch.expireTimer = timer;
+}
+
+function enterSoloHostedOfferRoom(watch) {
+  if (!soloHostedOfferWatchIsCurrent(watch)) return Promise.resolve(false);
+  if (!isCurrentMatchmakingGeneration(watch.generation)) {
+    scheduleHostedOfferRecovery(watch);
+    return Promise.resolve(false);
+  }
+  if (watch.entryPromise) return watch.entryPromise;
+  stopSoloHostedOfferWatch(watch);
+  const entry = Promise.resolve().then(async () => {
+    if (!soloHostedOfferWatchIsCurrent(watch)) return false;
+    try {
+      if (!isCurrentMatchmakingGeneration(watch.generation)) {
+        scheduleHostedOfferRecovery(watch);
+        return false;
+      }
+      await enterRoom(watch.roomId);
+      if (soloHostedOfferWatchIsCurrent(watch)) {
+        throw new Error("対戦ルームへの接続を確認できませんでした。");
+      }
+      return true;
+    } catch (error) {
+      scheduleHostedOfferRecovery(watch, error);
+      return false;
+    } finally {
+      if (watch.entryPromise === entry) watch.entryPromise = null;
+    }
+  });
+  watch.entryPromise = entry;
+  return entry;
+}
+
 async function restoreHostedOfferToWaiting(roomId, targetUid, expectedState = state) {
   void targetUid;
-  await soloSessionActionCallable({
+  const response = await soloSessionActionCallable({
     action: "expire",
     sessionId: expectedState.clientSessionId,
     leaseToken: expectedState.clientLeaseToken,
     roomId,
   });
+  return response.data;
 }
 
 async function finishHostedOfferAsTerminal(
@@ -9230,27 +9292,13 @@ async function finishHostedOfferAsTerminal(
       || !isCurrentMatchmakingGeneration(generation)
       || state.roomId
       || state.pendingOffer?.roomId !== roomId) return false;
-  const pendingOffer = state.pendingOffer;
-  if (pendingOffer.terminalCleanupRunning) return false;
-  pendingOffer.terminalCleanupRunning = true;
-  try {
-    await restoreHostedOfferToWaiting(roomId, targetUid, expectedState);
-  } catch (error) {
-    if (state === expectedState && state.pendingOffer === pendingOffer && !state.roomId) {
-      pendingOffer.terminalCleanupRunning = false;
-    }
-    throw error;
-  }
-  if (state !== expectedState
-      || !isCurrentMatchmakingGeneration(generation)
-      || state.roomId
-      || state.pendingOffer !== pendingOffer) return false;
-  window.clearTimeout(state.matchTimer);
-  window.clearInterval(state.hostStatusPollTimer);
-  state.matchTimer = null;
-  state.hostStatusPollTimer = null;
+  void targetUid;
+  stopSoloHostedOfferWatch(state.hostOfferWatch);
+  state.hostOfferWatch = null;
   state.pendingOffer = null;
-  attemptCurrentSoloMatchmaking(generation, { resetBackoff: true }).catch(handleRecoverableError);
+  state.soloServerMatchErrorNotified = false;
+  attemptCurrentSoloMatchmaking(generation, { resetBackoff: true })
+    .catch((error) => notifySoloMatchRecovery(error, expectedState));
   return true;
 }
 
@@ -9261,8 +9309,15 @@ function registerHostedOfferMonitor({
   expectedState,
   generation,
 }) {
+  if (state !== expectedState || !isCurrentMatchmakingGeneration(generation)) return;
+  stopSoloHostedOfferWatch(expectedState.hostOfferWatch);
+  const watch = { roomId, targetUid: candidate.uid, expectedState, generation,
+    stopped: false, unsubscribe: null, pollTimer: null, expireTimer: null,
+    reconciliation: null, entryPromise: null };
+  expectedState.hostOfferWatch = watch;
   const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
-  const contextIsCurrent = () => state === expectedState && isCurrentMatchmakingGeneration(generation);
+  const current = () => soloHostedOfferWatchIsCurrent(watch) && !watch.stopped
+    && isCurrentMatchmakingGeneration(generation);
   state.pendingOffer = {
     roomId,
     targetUid: candidate.uid,
@@ -9270,37 +9325,32 @@ function registerHostedOfferMonitor({
     reunion,
   };
   const handleHostedRoomStatus = async (snapshot) => {
-    if (!contextIsCurrent() || state.pendingOffer?.roomId !== roomId || state.roomId) return;
+    if (!current()) return;
     const status = snapshot.val();
     if (status === "active") {
-      const pendingOffer = state.pendingOffer;
-      if (pendingOffer.enteringRoom) return;
-      pendingOffer.enteringRoom = true;
-      if (!contextIsCurrent() || state.pendingOffer !== pendingOffer || state.roomId) return;
-      try {
-        await enterRoom(roomId);
-      } catch (error) {
-        if (contextIsCurrent() && state.pendingOffer === pendingOffer && !state.roomId) {
-          pendingOffer.enteringRoom = false;
-        }
-        throw error;
-      }
+      await enterSoloHostedOfferRoom(watch);
       return;
     }
     if (status === "offered") return;
-    await finishHostedOfferAsTerminal(roomId, candidate.uid, expectedState, generation);
+    await expireOffer(roomId, candidate.uid);
   };
-  const unsubscribe = onValue(roomStatusRef, (snapshot) => {
-    handleHostedRoomStatus(snapshot).catch(handleRecoverableError);
-  }, handleRecoverableError);
-  state.matchUnsubscribers.push(unsubscribe);
-  state.hostStatusPollTimer = window.setInterval(() => {
-    if (!contextIsCurrent() || state.roomId || state.pendingOffer?.roomId !== roomId) return;
-    get(roomStatusRef).then(handleHostedRoomStatus).catch(handleRecoverableError);
+  const handleError = () => {
+    if (!current()) return;
+    // A deleted room or revoked grant is unreadable. Stop polling and ask the
+    // server before releasing the candidate: acceptance may have won the race.
+    expireOffer(roomId, candidate.uid);
+  };
+  watch.pollTimer = window.setInterval(() => {
+    if (current()) get(roomStatusRef).then(handleHostedRoomStatus).catch(handleError);
   }, 1_500);
-  state.matchTimer = window.setTimeout(() => {
-    expireOffer(roomId, candidate.uid).catch(handleRecoverableError);
+  watch.expireTimer = window.setTimeout(() => {
+    if (soloHostedOfferWatchIsCurrent(watch) && !watch.stopped) expireOffer(roomId, candidate.uid);
   }, MATCH_TIMEOUT_MS);
+  const unsubscribe = onValue(roomStatusRef, (snapshot) => {
+    handleHostedRoomStatus(snapshot).catch(handleError);
+  }, handleError);
+  if (watch.stopped) unsubscribe();
+  else watch.unsubscribe = unsubscribe;
 }
 
 async function adoptSoloServerHostedMatch(candidate, hosted) {
@@ -9362,18 +9412,47 @@ async function adoptSoloServerHostedMatch(candidate, hosted) {
 }
 
 async function expireOffer(roomId, targetUid) {
-  if (state.roomId || state.pendingOffer?.roomId !== roomId) return;
-  const expectedState = state;
-  const generation = state.matchmakingGeneration;
-  const response = await soloSessionActionCallable({
-    action: "expire",
-    sessionId: expectedState.clientSessionId,
-    leaseToken: expectedState.clientLeaseToken,
-    roomId,
+  const watch = state.hostOfferWatch;
+  if (!soloHostedOfferWatchIsCurrent(watch) || watch.roomId !== roomId) return false;
+  if (!isCurrentMatchmakingGeneration(watch.generation)) {
+    scheduleHostedOfferRecovery(watch);
+    return false;
+  }
+  if (watch.entryPromise) return watch.entryPromise;
+  if (watch.reconciliation) return watch.reconciliation;
+  stopSoloHostedOfferWatch(watch);
+  const reconciliation = Promise.resolve().then(async () => {
+    if (!soloHostedOfferWatchIsCurrent(watch)) return false;
+    try {
+      if (!isCurrentMatchmakingGeneration(watch.generation)) {
+        scheduleHostedOfferRecovery(watch);
+        return false;
+      }
+      const response = await restoreHostedOfferToWaiting(roomId, targetUid, watch.expectedState);
+      if (!soloHostedOfferWatchIsCurrent(watch)) return false;
+      if (!isCurrentMatchmakingGeneration(watch.generation)) {
+        scheduleHostedOfferRecovery(watch);
+        return false;
+      }
+      if (response?.status === "active") return await enterSoloHostedOfferRoom(watch);
+      if (response?.status === "offered") {
+        scheduleHostedOfferRecovery(watch);
+        return false;
+      }
+      if (["expired", "destroyed"].includes(response?.status)
+          || (response?.status === "" && response?.reason === "not-owner")) {
+        return await finishHostedOfferAsTerminal(roomId, targetUid, watch.expectedState, watch.generation);
+      }
+      throw new Error("対戦相手の確認を完了できませんでした。");
+    } catch (error) {
+      scheduleHostedOfferRecovery(watch, error);
+      return false;
+    } finally {
+      if (watch.reconciliation === reconciliation) watch.reconciliation = null;
+    }
   });
-  const status = String(response.data?.status || "");
-  if (status === "active" || status === "offered") return;
-  await finishHostedOfferAsTerminal(roomId, targetUid, expectedState, generation);
+  watch.reconciliation = reconciliation;
+  return reconciliation;
 }
 
 async function acceptOffer(roomId, offer) {
@@ -9494,7 +9573,7 @@ async function enterRoom(roomId) {
     await releaseReservation();
     throw new Error("ルーム情報を取得できませんでした。");
   }
-  window.clearTimeout(state.matchTimer);
+  stopSoloHostedOfferWatch(state.hostOfferWatch);
   if (state.soloHiddenWaitStopError) {
     state.soloHiddenWaitStopError = false;
     state.soloSessionCleanupPending = false;
@@ -12660,18 +12739,16 @@ async function cleanupMatchmaking(keepActive, targetState = state) {
   targetState.soloHiddenWaitGuard?.dispose();
   targetState.soloHiddenWaitGuard = null;
   targetState.matchmakingGeneration = ++matchmakingGenerationCounter;
-  window.clearTimeout(targetState.matchTimer);
+  stopSoloHostedOfferWatch(targetState.hostOfferWatch);
+  targetState.hostOfferWatch = null;
   window.clearTimeout(targetState.matchScopeTimer);
   window.clearTimeout(targetState.offerRecoveryTimer);
-  window.clearInterval(targetState.hostStatusPollTimer);
   window.clearTimeout(targetState.soloServerMatchRetryTimer);
-  targetState.matchTimer = null;
   targetState.matchScopeTimer = null;
   targetState.matchScopeAvailable = false;
   targetState.matchScopeExpanded = false;
   targetState.offerRecoveryTimer = null;
   targetState.offerRecoveryAttempt = 0;
-  targetState.hostStatusPollTimer = null;
   targetState.soloServerMatchRetryTimer = null;
   targetState.soloServerMatchRetryAttempt = 0;
   targetState.matchingBusy = false;
