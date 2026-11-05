@@ -54,6 +54,7 @@ function lobbyHarness({ preview = false } = {}) {
     document: {
       visibilityState: "visible",
       getElementById(id) { return countNodes.get("#"+id) || null; },
+      querySelectorAll() { return []; },
       querySelector(selector) {
         return countNodes.get(selector) || null;
       },
