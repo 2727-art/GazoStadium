@@ -16,15 +16,17 @@ export function createWaitingPreferenceCounts(value = 0) {
   return Object.fromEntries(PRESENCE_PREFERENCES.map(([key]) => [key, value]));
 }
 
-export function renderWaitingPreferenceBreakdown(counts) {
-  return `<span class="solo-waiting-breakdown" data-solo-waiting-breakdown><span class="solo-waiting-heading">待機中の好み</span><span class="solo-waiting-options">${PRESENCE_PREFERENCES.map(([key, , label]) => {
+export function renderWaitingPreferenceBreakdown(counts, mode = "solo") {
+  if (!BATTLE_PRESENCE_MODES.has(mode)) throw new TypeError("Unsupported battle presence mode.");
+  return `<span class="solo-waiting-breakdown" data-solo-waiting-breakdown data-waiting-mode="${mode}"><span class="solo-waiting-heading">待機中の好み</span><span class="solo-waiting-options">${PRESENCE_PREFERENCES.map(([key, , label]) => {
     const value = counts?.[key];
     return `<span class="solo-waiting-option" data-solo-waiting-pref="${key}"${key === "unknown" && !(value > 0) ? " hidden" : ""}>${label} <b>${Number.isInteger(value) ? value : "--"}</b>人</span>`;
   }).join("")}</span></span>`;
 }
 
-export function syncWaitingPreferenceBreakdowns(root, counts) {
-  root.querySelectorAll("[data-solo-waiting-pref]").forEach((element) => {
+export function syncWaitingPreferenceBreakdowns(root, counts, mode = "solo") {
+  if (!BATTLE_PRESENCE_MODES.has(mode)) throw new TypeError("Unsupported battle presence mode.");
+  root.querySelectorAll(`[data-waiting-mode="${mode}"] [data-solo-waiting-pref]`).forEach((element) => {
     const key = element.dataset.soloWaitingPref;
     const value = counts?.[key];
     element.querySelector("b").textContent = Number.isInteger(value) ? String(value) : "--";
@@ -62,11 +64,9 @@ export function summarizeBattlePresence(entries, {
     if (entry.state === "waiting") {
       waiting += 1;
       if (normalizedOwnPresenceId && presenceId === normalizedOwnPresenceId) ownWaiting = true;
-      if (mode === "solo") {
-        const preference = PRESENCE_PREFERENCES.find(([, code]) => code && code === entry.pref)?.[0] || "unknown";
-        waitingByPreference[preference] += 1;
-        if (presenceId !== normalizedOwnPresenceId) otherWaitingByPreference[preference] += 1;
-      }
+      const preference = PRESENCE_PREFERENCES.find(([, code]) => code && code === entry.pref)?.[0] || "unknown";
+      waitingByPreference[preference] += 1;
+      if (presenceId !== normalizedOwnPresenceId) otherWaitingByPreference[preference] += 1;
     } else {
       playing += 1;
     }
@@ -76,6 +76,7 @@ export function summarizeBattlePresence(entries, {
     waiting,
     otherWaiting: Math.max(0, waiting - (ownWaiting ? 1 : 0)),
     playing,
-    ...(mode === "solo" ? { waitingByPreference, otherWaitingByPreference } : {}),
+    waitingByPreference,
+    otherWaitingByPreference,
   };
 }

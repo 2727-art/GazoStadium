@@ -1,6 +1,7 @@
 import { ensureHariaiUser } from "./auth-session.js?v=auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import { requestSafety, setActiveContact, clearActiveContact, renderContactControls } from "./player-safety.js?v=global-player-block-v1-copy-v2-auth-session-v1-lazy-loading-v1-mobile-loading-v1";
 import { createStrategyHiddenSearchGuard, createStrategyPrestartGuard, strategyRoomHasStarted } from "./strategy-idle-guard.mjs?v=strategy-idle-guard-v1";
+import { encodePresencePreference } from "./battle-presence-stats.mjs?v=presence-check-v1-presence-preference-v1-strategy-presence-preference-v1";
 import {
   get,
   limitToLast,
@@ -8233,7 +8234,8 @@ async function startPublicPresence(generation) {
 }
 
 async function writePublicPresence(presenceRef, presenceState) {
-  await set(presenceRef, { mode: "strategy", state: presenceState, lastSeen: Date.now() });
+  const pref = presenceState === "waiting" ? encodePresencePreference(state.imagePreference) : "";
+  await set(presenceRef, { mode: "strategy", state: presenceState, lastSeen: Date.now(), ...(pref ? { pref } : {}) });
 }
 
 async function updatePublicPresence(nextState) {

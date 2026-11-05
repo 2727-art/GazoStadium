@@ -112,7 +112,7 @@ test("the gaze styles, cache keys and the new module ship together", () => {
   assert.match(css, /@media \(max-height: 760px\) \{\n  \.sd-gaze \.vb-gaze-line:nth-last-child\(n \+ 3\) \{\n    display: none;/);
   const html = read("index.html");
   assert.match(html, /data-src="strategy\.css\?v=[^"]*-strategy-dm-gaze-v1"/);
-  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-gaze-v1"/);
+  assert.match(html, /"module": "strategy\.js\?v=[^"]*-strategy-dm-gaze-v1(?:-[^"]+)?"/);
   // 新しいモジュールは公開する（設計書・テストは公開しない）
   const ignore = JSON.parse(read("firebase.json")).hosting.ignore;
   assert.ok(!ignore.some((entry) => entry === "strategy-dm-gaze.mjs"));
