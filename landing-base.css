@@ -856,6 +856,41 @@ button:disabled {
   line-height: 1.7;
 }
 
+.solo-waiting-breakdown {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted, #aeb9c8);
+  font-size: 0.72rem;
+  font-style: normal;
+  line-height: 1.6;
+}
+
+.solo-waiting-heading {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.67rem;
+}
+
+.solo-waiting-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.solo-waiting-option {
+  display: inline-block;
+}
+
+.solo-waiting-option[hidden] {
+  display: none;
+}
+
+.solo-waiting-option b {
+  color: #eefcfb;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
 @keyframes matchingBounce {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
   30% { transform: translateY(-8px); opacity: 1; }

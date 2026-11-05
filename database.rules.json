@@ -128,6 +128,9 @@
           "lastSeen": {
             ".validate": "newData.isNumber()"
           },
+          "pref": {
+            ".validate": "newData.parent().child('mode').val() === 'solo' && newData.parent().child('state').val() === 'waiting' && (newData.val() === 'i' || newData.val() === 'l' || newData.val() === 'b')"
+          },
           "$other": {
             ".validate": false
           }

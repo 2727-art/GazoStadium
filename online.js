@@ -37,7 +37,10 @@ import {
 } from "./anju-pay-format.mjs?v=anju-pay-format-v1";
 import {
   summarizeBattlePresence,
-} from "./battle-presence-stats.mjs?v=presence-check-v1";
+  encodePresencePreference,
+  renderWaitingPreferenceBreakdown,
+  syncWaitingPreferenceBreakdowns,
+} from "./battle-presence-stats.mjs?v=presence-check-v1-presence-preference-v1";
 import {
   CHAT_BACKGROUND_PRODUCTS,
   CHAT_COSMETIC_PRODUCTS,
@@ -478,6 +481,8 @@ const createLobbyStats = (value = null) => (
 const createBattlePresenceCheckState = () => ({
   waiting: null,
   otherWaiting: null,
+  waitingByPreference: null,
+  otherWaitingByPreference: null,
   playing: null,
   checkedAt: 0,
   lastAttemptAt: 0,
@@ -2195,6 +2200,7 @@ function getBattlePresenceCheckPresentation(mode, phase = "setup", now = Date.no
     modeLabel: mode === "strategy" ? "戦略型1ON1" : "通常型1ON1",
     waitingLabel: matching ? "ほかに待機中" : "待機中",
     waitingValue: hasValues ? waiting : null,
+    waitingByPreference: hasValues ? (matching ? check.otherWaitingByPreference : check.waitingByPreference) : null,
     playingValue: hasValues ? check.playing : null,
     buttonLabel: check.loading
       ? "人数を確認中…"
@@ -2221,7 +2227,9 @@ function renderBattlePresenceCheck({ mode = "solo", phase = "setup" } = {}) {
       <div><small data-battle-presence-waiting-label>${presentation.waitingLabel}</small><strong><span data-battle-presence-waiting>${countText(presentation.waitingValue)}</span><em>人</em></strong></div>
       <div><small>対戦中</small><strong><span data-battle-presence-playing>${countText(presentation.playingValue)}</span><em>人</em></strong></div>
     </div>
+    ${mode === "solo" ? renderWaitingPreferenceBreakdown(presentation.waitingByPreference) : ""}
     <span class="battle-presence-status" data-battle-presence-status role="status" aria-live="polite" aria-atomic="true">${presentation.status}</span>
+    ${mode === "solo" ? '<small class="battle-presence-note">内訳は本人が選んだ採点の好みです。画像の種類や検索範囲を表すものではありません。</small>' : ""}
     <small class="battle-presence-note">取得時点の参考値です。好み条件や直前の成立・退出により、マッチングを保証するものではありません。</small>
   </aside>`;
 }
@@ -2244,6 +2252,7 @@ function syncBattlePresenceCheckPanels(mode) {
     if (waitingValue) waitingValue.textContent = Number.isInteger(presentation.waitingValue) ? String(presentation.waitingValue) : "—";
     if (playingValue) playingValue.textContent = Number.isInteger(presentation.playingValue) ? String(presentation.playingValue) : "—";
     if (status) status.textContent = presentation.status;
+    if (mode === "solo") syncWaitingPreferenceBreakdowns(panel, presentation.waitingByPreference);
   });
 }
 
@@ -2335,6 +2344,8 @@ async function refreshBattlePresenceCheck(mode, { phase = "setup" } = {}) {
       });
       check.waiting = summary.waiting;
       check.otherWaiting = summary.otherWaiting;
+      check.waitingByPreference = summary.waitingByPreference || null;
+      check.otherWaitingByPreference = summary.otherWaitingByPreference || null;
       check.playing = summary.playing;
       check.checkedAt = Date.now();
       check.error = "";
@@ -9045,8 +9056,9 @@ async function updatePublicPresence(nextState) {
 
 async function writePublicPresence(presenceRef, mode, presenceState) {
   const lastSeen = serverNow();
+  const pref = mode === "solo" && presenceState === "waiting" ? encodePresencePreference(state.imagePreference) : "";
   try {
-    await set(presenceRef, { mode, state: presenceState, lastSeen });
+    await set(presenceRef, { mode, state: presenceState, lastSeen, ...(pref ? { pref } : {}) });
   } catch (error) {
     const detail = `${error?.code || ""} ${error?.message || ""}`.toLowerCase();
     if (!detail.includes("permission_denied") && !detail.includes("permission-denied")) throw error;

@@ -8089,6 +8089,41 @@ button:disabled {
   line-height: 1.55;
 }
 
+.solo-waiting-breakdown {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted, #aeb9c8);
+  font-size: 0.72rem;
+  font-style: normal;
+  line-height: 1.6;
+}
+
+.solo-waiting-heading {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.67rem;
+}
+
+.solo-waiting-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.solo-waiting-option {
+  display: inline-block;
+}
+
+.solo-waiting-option[hidden] {
+  display: none;
+}
+
+.solo-waiting-option b {
+  color: #eefcfb;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .battle-presence-status {
   min-height: 1.55em;
   margin-top: 11px;

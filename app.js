@@ -511,6 +511,9 @@
     const soloStats = modeStats("solo");
     const strategyStats = modeStats("strategy");
     const statValue = (value) => Number.isInteger(value) ? value : "--";
+    const soloWaitingBreakdown = `<span class="solo-waiting-breakdown" data-solo-waiting-breakdown><span class="solo-waiting-heading">待機中の好み</span><span class="solo-waiting-options">${[
+      ["illustration", "アニメ・イラスト"], ["live_action", "実写"], ["both", "どちらも歓迎"], ["unknown", "未分類"],
+    ].map(([key, label]) => `<span class="solo-waiting-option" data-solo-waiting-pref="${key}"${key === "unknown" && !(soloStats.waitingByPreference?.[key] > 0) ? " hidden" : ""}>${label} <b>${statValue(soloStats.waitingByPreference?.[key])}</b>人</span>`).join("")}</span></span>`;
     // トップ専用の固定画像で描く見本。利用者の投稿画像や名前は取得しない。
     const heroMeter = Array.from({ length: 10 }, (_, index) => {
       const score = index + 1;
@@ -570,6 +573,7 @@
         </div>
         <div class="hero-actions">
           <button class="vl-main-button" id="onlineButton" type="button"><small>通常型1on1対戦</small><span>いますぐ貼り合う</span><em class="vl-live" data-hero-live="${heroLive}"><i aria-hidden="true"></i><span class="vl-live-on">いま<span class="vl-live-waiting"><b id="heroSoloWaitingCount">${statValue(soloStats.waiting)}</b>人が相手待ち</span><span class="vl-live-sep">・</span><span class="vl-live-playing"><b id="heroSoloPlayingCount">${statValue(soloStats.playing)}</b>人が対戦中</span></span><span class="vl-live-first">一番乗りで待ってみる</span></em></button>
+          ${soloWaitingBreakdown}
           <ul class="vl-trust" aria-label="遊ぶ前に">
             <li><i class="is-lock" aria-hidden="true"></i>画像はサーバーに残らない</li>
             <li><i class="is-bolt" aria-hidden="true"></i>登録なしですぐ</li>
@@ -588,7 +592,7 @@
           <li class="vl-board-item is-solo"><button class="vl-post" id="soloBoardButton" type="button">
             <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">通常1on1</span><small class="vl-post-sub">サクっと・気軽に</small><em class="vl-post-tag">1〜10点</em>
             <span class="vl-post-text">同時に1枚貼って、同時に採点。画像にひとこと、点数にリアクションを添えられる。</span>
-            <em class="vl-post-counts">待機 ${liveCount("boardSoloWaitingCount", soloStats.waiting, "人")} · 対戦中 ${liveCount("boardSoloPlayingCount", soloStats.playing, "人")}</em>
+            <em class="vl-post-counts">待機 ${liveCount("boardSoloWaitingCount", soloStats.waiting, "人")} · 対戦中 ${liveCount("boardSoloPlayingCount", soloStats.playing, "人")}${soloWaitingBreakdown}</em>
             <strong class="vl-post-go">この卓に入る</strong>
           </button></li>
           <li class="vl-board-item is-strategy"><button class="vl-post" id="strategyLabButton" type="button">

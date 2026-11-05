@@ -40,6 +40,8 @@ test("fresh battle presence counts filter mode and state and exclude only the cu
     waiting: 2,
     otherWaiting: 1,
     playing: 1,
+    waitingByPreference: { illustration: 0, live_action: 0, both: 0, unknown: 2 },
+    otherWaitingByPreference: { illustration: 0, live_action: 0, both: 0, unknown: 1 },
   });
   assert.deepEqual(summarizeBattlePresence(entries, {
     mode: "solo",
@@ -50,6 +52,8 @@ test("fresh battle presence counts filter mode and state and exclude only the cu
     waiting: 2,
     otherWaiting: 2,
     playing: 1,
+    waitingByPreference: { illustration: 0, live_action: 0, both: 0, unknown: 2 },
+    otherWaitingByPreference: { illustration: 0, live_action: 0, both: 0, unknown: 2 },
   });
 });
 
