@@ -29,7 +29,9 @@ test("preference totals are disjoint, expire at the existing boundary and exclud
   const legacyOwn = summarizeBattlePresence(entries, { mode: "solo", now, freshMs: 45000, ownPresenceId: "old" });
   assert.equal(legacyOwn.otherWaitingByPreference.unknown, 1);
   const strategy = summarizeBattlePresence(entries, { mode: "strategy", now, freshMs: 45000 });
-  assert.deepEqual(strategy, { waiting: 1, otherWaiting: 1, playing: 0 });
+  assert.deepEqual(strategy, { waiting: 1, otherWaiting: 1, playing: 0,
+    waitingByPreference: { illustration: 1, live_action: 0, both: 0, unknown: 0 },
+    otherWaitingByPreference: { illustration: 1, live_action: 0, both: 0, unknown: 0 } });
 });
 
 test("presence writes carry an 11-byte category only while waiting without extra database operations", async () => {
@@ -82,21 +84,58 @@ test("landing gets categories from the same one-shot snapshot and keeps them whe
   const helpers = await statsModule();
   const calls = [];
   const listeners = new Map();
-  const nodes = Object.keys(helpers.createWaitingPreferenceCounts()).map(key => ({ dataset: { soloWaitingPref: key },
-    hidden: false, value: {}, querySelector() { return this.value; } }));
+  const nodes = ["solo", "strategy"].flatMap(mode => Object.keys(helpers.createWaitingPreferenceCounts()).map(key => ({ mode, dataset: { soloWaitingPref: key },
+    hidden: false, value: {}, querySelector() { return this.value; } })));
   const context = vm.createContext({ ...helpers, URLSearchParams, Date: { now: () => now }, setTimeout, clearTimeout,
     database: {}, location: { hostname: "hariaistadium.com", search: "" },
-    document: { getElementById: () => null, querySelectorAll: () => nodes },
+    document: { getElementById: () => null, querySelectorAll: selector => nodes.filter(n => selector.includes(`data-waiting-mode="${n.mode}"`)) },
     window: { addEventListener: (key, fn) => listeners.set(key, fn), dispatchEvent() {} },
-    CustomEvent: class {}, ref: (_db, p) => p, get: async p => { calls.push(p); return { val: () => p.startsWith(".info") ? 0 : { a: row("i"), b: row("b"), c: row() } }; },
+    CustomEvent: class {}, ref: (_db, p) => p, get: async p => { calls.push(p); return { val: () => p.startsWith(".info") ? 0 : { a: row("i"), b: row("b"), c: row(), s: row("l", { mode: "strategy" }), t: row("l", { mode: "strategy" }) } }; },
   });
   vm.runInContext(read("landing-presence.mjs").replace(/^import .*;\r?\n/gm, "").replace(/export /g, ""), context);
   await context.window.HariaiLobby.load();
   await context.window.HariaiLobby.load();
   listeners.get("hariai-landing-rendered")();
   assert.deepEqual(calls, [".info/serverTimeOffset", "online/publicPresence"]);
-  assert.deepEqual(nodes.map(n => n.value.textContent), ["1", "0", "1", "1"]);
+  assert.deepEqual(nodes.map(n => n.value.textContent), ["1", "0", "1", "1", "0", "2", "0", "0"]);
   const snapshot = context.window.HariaiLobby.getStats();
   snapshot.solo.waitingByPreference.illustration = 999;
   assert.equal(context.window.HariaiLobby.getStats().solo.waitingByPreference.illustration, 1);
+  snapshot.strategy.waitingByPreference.live_action = 999;
+  assert.equal(context.window.HariaiLobby.getStats().strategy.waitingByPreference.live_action, 2);
+});
+
+test("strategy categories exclude its own waiting row without mixing normal players or expired rows", async () => {
+  const { summarizeBattlePresence } = await statsModule();
+  const strategy = (pref, extra = {}) => row(pref, { mode: "strategy", ...extra });
+  const entries = { own: strategy("l"), anime: strategy("i"), photo: strategy("l"), both: strategy("b"),
+    old: strategy(), expired: strategy("i", { lastSeen: now - 45001 }),
+    playing: strategy(null, { state: "playing" }), solo: row("i") };
+  const options = { mode: "strategy", now, freshMs: 45000, ownPresenceId: "own" };
+  assert.deepEqual(summarizeBattlePresence(entries, options), { waiting: 5, otherWaiting: 4, playing: 1,
+    waitingByPreference: { illustration: 1, live_action: 2, both: 1, unknown: 1 },
+    otherWaitingByPreference: { illustration: 1, live_action: 1, both: 1, unknown: 1 } });
+  for (const ownPresenceId of ["missing", "playing", "solo"]) {
+    const result = summarizeBattlePresence(entries, { ...options, ownPresenceId });
+    assert.deepEqual(result.waitingByPreference, result.otherWaitingByPreference);
+  }
+});
+
+test("strategy writes one 11-byte code with the existing heartbeat and removes it on entering a room", async () => {
+  const { encodePresencePreference } = await statsModule();
+  const source = read("strategy.js");
+  const writer = source.slice(source.indexOf("async function writePublicPresence("), source.indexOf("async function updatePublicPresence("));
+  const writes = [];
+  const context = vm.createContext({ state: { imagePreference: "illustration" }, encodePresencePreference,
+    Date: { now: () => now }, set: async (ref, value) => writes.push(value) });
+  vm.runInContext(writer, context);
+  for (const [preference, code] of [["illustration", "i"], ["live_action", "l"], ["both", "b"]]) {
+    context.state.imagePreference = preference;
+    await context.writePublicPresence("presence", "waiting");
+    assert.equal(writes.at(-1).pref, code);
+    assert.equal(Buffer.byteLength(JSON.stringify(writes.at(-1))) - Buffer.byteLength(JSON.stringify(row(null, { mode: "strategy" }))), 11);
+  }
+  await context.writePublicPresence("presence", "playing");
+  assert.equal(Object.hasOwn(writes.at(-1), "pref"), false);
+  assert.equal(writes.length, 4);
 });

@@ -6,7 +6,7 @@ const http = require("node:http");
 const assert = require("node:assert/strict");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const root = path.resolve(__dirname, "../..");
-const out = path.join(root, ".firebase/presence-preference");
+const out = path.join(root, ".firebase/strategy-presence");
 fs.mkdirSync(out, { recursive: true });
 const server = http.createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
@@ -26,6 +26,7 @@ const server = http.createServer((request, response) => {
   try {
     for (const width of [320, 390, 1440]) {
       const page = await browser.newPage({ viewport: { width, height: 1000 }, reducedMotion: "reduce" });
+      page.setDefaultTimeout(15000);
       const errors = [];
       const backend = [];
       page.on("pageerror", error => errors.push(error.message));
@@ -44,8 +45,17 @@ const server = http.createServer((request, response) => {
         }
         if (url.pathname === "/online.js") {
           const source = fs.readFileSync(path.join(root, "online.js"), "utf8") + `\nwindow.__presencePanelQA = (mode, phase, entries) => {
-            Object.assign(battlePresenceChecks[mode], summarizeBattlePresence(entries, {mode, now: Date.now(), freshMs: 45000, ownPresenceId: 'own'}), {checkedAt: Date.now()});
+            Object.assign(battlePresenceChecks[mode], summarizeBattlePresence(entries, {mode, now: Date.now(), freshMs: 45000, ownPresenceId: mode === 'solo' ? 'own' : 'strategyOwn'}), {checkedAt: Date.now()});
             document.querySelector('#app').innerHTML = '<section class="screen">' + renderBattlePresenceCheck({mode,phase}) + '</section>';
+          };`;
+          return route.fulfill({ contentType: "text/javascript", body: source });
+        }
+        if (url.pathname === "/strategy.js") {
+          const source = fs.readFileSync(path.join(root, "strategy.js"), "utf8") + `\nwindow.__strategyPresenceQA = phase => {
+            state = createState(); state.publicPresenceId = 'strategyOwn';
+            state.screen = phase === 'matching' ? 'matching' : 'profile';
+            window.HariaiOnline.bindBattlePresenceCheck({mode:'strategy',getOwnPresenceId:()=>state.publicPresenceId});
+            document.querySelector('#app').innerHTML = phase === 'matching' ? renderMatching() : renderProfile();
           };`;
           return route.fulfill({ contentType: "text/javascript", body: source });
         }
@@ -55,16 +65,22 @@ const server = http.createServer((request, response) => {
         const now = Date.now();
         const row = (pref, extra = {}) => ({ mode: "solo", state: "waiting", lastSeen: now, ...(pref ? { pref } : {}), ...extra });
         window.__presenceRows = { own: row("i"), anime: row("i"), photo: row("l"), both: row("b"), old: row(),
-          expired: row("l", { lastSeen: now - 60000 }), playing: row(null, { state: "playing" }), strategy: row(null, { mode: "strategy" }) };
+          expired: row("l", { lastSeen: now - 60000 }), playing: row(null, { state: "playing" }),
+          strategyOwn: row("l", { mode: "strategy" }), strategyAnime: row("i", { mode: "strategy" }),
+          strategyPhoto: row("l", { mode: "strategy" }), strategyBoth: row("b", { mode: "strategy" }),
+          strategyOld: row(null, { mode: "strategy" }), strategyPlaying: row(null, { mode: "strategy", state: "playing" }) };
         window.__presenceReads = [];
         window.__presenceGet = async p => { window.__presenceReads.push(p); return { val: () => p.startsWith(".info") ? 0 : window.__presenceRows }; };
         localStorage.setItem("hariai-anju-pay-unit-notice-v1", "1");
       });
       await page.goto(origin + "/?marketPreview=1", { waitUntil: "networkidle" });
       await page.waitForFunction(() => window.HariaiLobby?.getStats().solo.waiting === 5);
-      const top = await page.locator("[data-solo-waiting-breakdown]").allTextContents();
+      const top = await page.locator('[data-waiting-mode="solo"]').allTextContents();
       assert.equal(top.length, 2);
       for (const text of top) for (const expected of ["アニメ・イラスト 2人", "実写 1人", "どちらも歓迎 1人", "未分類 1人"]) assert.ok(text.includes(expected), text);
+      const strategyTop = await page.locator('[data-waiting-mode="strategy"]').allTextContents();
+      assert.equal(strategyTop.length, 1);
+      for (const expected of ["アニメ・イラスト 1人", "実写 2人", "どちらも歓迎 1人", "未分類 1人"]) assert.ok(strategyTop[0].includes(expected), strategyTop[0]);
       await page.screenshot({ path: path.join(out, `landing-${width}.png`), fullPage: true });
       const overflow = await page.evaluate(() => {
         const scroll = document.documentElement.scrollWidth;
@@ -88,12 +104,26 @@ const server = http.createServer((request, response) => {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `panel overflow ${width}`);
         await panel.screenshot({ path: path.join(out, `${phase}-${width}.png`) });
       }
-      await page.evaluate(() => window.__presencePanelQA("strategy", "setup", window.__presenceRows));
-      assert.equal(await page.locator("[data-solo-waiting-breakdown]").count(), 0);
+      await page.evaluate(() => window.HariaiApp.returnHome());
+      await page.click("#strategyLabButton");
+      await page.waitForFunction(() => typeof window.__strategyPresenceQA === "function");
+      for (const phase of ["setup", "matching"]) {
+        await page.evaluate(phase => {
+          window.__presencePanelQA("strategy", phase, window.__presenceRows);
+          window.__strategyPresenceQA(phase);
+        }, phase);
+        const panel = page.locator('[data-battle-presence-panel="strategy"]');
+        assert.equal(await panel.locator("[data-battle-presence-waiting]").textContent(), phase === "matching" ? "4" : "5");
+        assert.equal(await panel.locator('[data-solo-waiting-pref="live_action"] b').textContent(), phase === "matching" ? "1" : "2");
+        assert.equal(await panel.locator('[data-solo-waiting-pref="illustration"] b').textContent(), "1");
+        assert.equal(await page.locator('[data-waiting-mode="solo"]').count(), 0);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `strategy panel overflow ${width}`);
+        await panel.screenshot({ path: path.join(out, `strategy-${phase}-${width}.png`) });
+      }
       assert.deepEqual(await page.evaluate(() => window.__presenceReads), [".info/serverTimeOffset", "online/publicPresence"]);
       assert.deepEqual(errors, []);
       assert.deepEqual(backend, []);
-      results.push({ width, landing: true, setup: true, matching: true, ownExcluded: true, strategyUnchanged: true, presenceReads: 1, backendRequests: 0, overflow });
+      results.push({ width, landing: true, setup: true, matching: true, ownExcluded: true, strategySetup: true, strategyMatching: true, separateModeCounts: true, presenceReads: 1, backendRequests: 0, overflow });
       await page.close();
     }
     const report = { ok: true, syntheticPresence: true, productionDataAccessed: false, results };

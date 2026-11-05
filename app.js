@@ -511,9 +511,10 @@
     const soloStats = modeStats("solo");
     const strategyStats = modeStats("strategy");
     const statValue = (value) => Number.isInteger(value) ? value : "--";
-    const soloWaitingBreakdown = `<span class="solo-waiting-breakdown" data-solo-waiting-breakdown><span class="solo-waiting-heading">待機中の好み</span><span class="solo-waiting-options">${[
+    const waitingBreakdown = (mode, stats) => `<span class="solo-waiting-breakdown" data-solo-waiting-breakdown data-waiting-mode="${mode}"><span class="solo-waiting-heading">待機中の好み</span><span class="solo-waiting-options">${[
       ["illustration", "アニメ・イラスト"], ["live_action", "実写"], ["both", "どちらも歓迎"], ["unknown", "未分類"],
-    ].map(([key, label]) => `<span class="solo-waiting-option" data-solo-waiting-pref="${key}"${key === "unknown" && !(soloStats.waitingByPreference?.[key] > 0) ? " hidden" : ""}>${label} <b>${statValue(soloStats.waitingByPreference?.[key])}</b>人</span>`).join("")}</span></span>`;
+    ].map(([key, label]) => `<span class="solo-waiting-option" data-solo-waiting-pref="${key}"${key === "unknown" && !(stats.waitingByPreference?.[key] > 0) ? " hidden" : ""}>${label} <b>${statValue(stats.waitingByPreference?.[key])}</b>人</span>`).join("")}</span></span>`;
+    const soloWaitingBreakdown = waitingBreakdown("solo", soloStats);
     // トップ専用の固定画像で描く見本。利用者の投稿画像や名前は取得しない。
     const heroMeter = Array.from({ length: 10 }, (_, index) => {
       const score = index + 1;
@@ -599,7 +600,7 @@
             <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">戦略型1on1</span><small class="vl-post-sub">本式・ランク戦</small><em class="vl-post-tag">100点</em>
             <span class="vl-post-text">なりきって読んで、言葉で刺して点数で落とす。手番制で、点数が次の権利になる。</span>
             <em class="ha-zones"><b class="is-floor" aria-hidden="true">〜70</b><b class="is-none" aria-hidden="true">70〜</b><b class="is-question">80 質問</b><b class="is-instruction">85 指示</b><b class="is-combo">90 連投</b></em>
-            <em class="vl-post-counts">待機 ${liveCount("boardStrategyWaitingCount", strategyStats.waiting, "人")} · 対戦中 ${liveCount("boardStrategyPlayingCount", strategyStats.playing, "人")}</em>
+            <em class="vl-post-counts">待機 ${liveCount("boardStrategyWaitingCount", strategyStats.waiting, "人")} · 対戦中 ${liveCount("boardStrategyPlayingCount", strategyStats.playing, "人")}${waitingBreakdown("strategy", strategyStats)}</em>
             <strong class="vl-post-go">本式で挑む</strong>
           </button></li>
         </ol>

@@ -40,7 +40,7 @@ import {
   encodePresencePreference,
   renderWaitingPreferenceBreakdown,
   syncWaitingPreferenceBreakdowns,
-} from "./battle-presence-stats.mjs?v=presence-check-v1-presence-preference-v1";
+} from "./battle-presence-stats.mjs?v=presence-check-v1-presence-preference-v1-strategy-presence-preference-v1";
 import {
   CHAT_BACKGROUND_PRODUCTS,
   CHAT_COSMETIC_PRODUCTS,
@@ -2227,9 +2227,9 @@ function renderBattlePresenceCheck({ mode = "solo", phase = "setup" } = {}) {
       <div><small data-battle-presence-waiting-label>${presentation.waitingLabel}</small><strong><span data-battle-presence-waiting>${countText(presentation.waitingValue)}</span><em>人</em></strong></div>
       <div><small>対戦中</small><strong><span data-battle-presence-playing>${countText(presentation.playingValue)}</span><em>人</em></strong></div>
     </div>
-    ${mode === "solo" ? renderWaitingPreferenceBreakdown(presentation.waitingByPreference) : ""}
+    ${renderWaitingPreferenceBreakdown(presentation.waitingByPreference, mode)}
     <span class="battle-presence-status" data-battle-presence-status role="status" aria-live="polite" aria-atomic="true">${presentation.status}</span>
-    ${mode === "solo" ? '<small class="battle-presence-note">内訳は本人が選んだ採点の好みです。画像の種類や検索範囲を表すものではありません。</small>' : ""}
+    <small class="battle-presence-note">内訳は本人が選んだ採点の好みです。画像の種類や検索範囲を表すものではありません。</small>
     <small class="battle-presence-note">取得時点の参考値です。好み条件や直前の成立・退出により、マッチングを保証するものではありません。</small>
   </aside>`;
 }
@@ -2252,7 +2252,7 @@ function syncBattlePresenceCheckPanels(mode) {
     if (waitingValue) waitingValue.textContent = Number.isInteger(presentation.waitingValue) ? String(presentation.waitingValue) : "—";
     if (playingValue) playingValue.textContent = Number.isInteger(presentation.playingValue) ? String(presentation.playingValue) : "—";
     if (status) status.textContent = presentation.status;
-    if (mode === "solo") syncWaitingPreferenceBreakdowns(panel, presentation.waitingByPreference);
+    syncWaitingPreferenceBreakdowns(panel, presentation.waitingByPreference, mode);
   });
 }
 
