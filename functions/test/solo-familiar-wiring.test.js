@@ -132,28 +132,25 @@ test("cancelled or expired V2 offers are restored only by exact server fences", 
   const terminalEnd = frontend.indexOf("function registerHostedOfferMonitor", terminalStart);
   const terminalCleanup = frontend.slice(terminalStart, terminalEnd);
   assert.ok(terminalStart >= 0 && terminalEnd > terminalStart);
-  assert.match(terminalCleanup, /restoreHostedOfferToWaiting/);
   assert.match(terminalCleanup, /state\.pendingOffer = null/);
   assert.match(terminalCleanup, /attemptCurrentSoloMatchmaking/);
-  assert.match(terminalCleanup, /pendingOffer\.terminalCleanupRunning = false/);
-  const restoreIndex = terminalCleanup.indexOf("await restoreHostedOfferToWaiting");
-  const stopPollingIndex = terminalCleanup.indexOf(
-    "window.clearInterval(state.hostStatusPollTimer)",
-    restoreIndex,
-  );
-  assert.ok(restoreIndex >= 0 && stopPollingIndex > restoreIndex);
+  assert.match(terminalCleanup, /stopSoloHostedOfferWatch/);
+  assert.doesNotMatch(terminalCleanup, /soloSessionActionCallable|restoreHostedOfferToWaiting/);
   assert.doesNotMatch(terminalCleanup, /cancelActiveReservationDisconnect/);
   const monitorStart = terminalEnd;
   const monitorEnd = frontend.indexOf("async function adoptSoloServerHostedMatch", monitorStart);
   const monitor = frontend.slice(monitorStart, monitorEnd);
   assert.match(monitor, /if \(status === "active"\)/);
   assert.match(monitor, /if \(status === "offered"\) return/);
-  assert.match(monitor, /finishHostedOfferAsTerminal/);
+  assert.match(monitor, /expireOffer/);
   assert.doesNotMatch(monitor, /status !== "expired"/);
   const expireStart = frontend.indexOf("async function expireOffer");
   const expireEnd = frontend.indexOf("async function acceptOffer", expireStart);
   const expire = frontend.slice(expireStart, expireEnd);
-  assert.match(expire, /if \(status === "active" \|\| status === "offered"\) return/);
+  assert.match(expire, /response\?\.status === "active"\) return await enterSoloHostedOfferRoom/);
+  assert.match(expire, /response\?\.status === "offered"[\s\S]*scheduleHostedOfferRecovery/);
+  assert.ok(expire.indexOf("stopSoloHostedOfferWatch") < expire.indexOf("await restoreHostedOfferToWaiting"));
+  assert.ok(expire.indexOf("await restoreHostedOfferToWaiting") < expire.indexOf("await finishHostedOfferAsTerminal"));
   assert.match(expire, /finishHostedOfferAsTerminal/);
   const frontendCleanupStart = frontend.indexOf("async function cleanupMatchmaking");
   const frontendCleanupEnd = frontend.indexOf(

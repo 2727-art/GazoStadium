@@ -113,7 +113,7 @@ async function harness(overrides = {}) {
   };
   const context = vm.createContext(sandbox);
   const functions = [
-    "attemptSoloServerMatch", "enterRoom", "isCurrentRoomSetupContext", "stopInitialOnlineTransport",
+    "attemptSoloServerMatch", "enterRoom", "stopSoloHostedOfferWatch", "isCurrentRoomSetupContext", "stopInitialOnlineTransport",
     "setupPeerConnection", "isCurrentMatchmakingGeneration", "cleanupMatchmaking",
     "waitForOnlineOperation", "showSoloCleanupPending", "retrySoloCleanupOperation",
     "releaseSoloSessionLease", "cancelSoloSessionRoomOnce", "cleanupOnlineResources",
