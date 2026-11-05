@@ -23,3 +23,11 @@
 - 公開検証: `functions/scripts/verify-solo-offer-recovery-release.cjs` で4経路の配信ハッシュ、キャッシュキー、保持対象ファイル、調査資料の非公開を確認する。
 
 実利用者のアカウント・対戦データを作成せずに検証する。既に開いている旧画面にはページの再読み込みが必要。
+
+## 本番反映
+
+2026-11-05 13:55 JST、PR #45をmainへマージ（`48f11f0474785c90ce66dcf3b76682b70ee5006c`）。Firebase Hostingの768公開ファイル中、変更した2ファイルをアップロードして公開完了。Cloudflare Workers Buildsも成功。FunctionsとDatabase Rulesは再デプロイしていない。
+
+4公開URL（Firebaseの2経路、workers.dev、hariaistadium.com）でHTML・online.jsの修正キーとハッシュ、変更しない各機能のハッシュ、調査資料の404を確認。トップのブラウザー確認では更新キーあり、ページ例外0件、日付変更・タブ復帰のランキング関連要求0件。確認用ブラウザーのバックエンド通信は遮断し、実アカウント・対戦は作成していない。
+
+記録: `SOLO_OFFER_RECOVERY_RELEASE_QA.json`、`SOLO_OFFER_RECOVERY_PRODUCTION_BROWSER_QA.json`、`solo-offer-deploy-hosting.log`。
