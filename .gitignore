@@ -7,3 +7,8 @@ firestore-debug.log
 functions/node_modules/
 functions/.env*
 functions/.secret.local
+
+# Generated transfer shell and redirect dependencies.
+/account-transfer.html
+/functions-legacy-router/node_modules/
+.wrangler/

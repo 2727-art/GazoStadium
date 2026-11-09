@@ -1972,7 +1972,8 @@
   if (!openInitialFreeTableInvite()) renderLandingScreen();
   showAnjuPayUnitNoticeOnce();
   const initialParams = new URLSearchParams(location.search);
-  let recoverAccount = initialParams.get("account") === "1";
+  let recoverAccount = initialParams.get("account") === "1"
+    || ["/account-transfer.html", "/account-transfer"].includes(location.pathname);
   try { recoverAccount ||= sessionStorage.getItem("hariai-open-account-recovery-v1") === "1"; } catch {}
   if (initialParams.has("ranch") || initialParams.get("open") === "ranch") {
     launchFeature("tribute", () => window.HariaiTribute.openRequestedLink());

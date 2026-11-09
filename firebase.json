@@ -215,6 +215,27 @@
             "value": "public, max-age=31536000, immutable"
           }
         ]
+      },
+      {
+        "source": "/account-transfer.html",
+        "headers": [
+          {
+            "key": "X-Robots-Tag",
+            "value": "noindex, follow"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "private, no-store"
+          },
+          {
+            "key": "Content-Security-Policy",
+            "value": "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          }
+        ]
       }
     ],
     "ignore": [
@@ -266,7 +287,85 @@
       "danwaku-note.js",
       "danwaku-note.css",
       "free-table.js",
-      "free-table.css"
+      "free-table.css",
+      "index.html",
+      "functions-legacy-router",
+      "functions-legacy-router/**",
+      "firebase.legacy-router.json"
+    ],
+    "predeploy": [
+      "node scripts/prepare-legacy-hosting.cjs"
+    ],
+    "redirects": [
+      {
+        "source": "/modes",
+        "destination": "https://hariaistadium.com/modes/",
+        "type": 301
+      },
+      {
+        "source": "/modes/:path*",
+        "destination": "https://hariaistadium.com/modes/:path",
+        "type": 301
+      },
+      {
+        "source": "/how-to-play",
+        "destination": "https://hariaistadium.com/how-to-play/",
+        "type": 301
+      },
+      {
+        "source": "/how-to-play/:path*",
+        "destination": "https://hariaistadium.com/how-to-play/:path",
+        "type": 301
+      },
+      {
+        "source": "/strategy",
+        "destination": "https://hariaistadium.com/strategy/",
+        "type": 301
+      },
+      {
+        "source": "/strategy/:path*",
+        "destination": "https://hariaistadium.com/strategy/:path",
+        "type": 301
+      },
+      {
+        "source": "/solo-training",
+        "destination": "https://hariaistadium.com/solo-training/",
+        "type": 301
+      },
+      {
+        "source": "/solo-training/:path*",
+        "destination": "https://hariaistadium.com/solo-training/:path",
+        "type": 301
+      },
+      {
+        "source": "/safety",
+        "destination": "https://hariaistadium.com/safety/",
+        "type": 301
+      },
+      {
+        "source": "/safety/:path*",
+        "destination": "https://hariaistadium.com/safety/:path",
+        "type": 301
+      },
+      {
+        "source": "/faq",
+        "destination": "https://hariaistadium.com/faq/",
+        "type": 301
+      },
+      {
+        "source": "/faq/:path*",
+        "destination": "https://hariaistadium.com/faq/:path",
+        "type": 301
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "function": {
+          "functionId": "legacySiteRedirect",
+          "region": "us-central1"
+        }
+      }
     ]
   }
 }

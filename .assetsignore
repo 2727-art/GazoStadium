@@ -45,3 +45,7 @@ danwaku-note.js
 danwaku-note.css
 free-table.js
 free-table.css
+
+# Legacy redirect function is server-only.
+functions-legacy-router/
+firebase.legacy-router.json

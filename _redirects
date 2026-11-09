@@ -1,2 +1,5 @@
 # Serve Google's ownership verification file at the exact requested URL.
 /google89c894c09edab89b.html /google89c894c09edab89b 200
+
+# Preserve the explicit HTML wallet URL on the original origin.
+/account-transfer.html /account-transfer 200

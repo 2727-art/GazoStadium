@@ -1,6 +1,4 @@
-// workers.dev / hariaistadium.com の Worker（Cloudflare の自動ビルドが main の push ごとに `npx wrangler deploy` で使う）。
-// 中身は wrangler 4.155.0 までの自動設定が毎回作っていたものと同じ。4.156.0 から、`functions/` のあるリポジトリでは
-// 自動設定が止まる（Pages Functions とみなす）ので、ここに書いておく。公開しないファイルは `.assetsignore`。
+// Cloudflare Workers Builds deploys main with npx wrangler deploy.
 {
   "name": "gazostadium",
   "compatibility_date": "2026-10-23",
@@ -8,6 +6,28 @@
     "enabled": true
   },
   "assets": {
-    "directory": "."
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/",
+      "/index",
+      "/index.html",
+      "/modes",
+      "/modes/*",
+      "/how-to-play",
+      "/how-to-play/*",
+      "/strategy",
+      "/strategy/*",
+      "/solo-training",
+      "/solo-training/*",
+      "/safety",
+      "/safety/*",
+      "/faq",
+      "/faq/*"
+    ]
+  },
+  "main": "scripts/legacy-worker.mjs",
+  "build": {
+    "command": "node scripts/prepare-legacy-hosting.cjs"
   }
 }

@@ -51,3 +51,11 @@
 /assets/ranch/tribute-BXEA7FQE.js
   Cache-Control: public, max-age=31536000, immutable
 # END GENERATED RANCH CACHE
+
+/account-transfer.html
+  X-Robots-Tag: noindex, follow
+  Cache-Control: private, no-store
+
+/account-transfer
+  X-Robots-Tag: noindex, follow
+  Cache-Control: private, no-store

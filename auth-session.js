@@ -48,6 +48,7 @@ function showRecoveryHelp(error) {
         // Reload to discard every mode's previous in-memory UID before recovery.
         sessionStorage.setItem("hariai-open-account-recovery-v1", "1");
         const destination = new URL("/", location.href);
+        destination.searchParams.set("account", "1");
         if (["localhost", "127.0.0.1"].includes(destination.hostname)
             && new URLSearchParams(location.search).has("firebaseEmulators")) {
           destination.searchParams.set("firebaseEmulators", "");

@@ -1967,6 +1967,11 @@ function requestHome() {
   unsubscribeAuth?.();
   unsubscribeAuth = null;
   state.pendingGoogleCredential = null;
+  if (document.documentElement.dataset.domainHost === "legacy"
+      && ["/account-transfer.html", "/account-transfer"].includes(location.pathname)) {
+    location.assign("https://hariaistadium.com/");
+    return;
+  }
   window.HariaiApp?.returnHome?.();
 }
 
@@ -1981,8 +1986,9 @@ window.dispatchEvent(new Event("hariai-account-ready"));
 // A deliberate recovery step reloads first so no game retains the old UID.
 function openRequestedAccountRecovery() {
   const url = new URL(location.href);
-  let requested = url.searchParams.get("account") === "1";
-  if (requested) {
+  const transferPage = ["/account-transfer.html", "/account-transfer"].includes(url.pathname);
+  let requested = url.searchParams.get("account") === "1" || transferPage;
+  if (requested && !transferPage) {
     url.searchParams.delete("account");
     history.replaceState(history.state, "", url.href);
   }

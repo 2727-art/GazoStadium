@@ -1,0 +1,16 @@
+{
+  "functions": {
+    "source": "functions-legacy-router",
+    "codebase": "legacy-router",
+    "runtime": "nodejs24",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "test",
+      "test/**"
+    ],
+    "predeploy": [
+      "node --test functions-legacy-router/test/*.test.cjs"
+    ]
+  }
+}
