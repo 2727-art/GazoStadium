@@ -201,6 +201,19 @@
     return Promise.all(list);
   }
 
+  // 受信した画像を再圧縮せず保存する。画面を閉じてもダウンロード用URLはすぐに破棄しない。
+  function downloadImage(blob) {
+    const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" }[blob.type];
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `hariai-image${extension ? `.${extension}` : ""}`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
   // 画像をタップした時の全画面表示
   function openLightbox(src, alt = "") {
     if (!src) return;
@@ -218,22 +231,55 @@
     close.type = "button";
     close.className = "vb-lightbox-close";
     close.textContent = "閉じる";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "vb-lightbox-save";
+    save.textContent = "画像を保存";
+    save.disabled = true;
+    const actions = document.createElement("div");
+    actions.className = "vb-lightbox-actions";
+    actions.append(save, close);
     const hint = document.createElement("small");
-    hint.textContent = "ピンチで拡大・タップで閉じる";
-    overlay.append(image, close, hint);
-    overlay.addEventListener("click", closeLightbox);
-    image.addEventListener("contextmenu", (event) => event.preventDefault());
+    hint.setAttribute("role", "status");
+    hint.textContent = "ピンチで拡大・画像を長押しでも保存できます";
+    overlay.append(image, actions, hint);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeLightbox();
+    });
+    close.addEventListener("click", closeLightbox);
     document.body.append(overlay);
-    lightbox = { overlay, returnFocus: document.activeElement };
+    const view = { overlay, returnFocus: document.activeElement, controller: new AbortController(), saveUrl: "", blob: null };
+    lightbox = view;
+    // 拡大中だけ画像を保持する。ラウンド切替で元のBlob URLが解放されても保存できるようにする。
+    fetch(src, { signal: view.controller.signal }).then((response) => {
+      if (!response.ok) throw new Error("画像を読み込めませんでした。");
+      return response.blob();
+    }).then((blob) => {
+      if (lightbox !== view) return;
+      view.blob = blob;
+      view.saveUrl = URL.createObjectURL(blob);
+      image.src = view.saveUrl;
+      save.disabled = false;
+    }).catch((error) => {
+      if (lightbox !== view || error.name === "AbortError") return;
+      hint.textContent = "保存の準備ができませんでした。画像の長押しをお試しください。";
+    });
+    save.addEventListener("click", () => {
+      if (!view.blob) return;
+      downloadImage(view.blob);
+      hint.textContent = "ブラウザのダウンロード先をご確認ください。画像の長押しでも保存できます。";
+    });
     close.focus({ preventScroll: true });
   }
 
   function closeLightbox() {
     if (!lightbox) return;
-    const { overlay, returnFocus } = lightbox;
+    const { overlay, returnFocus, controller, saveUrl } = lightbox;
     lightbox = null;
+    controller.abort();
     overlay.remove();
-    returnFocus?.focus?.({ preventScroll: true });
+    if (saveUrl) URL.revokeObjectURL(saveUrl);
+    if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   }
 
   document.addEventListener("keydown", (event) => {
@@ -279,6 +325,7 @@
     fillSource,
     prepareFill,
     decode,
+    downloadImage,
     openLightbox,
     closeLightbox,
     getSpeed: () => speedName,
