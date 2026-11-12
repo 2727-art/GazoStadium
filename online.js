@@ -4870,6 +4870,7 @@ function renderGazeScreen(scene, { dock = "", tail = "", fxScene = "", hpOverrid
       <div class="vb-gaze-bar">
         <button type="button" class="vb-gaze-icon-button" data-gaze-close aria-label="見つめるモードを閉じて、スレッドに戻る">${GAZE_ICON_CLOSE}</button>
         <div class="vb-gaze-who"><b>${renderChatPersonaMark(persona)}${escapeHtml(name)}</b><small>${personaLabel ? `${escapeHtml(personaLabel)} · ` : ""}${roundLabel}<span class="connection-pill vb-gaze-presence ${state.opponentOnline ? "connected" : "warning"}" data-online-opponent-presence>${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span></small></div>
+        <button type="button" class="vb-gaze-save" data-gaze-save>画像を保存</button>
         <button type="button" class="vb-gaze-icon-button" data-gaze-chrome aria-pressed="false" aria-label="文字と操作を隠して、画像だけを見る">${GAZE_ICON_IMAGE_ONLY}</button>
       </div>
       <div class="vb-gaze-gauges">${gauge(remoteIndex)}${gauge(state.playerIndex)}</div>
@@ -4883,8 +4884,8 @@ function renderGazeScreen(scene, { dock = "", tail = "", fxScene = "", hpOverrid
       ${renderDmComposer({ placeholder: "見つめながら、ひとこと…" })}
     </div>
     <div class="vb-gaze-restore" data-gaze-restore${hidden ? "" : " hidden"}>
-      <small>ピンチ・ダブルタップで拡大</small>
-      <button type="button" data-gaze-chrome aria-pressed="true">文字と操作を戻す</button>
+      <small>ピンチ・ダブルタップで拡大・長押しでも保存できます</small>
+      <div class="vb-gaze-restore-actions"><button type="button" class="vb-gaze-save" data-gaze-save>画像を保存</button><button type="button" data-gaze-chrome aria-pressed="true">文字と操作を戻す</button></div>
     </div>
   </section>`;
 }
@@ -4982,6 +4983,15 @@ function bindGazeEvents() {
   const screen = document.querySelector("[data-gaze]");
   if (!screen) return;
   screen.querySelector("[data-gaze-close]")?.addEventListener("click", closeGaze);
+  screen.querySelectorAll("[data-gaze-save]").forEach((button) => button.addEventListener("click", () => {
+    const item = state.remoteImages.get(state.gazeRound);
+    if (!item?.blob || !window.HariaiBattleFx?.downloadImage) {
+      showToast("保存の準備ができませんでした。画像の長押しをお試しください。");
+      return;
+    }
+    window.HariaiBattleFx.downloadImage(item.blob);
+    showToast("ブラウザのダウンロード先をご確認ください。");
+  }));
   screen.querySelectorAll("[data-gaze-chrome]").forEach((button) => button.addEventListener("click", () => setGazeChromeHidden(!gazeChromeHidden, { focus: true })));
   screen.querySelector("[data-gaze-current]")?.addEventListener("click", () => openGaze(state.round));
   screen.querySelector("[data-gaze-bottom]")?.addEventListener("focusin", syncGazeKeyboard);
@@ -5018,7 +5028,8 @@ function bindGazeStage(screen) {
   stage.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     try {
-      stage.setPointerCapture(event.pointerId);
+      // 長押しメニューの対象が画像から外れないよう、画像上の操作は画像自身で捕捉する。
+      (event.target === image ? image : stage).setPointerCapture(event.pointerId);
     } catch {
       // 指がすでに離れている時は、つかまえずに続ける。
     }
@@ -6033,7 +6044,9 @@ function renderOnlineChat() {
 
 function bindScreenEvents() {
   document.querySelectorAll("img").forEach((image) => {
-    image.addEventListener("contextmenu", (event) => event.preventDefault());
+    if (!image.closest(".vb-screen, .vb-lightbox")) {
+      image.addEventListener("contextmenu", (event) => event.preventDefault());
+    }
     image.addEventListener("dragstart", (event) => event.preventDefault());
   });
   document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", openDestroyDialog));

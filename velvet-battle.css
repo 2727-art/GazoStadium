@@ -660,9 +660,7 @@ body:has(.vb-dm) .site-footer {
   max-height: min(46dvh, 420px);
   max-height: min(70cqh, 420px);
   object-fit: contain;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
+  -webkit-touch-callout: default;
 }
 
 .vb-dm-photo.is-gone {
@@ -1020,9 +1018,7 @@ body:has(.vb-dm) .site-footer {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
   transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px)) scale(var(--gaze-scale, 1));
   transform-origin: center;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
+  -webkit-touch-callout: default;
 }
 
 .vb-gaze-tip {
@@ -1077,9 +1073,30 @@ body:has(.vb-dm) .site-footer {
 }
 
 .vb-gaze-icon-button:focus-visible,
+.vb-gaze-save:focus-visible,
 .vb-gaze-restore button:focus-visible {
   outline: 2px solid var(--vs-gold-hi);
   outline-offset: 2px;
+}
+
+.vb-gaze-save,
+.vb-gaze-restore .vb-gaze-save {
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 22px;
+  color: #20101a;
+  background: #ffc6dc;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.vb-gaze-restore-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .vb-gaze-who {
@@ -2163,19 +2180,29 @@ body:has(.vb-dm) .site-footer {
   min-height: 0;
   border-radius: 8px;
   object-fit: contain;
-  -webkit-touch-callout: none;
+  cursor: default;
+  -webkit-touch-callout: default;
 }
 
 .vb-lightbox small {
+  flex-shrink: 0;
   color: var(--vs-dim);
   font-size: 0.72rem;
+  text-align: center;
+  cursor: default;
 }
 
-.vb-lightbox-close {
+.vb-lightbox-actions {
   position: absolute;
   top: calc(16px + env(safe-area-inset-top, 0px));
   right: 16px;
-  min-height: 40px;
+  display: flex;
+  gap: 8px;
+}
+
+.vb-lightbox-close,
+.vb-lightbox-save {
+  min-height: 44px;
   padding: 0 16px;
   border: 0;
   border-radius: 999px;
@@ -2183,6 +2210,16 @@ body:has(.vb-dm) .site-footer {
   color: #fff;
   background: rgba(255, 255, 255, 0.12);
   font-weight: 700;
+}
+
+.vb-lightbox-save {
+  color: #20101a;
+  background: #ffc6dc;
+}
+
+.vb-lightbox-save:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 /* ---------- FINISH カットイン ---------- */
